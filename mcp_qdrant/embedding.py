@@ -24,20 +24,20 @@ def get_embedding_dim():
 
 def _load_model_with_timeout(timeout_seconds: float = 3.0):
     """Try to load the sentence transformer model with a timeout."""
-    import os
-    # Skip model loading if offline mode
-    if os.environ.get('HF_HUB_OFFLINE') == '1':
-        logger.info("HF_HUB_OFFLINE=1, skipping model loading")
-        return None
-
     result = {"model": None, "error": None}
 
     def load():
         try:
+            import os
+            import torch
             from sentence_transformers import SentenceTransformer
+            # 强制离线，防止联网检查更新
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            os.environ['TRANSFORMERS_OFFLINE'] = '1'
             model_name = get_model_name()
-            logger.info(f"Loading sentence-transformers model: {model_name}")
-            result["model"] = SentenceTransformer(model_name)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Loading sentence-transformers model: {model_name} on device: {device}")
+            result["model"] = SentenceTransformer(model_name, device=device, local_files_only=True)
             result["error"] = None
         except Exception as e:
             result["error"] = str(e)

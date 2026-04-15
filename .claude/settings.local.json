@@ -38,7 +38,41 @@
       "Bash(docker run:*)",
       "Bash(E:/Project/Memory/qdrant/qdrant.exe --storage-path E:/Project/Memory/storage --config-path E:/Project/Memory/qdrant/config/config.yaml)",
       "Bash(E:/Project/Memory/qdrant/qdrant.exe --help)",
-      "Bash(E:/Project/Memory/qdrant/qdrant.exe)"
+      "Bash(E:/Project/Memory/qdrant/qdrant.exe)",
+      "Bash(cat requirements*.txt)",
+      "Bash(pip list:*)",
+      "Bash(pip install:*)",
+      "Bash(python3.12 --version)",
+      "Read(//usr/**)",
+      "Read(//usr/local/**)",
+      "Bash(where python3.12)",
+      "Read(//c/Users/v_zhyyzheng/AppData/Local/Programs/Python/**)",
+      "Read(//c/Users/v_zhyyzheng/AppData/Local/Programs/Python//**)",
+      "Read(//c/Users/v_zhyyzheng/**)",
+      "Bash(/c/Users/v_zhyyzheng/AppData/Local/Programs/Python/Python312/python.exe -m venv venv312)",
+      "Bash(venv312/Scripts/python.exe:*)",
+      "Bash(venv312/Scripts/pip.exe install:*)",
+      "Read(//e/Project/Memory/**)",
+      "Bash(venv312/Scripts/pytest.exe:*)",
+      "Bash(claude mcp:*)",
+      "Bash(taskkill //F //IM qdrant.exe)",
+      "mcp__qdrant-memory__store",
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi:*)",
+      "Bash(venv312/Scripts/pip.exe uninstall:*)",
+      "Bash(ls C:/Users/v_zhyyzheng/Desktop/MemoryExtra/models/bge-m3/*.safetensors)",
+      "Bash(ls C:/Users/v_zhyyzheng/Desktop/MemoryExtra/models/bge-m3/*.bin)",
+      "Bash(tasklist:*)",
+      "Bash(Start-Process \"C:/Users/v_zhyyzheng/Desktop/qdrant/qdrant.exe\" -ArgumentList \"--config-path C:/Users/v_zhyyzheng/Desktop/qdrant/config/config.yaml\")",
+      "Bash(\"C:/Users/v_zhyyzheng/Desktop/qdrant/qdrant.exe\" --config-path \"C:/Users/v_zhyyzheng/Desktop/qdrant/config/config.yaml\")",
+      "Bash(venv312/Scripts/pip.exe show:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(taskkill //F //IM python.exe)",
+      "mcp__qdrant-memory__search"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "qdrant-memory"
+  ]
 }

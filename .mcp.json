@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "qdrant-memory": {
+      "type": "stdio",
+      "command": "C:\\Users\\v_zhyyzheng\\Desktop\\MemoryExtra\\venv312\\Scripts\\python.exe",
+      "args": ["C:\\Users\\v_zhyyzheng\\Desktop\\MemoryExtra\\main.py"]
+    }
+  }
+}

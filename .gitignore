@@ -17,6 +17,7 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+venv312/
 
 # 忽略快照
 snapshots/
