@@ -1,0 +1,27 @@
+# 忽略向量数据库
+storage/
+qdrant/storage/
+
+# 忽略Qdrant数据和二进制
+qdrant/.qdrant-initialized
+qdrant/*.exe
+qdrant/*.zip
+
+# 忽略模型文件
+hf_cache/
+models/
+
+# 忽略Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 忽略快照
+snapshots/
+
+# 忽略配置文件
+qdrant/config/
+
+# Claude
+.claude/scheduled_tasks.json
