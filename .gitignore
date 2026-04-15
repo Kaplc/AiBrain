@@ -3,6 +3,7 @@ storage/
 qdrant/storage/
 
 # 忽略Qdrant数据和二进制
+.qdrant-initialized
 qdrant/.qdrant-initialized
 qdrant/*.exe
 qdrant/*.zip
