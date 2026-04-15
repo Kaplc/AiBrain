@@ -68,7 +68,13 @@
       "Bash(venv312/Scripts/pip.exe show:*)",
       "Bash(powershell.exe:*)",
       "Bash(taskkill //F //IM python.exe)",
-      "mcp__qdrant-memory__search"
+      "mcp__qdrant-memory__search",
+      "Bash(venv312/Scripts/pip.exe freeze:*)",
+      "Bash(mkdir -p \"C:/Users/v_zhyyzheng/skl-backup\")",
+      "Bash(cp -r \"C:/Users/v_zhyyzheng/.claude-internal/skills/skl-doc-memory\" \"C:/Users/v_zhyyzheng/skl-backup/\")",
+      "Bash(cp -r \"C:/Users/v_zhyyzheng/.claude-internal/skills/skl-memory-optimizer\" \"C:/Users/v_zhyyzheng/skl-backup/\")",
+      "Bash(cp -r \"C:/Users/v_zhyyzheng/.claude-internal/skills/skl-doc-memory\" \"C:/Users/v_zhyyzheng/Desktop/MemoryExtra/skl-backup/\")",
+      "Bash(cp -r \"C:/Users/v_zhyyzheng/.claude-internal/skills/skl-memory-optimizer\" \"C:/Users/v_zhyyzheng/Desktop/MemoryExtra/skl-backup/\")"
     ]
   },
   "enableAllProjectMcpServers": true,

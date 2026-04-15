@@ -30,10 +30,117 @@
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
     font-size: 12px;
     color: #64748b;
   }
+  .settings-btn {
+    background: #1e293b;
+    border: 1px solid #2d3149;
+    color: #94a3b8;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .settings-btn:hover { border-color: #7c3aed; color: #a78bfa; }
+
+  /* Settings Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: #000a;
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: #1a1d27;
+    border: 1px solid #2d3149;
+    border-radius: 14px;
+    padding: 24px;
+    width: 380px;
+    box-shadow: 0 20px 60px #0008;
+  }
+  .modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 20px;
+  }
+  .setting-row {
+    margin-bottom: 16px;
+  }
+  .setting-label {
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-weight: 600;
+  }
+  .device-options {
+    display: flex;
+    gap: 8px;
+  }
+  .device-option {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #2d3149;
+    border-radius: 8px;
+    background: #0f1117;
+    color: #94a3b8;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: center;
+    transition: all .2s;
+  }
+  .device-option:hover { border-color: #7c3aed44; }
+  .device-option.selected { border-color: #7c3aed; background: #7c3aed22; color: #a78bfa; }
+  .device-option .opt-icon { font-size: 20px; margin-bottom: 4px; }
+  .device-option .opt-label { font-weight: 600; }
+  .device-option .opt-desc { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .device-option.selected .opt-desc { color: #7c3aed88; }
+  .gpu-info {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #0f1117;
+    border: 1px solid #2d3149;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .btn-cancel {
+    flex: 1;
+    padding: 9px;
+    background: #1e293b;
+    border: 1px solid #2d3149;
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-cancel:hover { border-color: #475569; }
+  .btn-apply {
+    flex: 2;
+    padding: 9px;
+    background: #7c3aed;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-apply:hover { opacity: .85; }
+  .btn-apply:disabled { opacity: .4; cursor: not-allowed; }
   .status-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
@@ -251,6 +358,39 @@
   <div class="header-status">
     <div class="status-dot" id="statusDot"></div>
     <span id="statusText">检查连接...</span>
+    <button class="settings-btn" onclick="openSettings()">⚙ 设置</button>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeSettings(event)">
+  <div class="modal">
+    <div class="modal-title">⚙ 运行设置</div>
+    <div class="setting-row">
+      <div class="setting-label">推理设备</div>
+      <div class="device-options">
+        <div class="device-option" id="optAuto" onclick="selectDevice('auto')">
+          <div class="opt-icon">🔄</div>
+          <div class="opt-label">自动</div>
+          <div class="opt-desc">有GPU用GPU</div>
+        </div>
+        <div class="device-option" id="optGpu" onclick="selectDevice('gpu')">
+          <div class="opt-icon">🎮</div>
+          <div class="opt-label">GPU</div>
+          <div class="opt-desc">速度更快</div>
+        </div>
+        <div class="device-option" id="optCpu" onclick="selectDevice('cpu')">
+          <div class="opt-icon">💻</div>
+          <div class="opt-label">CPU</div>
+          <div class="opt-desc">兼容性好</div>
+        </div>
+      </div>
+      <div class="gpu-info" id="gpuInfo">检测中...</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeSettings()">取消</button>
+      <button class="btn-apply" id="applyBtn" onclick="applySettings()">应用并重载模型</button>
+    </div>
   </div>
 </div>
 
@@ -317,13 +457,86 @@ async function api(path, data) {
   return r.json();
 }
 
+// ── Settings ───────────────────────────────────────────────
+let currentDevice = 'cpu';
+let pendingDevice = 'cpu';
+
+async function openSettings() {
+  // 拉取当前设置和硬件信息
+  try {
+    const [cfg, st] = await Promise.all([
+      fetch(API + '/settings').then(r => r.json()),
+      fetch(API + '/status').then(r => r.json()),
+    ]);
+    currentDevice = cfg.device || 'cpu';
+    pendingDevice = currentDevice;
+    selectDevice(currentDevice);
+
+    const gpuEl = document.getElementById('gpuInfo');
+    if (st.cuda_available) {
+      gpuEl.innerHTML = `✅ 检测到 GPU：<strong>${st.gpu_name}</strong>`;
+      gpuEl.style.color = '#86efac';
+    } else {
+      gpuEl.textContent = '❌ 未检测到 NVIDIA GPU，GPU 选项不可用';
+      gpuEl.style.color = '#fca5a5';
+      document.getElementById('optGpu').style.opacity = '0.4';
+      document.getElementById('optGpu').style.pointerEvents = 'none';
+    }
+  } catch {}
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+function closeSettings(e) {
+  if (e && e.target !== document.getElementById('modalOverlay')) return;
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+function selectDevice(val) {
+  pendingDevice = val;
+  ['auto','gpu','cpu'].forEach(d => {
+    document.getElementById('opt' + d.charAt(0).toUpperCase() + d.slice(1))
+      .classList.toggle('selected', d === val);
+  });
+}
+
+async function applySettings() {
+  const btn = document.getElementById('applyBtn');
+  btn.disabled = true;
+  btn.textContent = '重载中...';
+  try {
+    await api('/reload-model', {device: pendingDevice});
+    currentDevice = pendingDevice;
+    document.getElementById('modalOverlay').classList.remove('show');
+    toast(`🔄 模型重载中（${pendingDevice}），请稍候...`, 'success');
+    _ready_flag = false;
+    // 轮询等待模型就绪
+    const poll = setInterval(async () => {
+      try {
+        const st = await fetch(API + '/status').then(r => r.json());
+        updateStatusUI(st);
+        if (st.model_loaded) { clearInterval(poll); toast('✅ 模型已就绪', 'success'); }
+      } catch {}
+    }, 2000);
+  } catch(e) {
+    toast('应用失败: ' + e, 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = '应用并重载模型';
+}
+
 // ── Status check ───────────────────────────────────────────
+let _ready_flag = false;
+
+function updateStatusUI(d) {
+  document.getElementById('statusDot').className = 'status-dot' + (d.model_loaded ? ' ready' : '');
+  const deviceLabel = d.device && d.device !== 'unknown' ? ` · ${d.device.toUpperCase()}` : '';
+  document.getElementById('statusText').textContent = d.model_loaded ? `模型已就绪${deviceLabel}` : '模型加载中...';
+}
+
 async function checkStatus() {
   try {
-    const r = await fetch(API + '/status');
-    const d = await r.json();
-    document.getElementById('statusDot').className = 'status-dot ready';
-    document.getElementById('statusText').textContent = d.model_loaded ? '模型已就绪' : '模型加载中...';
+    const d = await fetch(API + '/status').then(r => r.json());
+    updateStatusUI(d);
     if (!d.model_loaded) setTimeout(checkStatus, 3000);
   } catch {
     document.getElementById('statusDot').className = 'status-dot';

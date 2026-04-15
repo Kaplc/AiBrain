@@ -27,3 +27,4 @@ qdrant/config/
 
 # Claude
 .claude/scheduled_tasks.json
+models.zip
