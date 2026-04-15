@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-15T13:25:23.775Z
+provider: 
+---
+
+获取不到记忆的时候，最高优先级调用mcp工具获取记忆

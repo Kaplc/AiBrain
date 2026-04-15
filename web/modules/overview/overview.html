@@ -1,0 +1,99 @@
+<style>
+.overview-wrap { padding: 24px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; gap: 20px; box-sizing: border-box; }
+.overview-title { font-size: 18px; font-weight: 700; }
+.overview-row { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* Status card */
+.status-card { flex: 1; min-width: 160px; background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; align-items: center; text-align: center; }
+.sc-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.sc-value { font-size: 15px; font-weight: 700; color: #e2e8f0; }
+.sc-badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; margin-left: 6px; }
+.sc-badge.green { background: #22c55e22; color: #86efac; }
+.sc-badge.red { background: #ef444422; color: #fca5a5; }
+.sc-badge.yellow { background: #eab30822; color: #fde047; }
+.sc-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+.mini-loading { display: block; width: 20px; height: 20px; border: 2px solid #eab30844; border-top-color: #fde047; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 8px auto 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Chart section */
+.chart-section { background: #1a1d27; border: 1px solid #2d3149; border-radius: 12px; padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.chart-header { display: flex; align-items: center; justify-content: space-between; }
+.chart-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+.chart-legend { display: flex; gap: 12px; font-size: 11px; color: #64748b; }
+.chart-legend span { display: flex; align-items: center; gap: 4px; }
+.ldot { width: 8px; height: 8px; border-radius: 50%; }
+.ldot.purple { background: #7c3aed; }
+.ldot.green { background: #22c55e; }
+.chart-body { flex: 1; display: flex; align-items: flex-end; gap: 6px; min-height: 80px; }
+.bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.bar { width: 100%; border-radius: 4px 4px 0 0; transition: height .4s ease; min-height: 4px; }
+.bar.total { background: #7c3aed44; }
+.bar.today { background: #7c3aed; }
+.bar-label { font-size: 10px; color: #64748b; white-space: nowrap; }
+
+/* Stats grid */
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.stat-box { background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 14px; text-align: center; }
+.sb-value { font-size: 22px; font-weight: 700; color: #a78bfa; }
+.sb-label { font-size: 11px; color: #64748b; margin-top: 4px; }
+</style>
+
+<div class="overview-wrap">
+  <!-- Status indicators row -->
+  <div class="overview-row">
+    <div class="status-card" id="scModelCard">
+      <div class="sc-label" id="scModelLabel">模型状态</div>
+      <div class="sc-value" id="scModelValue"></div>
+      <div class="sc-sub" id="scModelSub"></div>
+    </div>
+    <div class="status-card">
+      <div class="sc-label" id="scQdrantLabel">Qdrant 状态 <span class="sc-badge green" id="scQdrantBadge">OK</span></div>
+      <div class="sc-value" id="scQdrantValue"></div>
+      <div class="sc-sub" id="scDimSub">向量维度 1024</div>
+    </div>
+    <div class="status-card">
+      <div class="sc-label">运行设备</div>
+      <div class="sc-sub" id="scDeviceSub1"></div>
+      <div class="sc-sub" id="scDeviceSub2"></div>
+      <div class="sc-sub" id="scDeviceSub3"></div>
+      <div class="sc-sub" id="scDeviceSub4"></div>
+      <div class="sc-sub" id="scDeviceSub5"></div>
+    </div>
+  </div>
+
+  <!-- Memory chart -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <div class="chart-title">记忆趋势</div>
+      <div class="chart-legend">
+        <span><div class="ldot purple"></div>历史累计</span>
+        <span><div class="ldot green"></div>今日新增</span>
+      </div>
+    </div>
+    <div class="chart-body" id="chartBody">
+      <div class="bar-wrap"><div class="bar total" style="height:20%"></div><div class="bar today" style="height:5%"></div><div class="bar-label">周一</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:35%"></div><div class="bar today" style="height:10%"></div><div class="bar-label">周二</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:45%"></div><div class="bar today" style="height:8%"></div><div class="bar-label">周三</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:55%"></div><div class="bar today" style="height:12%"></div><div class="bar-label">周四</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:70%"></div><div class="bar today" style="height:15%"></div><div class="bar-label">周五</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:85%"></div><div class="bar today" style="height:20%"></div><div class="bar-label">周六</div></div>
+      <div class="bar-wrap"><div class="bar total" style="height:100%"></div><div class="bar today" style="height:30%"></div><div class="bar-label">周日</div></div>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="sb-value" id="statTotal">-</div>
+      <div class="sb-label">记忆总数</div>
+    </div>
+    <div class="stat-box">
+      <div class="sb-value" id="statToday">-</div>
+      <div class="sb-label">今日新增</div>
+    </div>
+    <div class="stat-box">
+      <div class="sb-value" id="statDim">-</div>
+      <div class="sb-label">向量维度</div>
+    </div>
+  </div>
+</div>

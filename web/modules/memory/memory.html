@@ -1,0 +1,79 @@
+<style>
+.memory-layout { display: flex; gap: 20px; padding: 24px; overflow: hidden; flex: 1; min-height: 0; box-sizing: border-box; }
+.memory-sidebar { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.memory-list-section { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.memory-list { overflow-y: auto; flex: 1; min-height: 0; }
+.widget { background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.widget-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: #64748b; }
+.stats { background: #0f1117; border: 1px solid #2d3149; border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; }
+.stat-item { text-align: center; }
+.stat-value { font-size: 20px; font-weight: 700; color: #a78bfa; }
+.stat-label { font-size: 11px; color: #64748b; margin-top: 2px; }
+textarea, input { width: 100%; background: #0f1117; border: 1px solid #2d3149; border-radius: 8px; color: #e2e8f0; padding: 9px 12px; font-size: 13px; outline: none; transition: border-color .2s; font-family: inherit; }
+textarea { resize: none; height: 80px; }
+textarea:focus, input:focus { border-color: #7c3aed; }
+.btn { padding: 9px 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .2s, transform .1s; width: 100%; }
+.btn:active { transform: scale(.98); }
+.btn-primary { background: #7c3aed; color: #fff; }
+.btn-primary:hover { opacity: .85; }
+.btn-secondary { background: #1e293b; color: #94a3b8; }
+.btn-secondary:hover { border-color: #475569; }
+.tab-bar { display: flex; gap: 4px; background: #1a1d27; border-radius: 8px; padding: 4px; flex-shrink: 0; }
+.tab { flex: 1; padding: 7px; border: none; border-radius: 6px; background: transparent; color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; }
+.tab.active { background: #7c3aed; color: #fff; }
+.memory-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
+.memory-card { background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px; transition: border-color .2s; }
+.memory-card:hover { border-color: #7c3aed44; }
+.memory-card.search-result { border-color: #7c3aed66; }
+.memory-content { flex: 1; min-width: 0; }
+.memory-text { font-size: 14px; color: #e2e8f0; line-height: 1.5; word-break: break-all; }
+.memory-meta { margin-top: 6px; display: flex; align-items: center; gap: 10px; }
+.memory-time { font-size: 11px; color: #64748b; }
+.memory-score { font-size: 11px; background: #7c3aed22; color: #a78bfa; padding: 1px 7px; border-radius: 99px; font-weight: 600; }
+.memory-id { font-size: 10px; color: #374151; font-family: monospace; }
+.del-btn { background: none; border: none; color: #374151; cursor: pointer; font-size: 16px; padding: 2px 6px; border-radius: 4px; transition: color .2s, background .2s; flex-shrink: 0; }
+.del-btn:hover { color: #ef4444; background: #ef444420; }
+.empty { text-align: center; padding: 60px 20px; color: #64748b; }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-text { font-size: 14px; }
+</style>
+
+<div class="memory-layout">
+  <aside class="memory-sidebar">
+    <div class="widget">
+      <div class="widget-title">统计</div>
+      <div class="stats">
+        <div class="stat-item">
+          <div class="stat-value" id="totalCount">-</div>
+          <div class="stat-label">记忆总数</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="todayCount">-</div>
+          <div class="stat-label">今日新增</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">添加记忆</div>
+      <textarea id="storeInput" placeholder="输入要记住的内容..."></textarea>
+      <button class="btn btn-primary" onclick="storeMemory()">保存记忆</button>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">语义搜索</div>
+      <input id="searchInput" type="text" placeholder="搜索相关记忆..." oninput="debounceSearch()">
+      <button class="btn btn-primary" onclick="searchMemory()">搜索</button>
+    </div>
+
+    <button class="btn btn-secondary" onclick="loadAll()">↻ 刷新列表</button>
+  </aside>
+
+  <section class="memory-list-section">
+    <div class="tab-bar">
+      <button class="tab active" id="tabAll" onclick="switchTab('all')">全部记忆</button>
+      <button class="tab" id="tabSearch" onclick="switchTab('search')">搜索结果</button>
+    </div>
+    <div class="memory-list" id="memoryList"></div>
+  </section>
+</div>
