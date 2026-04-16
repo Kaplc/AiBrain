@@ -2,7 +2,8 @@ import os
 import subprocess
 from fastmcp import FastMCP
 
-from .tools import store_memory, search_memory, list_memories, delete_memory
+from .tools import store_memory, search_memory
+from ._core import update_memory
 
 mcp = FastMCP("Qdrant Memory Server")
 
@@ -46,28 +47,6 @@ def search(query: str) -> list[dict]:
     """
     return search_memory(query)
 
-
-@mcp.tool()
-def list_all() -> list[dict]:
-    """List all stored memories.
-
-    Returns:
-        List of all memories
-    """
-    return list_memories()
-
-
-@mcp.tool()
-def delete(memory_id: str) -> str:
-    """Delete a memory by ID.
-
-    Args:
-        memory_id: The memory ID to delete
-
-    Returns:
-        Confirmation message
-    """
-    return delete_memory(memory_id)
 
 
 @mcp.tool()
@@ -122,6 +101,20 @@ def run_bat(script_path: str) -> str:
         return "Error: Script timed out after 60 seconds"
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def update(memory_id: str, new_text: str) -> str:
+    """Update an existing memory.
+
+    Args:
+        memory_id: The ID of the memory to update
+        new_text: The new memory text
+
+    Returns:
+        Confirmation message
+    """
+    return update_memory(memory_id, new_text)
 
 
 @mcp.tool()

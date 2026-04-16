@@ -76,12 +76,13 @@ def search_memory(query: str) -> list[dict]:
     ]
 
 
-def list_memories() -> list[dict]:
+def list_memories(offset: int = 0, limit: int = 200) -> list[dict]:
     client = get_client()
-    results = client.scroll(
+    results, next_page_offset = client.scroll(
         collection_name=settings.collection_name,
-        limit=200
-    )[0]
+        offset=offset,
+        limit=limit
+    )
     return [
         {
             "id": str(r.id),
@@ -99,3 +100,75 @@ def delete_memory(memory_id: str) -> str:
         points_selector=PointIdsList(points=[memory_id])
     )
     return f"已删除记忆: {memory_id}"
+
+
+def update_memory(memory_id: str, new_text: str) -> str:
+    """更新指定记忆的内容。
+
+    Args:
+        memory_id: 记忆 ID
+        new_text: 新的记忆文本
+
+    Returns:
+        更新结果消息或错误提示
+    """
+    client = get_client()
+
+    # 检查 ID 是否存在
+    try:
+        existing = client.retrieve(
+            collection_name=settings.collection_name,
+            ids=[memory_id]
+        )
+    except Exception:
+        existing = []
+
+    if not existing:
+        return f"错误: 记忆 ID 不存在: {memory_id}"
+
+    vector = encode_texts([new_text])[0]
+    client.upsert(
+        collection_name=settings.collection_name,
+        points=[PointStruct(
+            id=memory_id,
+            vector=vector,
+            payload={
+                "text": new_text,
+                "timestamp": datetime.now().isoformat()
+            }
+        )]
+    )
+    return f"已更新记忆: {new_text}"
+
+
+def organize_memories(query: str) -> dict:
+    """搜索相关记忆并整理。
+
+    Args:
+        query: 查询关键词
+
+    Returns:
+        整理结果字典
+    """
+    from ._organizer import organize_memories as _organize
+
+    # 搜索相关记忆
+    related = search_memory(query)
+
+    # 整理
+    result = _organize(query, related)
+
+    # 删除原记忆
+    for mem_id in result["deleted_ids"]:
+        delete_memory(mem_id)
+
+    # 逐条存入结构化后的记忆（而不是合并成一条）
+    new_ids = []
+    for mem in result.get("individual_memories", []):
+        new_id = store_memory(mem["text"])
+        new_ids.append(new_id.split(": ")[-1] if ": " in new_id else new_id)
+
+    result["new_memory_ids"] = new_ids
+    result["new_memory_id"] = new_ids[0] if new_ids else None
+
+    return result

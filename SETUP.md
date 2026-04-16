@@ -14,7 +14,7 @@ MemoryExtra/
 ├── app.py
 ├── main.py
 ├── start_qdrant.bat
-└── mcp_qdrant/
+└── brain_mcp/
 
 Desktop/
 └── qdrant/

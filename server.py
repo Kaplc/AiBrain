@@ -33,7 +33,7 @@ def health():
 
 @app.route('/status')
 def status():
-    from mcp_qdrant.config import settings
+    from brain_mcp.config import settings
     return jsonify({
         "model_loaded": _ready["model"],
         "qdrant_ready": _ready["qdrant"],

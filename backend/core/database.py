@@ -133,13 +133,13 @@ class StatsDB:
         try:
             import sys
             import os
-            # 添加项目根目录到路径以导入 mcp_qdrant
+            # 添加项目根目录到路径以导入 brain_mcp
             backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             project_root = os.path.dirname(backend_dir)
             if project_root not in sys.path:
                 sys.path.insert(0, project_root)
 
-            from mcp_qdrant.config import settings
+            from brain_mcp.config import settings
             from qdrant_client import QdrantClient
             
             client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)

@@ -11,7 +11,7 @@ class ModelManager:
         self._logger = logger
 
     def load(self, device_setting=None):
-        from mcp_qdrant import embedding as emb
+        from brain_mcp import embedding as emb
 
         if device_setting is None:
             device_setting = self._settings.load().get("device", "cpu")
@@ -57,7 +57,7 @@ class ModelManager:
             self._ready["model"] = False
 
     def get_model_info(self):
-        from mcp_qdrant import embedding as emb
+        from brain_mcp import embedding as emb
         raw = emb.get_model_name() if hasattr(emb, 'get_model_name') else 'BAAI/bge-m3'
         if raw and ('/' in str(raw) or '\\' in str(raw)):
             name = str(raw).replace('\\', '/').split('/')[-1]

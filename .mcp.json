@@ -1,9 +1,13 @@
 {
   "mcpServers": {
-    "qdrant-memory": {
+    "brain": {
       "type": "stdio",
       "command": "venv312/Scripts/python.exe",
-      "args": ["-m", "mcp_qdrant"]
+      "args": [
+        "-m",
+        "brain_mcp"
+      ],
+      "disabled": false
     }
   }
 }

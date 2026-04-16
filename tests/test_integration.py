@@ -162,8 +162,8 @@ class TestE2EFullPipeline:
         """注入真实模型 + 内存版 Qdrant client"""
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
-        import mcp_qdrant.tools as t
-        import mcp_qdrant.embedding as emb
+        import brain_mcp.tools as t
+        import brain_mcp.embedding as emb
 
         emb._model = bge_model
 
@@ -178,7 +178,7 @@ class TestE2EFullPipeline:
         emb._model = None
 
     def test_store_and_search_pipeline(self):
-        from mcp_qdrant.tools import store_memory, search_memory
+        from brain_mcp.tools import store_memory, search_memory
         store_memory("Python 是一种编程语言")
         store_memory("今天天气很好")
         results = search_memory("编程")
@@ -186,7 +186,7 @@ class TestE2EFullPipeline:
         assert any("Python" in r["text"] or "编程" in r["text"] for r in results)
 
     def test_store_list_delete_pipeline(self):
-        from mcp_qdrant.tools import store_memory, list_memories, delete_memory
+        from brain_mcp.tools import store_memory, list_memories, delete_memory
         store_memory("记忆A")
         store_memory("记忆B")
 
@@ -201,8 +201,8 @@ class TestE2EFullPipeline:
         assert str(mem_id) not in ids_after
 
     def test_search_top_k_limit(self):
-        from mcp_qdrant.tools import store_memory, search_memory
-        from mcp_qdrant.config import settings
+        from brain_mcp.tools import store_memory, search_memory
+        from brain_mcp.config import settings
 
         for i in range(10):
             store_memory(f"记忆条目 {i}")

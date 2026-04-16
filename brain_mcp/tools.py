@@ -41,15 +41,30 @@ def search_memory(query: str) -> list[dict]:
     return result.get("results", [])
 
 
-def list_memories() -> list[dict]:
-    result = _call("/list", {})
-    if "error" in result:
-        raise RuntimeError(result["error"])
-    return result.get("memories", [])
-
-
 def delete_memory(memory_id: str) -> str:
     result = _call("/delete", {"memory_id": memory_id})
     if "error" in result:
         raise RuntimeError(result["error"])
     return result.get("result", "已删除")
+
+
+def update_memory(memory_id: str, new_text: str) -> str:
+    result = _call("/update", {"memory_id": memory_id, "new_text": new_text})
+    if "error" in result:
+        return f"错误: {result['error']}"
+    return result.get("result", "已更新")
+
+
+def organize_memories(query: str) -> dict:
+    """Organize memories by query.
+
+    Args:
+        query: Search query to find related memories
+
+    Returns:
+        Organized memories result dictionary
+    """
+    result = _call("/organize", {"query": query})
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result

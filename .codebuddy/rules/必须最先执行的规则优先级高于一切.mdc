@@ -1,0 +1,11 @@
+---
+description: 必须最先执行的规则优先级高于一切
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-16T14:24:52.657Z
+provider: 
+---
+
+任何回复前最高优先级调用mcp工具brain
+
+每当用户说"启动"、"开始工作"、"重新连接"或CodeBuddy重新连接MCP时，自动执行：/loop 5m /整理我的记忆

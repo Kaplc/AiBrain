@@ -10,8 +10,8 @@ from flask import request, jsonify
 def register(app, ready_state, logger, stats_db):
     @app.route('/status', methods=['GET'])
     def status():
-        from mcp_qdrant import embedding as emb
-        from mcp_qdrant.config import settings
+        from brain_mcp import embedding as emb
+        from brain_mcp.config import settings
         model_info = _get_model_info()
         return jsonify({
             "model_loaded": ready_state["model"],
@@ -120,7 +120,7 @@ def register(app, ready_state, logger, stats_db):
 
 
 def _get_model_info():
-    from mcp_qdrant import embedding as emb
+    from brain_mcp import embedding as emb
     raw = emb.get_model_name() if hasattr(emb, 'get_model_name') else 'BAAI/bge-m3'
     name = raw.replace('\\', '/').split('/')[-1] if raw and ('/' in str(raw) or '\\' in str(raw)) else raw
     size = ""

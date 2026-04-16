@@ -1,6 +1,6 @@
 """测试 config.py 中的 Settings 配置类"""
 import pytest
-from mcp_qdrant.config import Settings
+from brain_mcp.config import Settings
 
 
 class TestSettingsDefaults:
