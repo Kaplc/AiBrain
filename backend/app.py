@@ -89,21 +89,28 @@ def log():
 # ── 预加载（模型 + Qdrant）────────────────────────────────
 
 def _preload():
-    try:
-        import urllib.request
-        urllib.request.urlopen(f'http://localhost:{_QDRANT_HTTP_PORT}/healthz', timeout=5)
-        _ready["qdrant"] = True
-        logger.info(f"Qdrant connected on port {_QDRANT_HTTP_PORT}")
-        
-        # 同步 Qdrant 记忆数量到数据库
+    import time, urllib.request
+    # 重试连接 Qdrant（最多 20 秒）
+    for attempt in range(10):
+        try:
+            urllib.request.urlopen(f'http://localhost:{_QDRANT_HTTP_PORT}/healthz', timeout=3)
+            _ready["qdrant"] = True
+            logger.info(f"Qdrant connected on port {_QDRANT_HTTP_PORT}")
+            break
+        except Exception as e:
+            if attempt < 9:
+                time.sleep(2)
+            else:
+                logger.error(f"Qdrant connect failed after retries: {e}")
+
+    # 同步 Qdrant 记忆数量到数据库
+    if _ready["qdrant"]:
         try:
             count = stats_db.sync_qdrant_count()
             if count is not None:
                 logger.info(f"Synced memory count from Qdrant: {count}")
         except Exception as e:
             logger.error(f"Failed to sync qdrant count: {e}")
-    except Exception as e:
-        logger.error(f"Qdrant connect failed: {e}")
 
     device_setting = settings_mgr.load().get("device", "cpu")
     model_mgr.load(device_setting)
@@ -134,7 +141,7 @@ if __name__ == '__main__':
     flask_thread.start()
 
     # 等待 Flask 就绪
-    import urllib.request
+    import urllib.request, time
     logger.info('Waiting for Flask to be ready...')
     for _ in range(30):
         try:
@@ -142,13 +149,27 @@ if __name__ == '__main__':
             logger.info(f'Flask is ready on port {_FLASK_PORT}')
             break
         except Exception:
-            import time; time.sleep(0.5)
+            time.sleep(0.5)
     else:
         logger.error('Flask failed to start')
 
+    # 等待 Qdrant 就绪（_preload 在后台线程中连接）
+    logger.info('Waiting for Qdrant...')
+    for _ in range(30):
+        if _ready.get("qdrant"):
+            logger.info('Qdrant is ready')
+            break
+        time.sleep(1)
+    else:
+        logger.error('Qdrant not ready after 30s, aborting startup')
+        print('ERROR: Qdrant connection failed. Please check Qdrant configuration.')
+        input('Press Enter to exit...')
+        os._exit(1)
+
     ui_path = os.path.join(os.path.dirname(__file__), '..', 'web', 'index.html')
+    project_name = os.path.basename(_PROJECT_ROOT)
     window = webview.create_window(
-        title='Memory Manager',
+        title=f'Memory Manager - {project_name}',
         url=f'http://127.0.0.1:{_FLASK_PORT}',
         width=1000,
         height=680,

@@ -246,8 +246,16 @@ async function fetchAndDrawChart(range) {
     // 更新今日新增统计
     const todayEl = document.getElementById('statToday');
     if (todayEl) {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      todayEl.textContent = (data.find(d => d.date === todayStr)?.added) || 0;
+      // today 页签数据日期为小时格式(如 "14:00")，汇总所有小时的 added；其他页签匹配日期字符串
+      const isHourly = _currentChartRange === 'today';
+      let todayAdded;
+      if (isHourly) {
+        todayAdded = data.reduce((sum, d) => sum + (d.added || 0), 0);
+      } else {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        todayAdded = (data.find(d => d.date === todayStr)?.added) || 0;
+      }
+      todayEl.textContent = todayAdded;
     }
 
     drawChartCurve(data, range);

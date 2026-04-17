@@ -84,13 +84,13 @@ def _roll_logs(log_dir):
         except Exception as e:
             print(f"[logger] Archive failed for {f}: {e}")
 
-    # 清理归档目录，最多保留6个归档文件（删除最旧的）
+    # 清理归档目录，最多保留3个归档文件（删除最旧的）
     archive_files = sorted(glob.glob(os.path.join(archive_dir, 'app_*.log')),
                            key=os.path.getmtime, reverse=True)
-    print(f"[logger] Archive directory has {len(archive_files)} files, keeping newest 6")
+    print(f"[logger] Archive directory has {len(archive_files)} files, keeping newest 3")
     sys.stdout.flush()
 
-    for f in archive_files[6:]:
+    for f in archive_files[3:]:
         try:
             os.remove(f)
             print(f"[logger] Removed old archive: {os.path.basename(f)}")

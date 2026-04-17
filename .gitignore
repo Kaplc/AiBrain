@@ -31,6 +31,10 @@ logs/
 # 忽略 SQLite 数据库
 backend/stats.db
 
+# 项目自动生成的端口配置（每个项目不同，不要提交）
+.port
+.port_config
+
 # Node.js / Playwright
 node_modules/
 package-lock.json

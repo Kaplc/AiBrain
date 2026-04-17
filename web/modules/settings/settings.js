@@ -46,8 +46,11 @@ async function loadSettingsPage() {
       if (st.cuda_available) {
         gpuEl.innerHTML = `✅ 检测到 GPU：<strong>${st.gpu_name}</strong>`;
         gpuEl.className = 'gpu-info ok';
+      } else if (st.gpu_hardware) {
+        gpuEl.innerHTML = `⚠️ 检测到 NVIDIA GPU，但安装的是 CPU 版 PyTorch。<br><small>运行以下命令安装 GPU 版：</small><br><code>pip uninstall torch -y && pip install torch --index-url https://download.pytorch.org/whl/cu124</code>`;
+        gpuEl.className = 'gpu-info warn';
       } else {
-        gpuEl.textContent = '❌ 未检测到 NVIDIA GPU，GPU 选项不可用';
+        gpuEl.textContent = '未检测到 NVIDIA GPU，GPU 选项不可用';
         gpuEl.className = 'gpu-info err';
       }
     }

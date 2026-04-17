@@ -59,8 +59,14 @@ async function loadAll() {
   } catch(e) { console.error(e); }
 }
 
-function updateStats() {
-  document.getElementById('totalCount').textContent = allMemories.length;
+async function updateStats() {
+  // 总数从 /memory-count 获取（Qdrant 真实数量）
+  try {
+    const cntRes = await fetchJson(API + '/memory-count');
+    document.getElementById('totalCount').textContent = (cntRes.count || 0);
+  } catch(e) {
+    document.getElementById('totalCount').textContent = allMemories.length;
+  }
   const today = new Date().toISOString().slice(0, 10);
   const cnt = allMemories.filter(m => (m.timestamp || '').startsWith(today)).length;
   document.getElementById('todayCount').textContent = cnt;

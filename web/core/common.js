@@ -1,6 +1,6 @@
 /* 通用工具函数 - 所有页面共享 */
 
-const API = 'http://127.0.0.1:18765';
+const API = window.location.origin;
 
 /**
  * 带重试的 JSON fetch

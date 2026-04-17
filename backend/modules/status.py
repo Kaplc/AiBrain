@@ -13,12 +13,18 @@ def register(app, ready_state, logger, stats_db):
         from brain_mcp import embedding as emb
         from brain_mcp.config import settings
         model_info = _get_model_info()
+
+        # 区分：无 GPU 硬件 / 有 GPU 但缺 CUDA 版 PyTorch
+        cuda_available = torch.cuda.is_available()
+        gpu_hardware = _has_nvidia_gpu()
+
         return jsonify({
             "model_loaded": ready_state["model"],
             "qdrant_ready": ready_state["qdrant"],
             "device": ready_state["device"],
-            "cuda_available": torch.cuda.is_available(),
-            "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "cuda_available": cuda_available,
+            "gpu_hardware": gpu_hardware,
+            "gpu_name": torch.cuda.get_device_name(0) if cuda_available else None,
             "embedding_model": model_info["name"],
             "embedding_dim": int(os.environ.get('QDRANT_EMBEDDING_DIM', 1024)),
             "model_size": model_info["size"],
@@ -106,13 +112,21 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/memory-count', methods=['GET'])
     def memory_count():
-        """获取记忆总数（从数据库读取，启动时已同步 Qdrant）"""
+        """获取记忆总数（直接从 Qdrant 获取真实数量）"""
         try:
-            count = stats_db.get_memory_count()
+            from brain_mcp._core import get_client
+            client = get_client()
+            collection_info = client.get_collection(settings.collection_name)
+            count = collection_info.points_count
             return jsonify({"count": count})
         except Exception as e:
             logger.error(f"[memory-count] error: {e}")
-            return jsonify({"count": 0, "error": str(e)})
+            # fallback: 从 SQLite 读取
+            try:
+                count = stats_db.get_memory_count()
+                return jsonify({"count": count})
+            except Exception:
+                return jsonify({"count": 0, "error": str(e)})
 
     @app.route('/health', methods=['GET'])
     def health():
@@ -147,3 +161,29 @@ def _get_qdrant_count(settings):
         return collection_info.points_count
     except Exception:
         return 0
+
+
+def _has_nvidia_gpu():
+    """检测系统是否有 NVIDIA GPU 硬件（不依赖 CUDA 版 PyTorch）"""
+    # 优先用 pynvml（已安装）
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        count = pynvml.nvmlDeviceGetCount()
+        pynvml.nvmlShutdown()
+        return count > 0
+    except Exception:
+        pass
+    # fallback: 用 wmic 查询显卡
+    try:
+        result = subprocess.run(
+            'wmic path win32_VideoController get name,AdapterRAM /format=csv',
+            shell=True, capture_output=True, timeout=5, text=True
+        )
+        lines = [l.strip() for l in result.stdout.split('\n') if l.strip()]
+        if len(lines) >= 2:
+            name = lines[-1].split(',')[2] if len(lines[-1].split(',')) >= 3 else ''
+            return 'nvidia' in name.lower()
+    except Exception:
+        pass
+    return False

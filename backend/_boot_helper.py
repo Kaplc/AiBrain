@@ -3,6 +3,26 @@ import socket
 import os
 import sys
 import subprocess
+import hashlib
+
+
+# 基础端口（每个项目根据路径 hash 自动偏移，避免冲突）
+BASE_FLASK = 18765
+BASE_QDRANT_HTTP = 6333
+BASE_QDRANT_GRPC = 6334
+
+# 端口范围：offset 最大值（确保不超出合法端口）
+MAX_OFFSET = 2000
+
+
+def project_hash_offset():
+    """根据项目根目录路径生成确定性偏移量，不同项目自动分配不同端口"""
+    # 项目根目录 = backend/ 的上级目录
+    project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    path_bytes = project_root.encode('utf-8')
+    digest = hashlib.md5(path_bytes).hexdigest()
+    offset = int(digest[:8], 16) % MAX_OFFSET
+    return offset, project_root
 
 
 def is_port_free(port):
@@ -19,10 +39,13 @@ def is_port_free(port):
 
 
 def find_free_ports():
-    """从基础端口递增，找到一组可用的 Flask+Qdrant 端口"""
-    base_f, base_h, base_g = 18765, 6333, 6334
-    for offset in range(100):
-        f, h, g = base_f + offset, base_h + offset * 2, base_g + offset * 2
+    """从项目专属基础端口递增，找到一组可用的 Flask+Qdrant 端口"""
+    offset, _ = project_hash_offset()
+    for i in range(100):
+        o = offset + i * 3
+        f = BASE_FLASK + (o % (MAX_OFFSET * 10))
+        h = BASE_QDRANT_HTTP + (o % (MAX_OFFSET * 10))
+        g = BASE_QDRANT_GRPC + (o % (MAX_OFFSET * 10))
         if is_port_free(f) and is_port_free(h) and is_port_free(g):
             return {"flask": f, "http": h, "grpc": g}
     raise RuntimeError("无法找到可用端口")
