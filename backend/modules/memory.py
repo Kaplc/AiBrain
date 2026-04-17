@@ -15,10 +15,15 @@ def register(app, stats_db):
         hit_ids = (data or {}).get('hit_ids', [])
         if not text:
             return jsonify({"error": "内容不能为空"})
-        if not hit_ids:
-            return jsonify({"error": "hit_ids 不能为空"})
+        # 检查当前已有记忆数量，20条以内允许 hit_ids 为空
+        from modules.brain.memory import get_client
+        from brain_mcp.config import settings as brain_settings
+        client = get_client()
+        total = client.count(collection_name=brain_settings.collection_name, exact=True).count
+        if total >= 20 and not hit_ids:
+            return jsonify({"error": "已有记忆达到20条，往后每次保存都需要引用已有记忆ID（hit_ids）"})
         try:
-            result = store_memory(text, hit_ids=hit_ids)
+            result = store_memory(text, hit_ids=hit_ids or [])
             stats_db.record_action(added=1)
             stats_db.append_stream('store', content=text)
             return jsonify({"result": result})

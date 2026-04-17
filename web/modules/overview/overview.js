@@ -217,7 +217,7 @@ function drawEChart(data, range) {
   });
 
   const option = {
-    grid: { top: 8, right: 8, bottom: 24, left: 32 },
+    grid: { top: 8, right: 52, bottom: 24, left: 8 },
     xAxis: {
       type: 'category',
       data: dates,
@@ -229,7 +229,7 @@ function drawEChart(data, range) {
       type: 'value',
       position: 'right',
       splitLine: { lineStyle: { color: '#2d314922' } },
-      axisLabel: { color: '#64748b', fontSize: 10, formatter: function(v) { return v % 1 === 0 ? v : ''; } },
+      axisLabel: { color: '#64748b', fontSize: 10 },
       axisLine: { show: false },
       axisTick: { show: false },
     },

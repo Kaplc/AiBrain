@@ -70,6 +70,21 @@ async function updateStats() {
   const today = new Date().toISOString().slice(0, 10);
   const cnt = allMemories.filter(m => (m.timestamp || '').startsWith(today)).length;
   document.getElementById('todayCount').textContent = cnt;
+
+  // 唤醒次数和遗忘率
+  let totalHits = 0;
+  let totalDecay = 0;
+  allMemories.forEach(m => {
+    const hc = m.hit_count || 0;
+    totalHits += hc;
+    const lastHit = m.last_hit_at || m.timestamp;
+    const daysIdle = lastHit ? (Date.now() - new Date(lastHit).getTime()) / 86400000 : 0;
+    const hitFactor = hc > 0 ? Math.log(hc + 1) : 0.1;
+    const decay = hitFactor * Math.exp(-0.03 * daysIdle);
+    totalDecay += decay;
+  });
+  document.getElementById('totalHits').textContent = totalHits;
+  document.getElementById('avgDecay').textContent = allMemories.length > 0 ? (totalDecay / allMemories.length * 100).toFixed(0) + '%' : '0%';
 }
 
 async function deleteMemory(id) {

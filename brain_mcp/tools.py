@@ -45,8 +45,8 @@ def store_memory(text: str, hit_ids: list = None) -> str:
 
 
 def search_memory(query: str) -> list[dict]:
-    """搜索记忆，返回结果包含 decay_score（衰减评分）"""
+    """搜索记忆，只返回 id 和 text"""
     result = _call("/search", {"query": query})
     if "error" in result:
         raise RuntimeError(result["error"])
-    return result.get("results", [])
+    return [{"id": r["id"], "text": r["text"]} for r in result.get("results", [])]
