@@ -8,26 +8,30 @@ powershell -ExecutionPolicy Bypass -File "%~dp0kill_ports.ps1"
 
 ping -n 2 127.0.0.1 >NUL 2>&1
 
-:: ── 检查/创建虚拟环境 (Python 3.12) ───────────────────
+:: ── 检查/创建虚拟环境 (Python 3.12+) ────────────────
 echo === Checking Virtual Environment ===
 if not exist "venv312\Scripts\python.exe" (
     echo Virtual environment not found.
-    :: 查找 Python 3.12（优先使用已安装的版本）
+    :: 查找任意 Python 3.12+（优先使用已安装的版本）
     set "PYTHON312="
     if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
         set "PYTHON312=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
+        set "PYTHON312=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
     ) else if exist "C:\Python312\python.exe" (
         set "PYTHON312=C:\Python312\python.exe"
+    ) else if exist "C:\Python313\python.exe" (
+        set "PYTHON312=C:\Python313\python.exe"
     ) else for %%p in (python) do (
-        %%p --version 2>NUL | findstr /C:"3.12" >NUL && set "PYTHON312=%%p"
+        %%p --version 2>NUL | findstr /C:"3.1" >NUL && set "PYTHON312=%%p"
     )
     if "!PYTHON312!"=="" (
-        echo Python 3.12 not found. Please install Python 3.12 first:
-        echo   https://www.python.org/downloads/release/python-31210/
+        echo Python 3.12+ not found. Please install Python 3.12 or higher.
+        echo   https://www.python.org/downloads/
         pause
         exit /b 1
     )
-    echo Found Python 3.12: !PYTHON312!
+    echo Found Python: !PYTHON312!
     echo Creating virtual environment...
     "!PYTHON312!" -m venv venv312
     if %ERRORLEVEL% neq 0 (

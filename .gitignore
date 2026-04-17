@@ -45,3 +45,4 @@ test-results/
 .claude/scheduled_tasks.json
 models.zip
 backend/qdrant/config/config.yaml
+.claude/settings.local.json
