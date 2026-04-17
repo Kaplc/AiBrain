@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     collection_name: str = "memories"
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024
-    top_k: int = 5
+    top_k: int = 10
+    score_threshold: float = 0.5
 
     class Config:
         env_prefix = "QDRANT_"

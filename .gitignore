@@ -44,12 +44,4 @@ test-results/
 # Claude
 .claude/scheduled_tasks.json
 models.zip
-logs/app_20260416_020739.log
-logs/app_20260416_021024.log
-logs/archive/app_20260416_014624.log
-logs/archive/app_20260416_015408.log
-logs/archive/app_20260416_015532.log
-logs/archive/app_20260416_015855.log
-logs/archive/app_20260416_020153.log
-logs/archive/app_20260416_020344.log
-logs/archive/app_20260416_020502.log
+backend/qdrant/config/config.yaml

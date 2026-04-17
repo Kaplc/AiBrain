@@ -9,6 +9,14 @@ flask-cors==6.0.2
 # Desktop UI
 pywebview==6.2
 
+# Screen capture (Eye MCP)
+Pillow>=10.0
+
+# Computer control (Computer MCP)
+pyautogui>=0.9.54
+pyperclip>=1.11.0
+PyGetWindow>=0.0.9
+
 # Vector database client
 qdrant-client==1.17.1
 

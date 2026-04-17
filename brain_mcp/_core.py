@@ -73,6 +73,7 @@ def search_memory(query: str) -> list[dict]:
             "score": round(r.score, 4)
         }
         for r in results.points
+        if r.score >= settings.score_threshold
     ]
 
 
