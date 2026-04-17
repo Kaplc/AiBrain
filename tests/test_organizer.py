@@ -7,14 +7,14 @@ class TestClassifyMemories:
 
     def test_classify_empty(self):
         """空列表应返回所有类型空列表"""
-        from brain_mcp._organizer import classify_memories, TYPE_DESCRIPTIONS
+        from modules.brain.organizer import classify_memories, TYPE_DESCRIPTIONS
 
         result = classify_memories([])
         assert result == {t: [] for t in TYPE_DESCRIPTIONS}
 
     def test_classify_single_memory(self):
         """单条记忆应该能正确分类"""
-        from brain_mcp._organizer import classify_memories
+        from modules.brain.organizer import classify_memories
 
         memories = [
             {"id": "1", "text": "我喜欢用 Python 编程", "timestamp": "2024-01-01"}
@@ -34,7 +34,7 @@ class TestClassifyMemories:
 
     def test_classify_mixed_memories(self):
         """混合内容应该正确分类"""
-        from brain_mcp._organizer import classify_memories
+        from modules.brain.organizer import classify_memories
 
         memories = [
             {"id": "1", "text": "我喜欢吃火锅", "timestamp": "2024-01-01"},
@@ -53,7 +53,7 @@ class TestGenerateOrganizedText:
 
     def test_empty_categorized(self):
         """空分类应该生成空结构"""
-        from brain_mcp._organizer import generate_organized_text, TYPE_DESCRIPTIONS
+        from modules.brain.organizer import generate_organized_text, TYPE_DESCRIPTIONS
 
         categorized = {t: [] for t in TYPE_DESCRIPTIONS}
         result = generate_organized_text("测试", categorized)
@@ -63,7 +63,7 @@ class TestGenerateOrganizedText:
 
     def test_with_content(self):
         """有内容时应该生成完整结构"""
-        from brain_mcp._organizer import generate_organized_text
+        from modules.brain.organizer import generate_organized_text
 
         categorized = {
             "user": [{"id": "1", "text": "我喜欢 Python", "timestamp": "2024-01-01"}],
@@ -86,7 +86,7 @@ class TestGenerateSummary:
 
     def test_empty_summary(self):
         """空分类应该返回空列表"""
-        from brain_mcp._organizer import generate_summary, TYPE_DESCRIPTIONS
+        from modules.brain.organizer import generate_summary, TYPE_DESCRIPTIONS
 
         categorized = {t: [] for t in TYPE_DESCRIPTIONS}
         result = generate_summary(categorized)
@@ -94,7 +94,7 @@ class TestGenerateSummary:
 
     def test_with_summary(self):
         """有内容时应该生成摘要"""
-        from brain_mcp._organizer import generate_summary
+        from modules.brain.organizer import generate_summary
 
         categorized = {
             "user": [{"id": "1", "text": "我喜欢 Python 编程", "timestamp": "2024-01-01"}],
@@ -117,7 +117,7 @@ class TestOrganizeMemories:
 
     def test_empty_memories(self):
         """空记忆列表"""
-        from brain_mcp._organizer import organize_memories
+        from modules.brain.organizer import organize_memories
 
         result = organize_memories("测试", [])
 
@@ -128,7 +128,7 @@ class TestOrganizeMemories:
 
     def test_result_structure(self):
         """结果结构完整性"""
-        from brain_mcp._organizer import organize_memories
+        from modules.brain.organizer import organize_memories
 
         memories = [
             {"id": "1", "text": "我喜欢 Python", "timestamp": "2024-01-01"},

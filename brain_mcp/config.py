@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
     top_k: int = 10
     score_threshold: float = 0.5
+    decay_lambda: float = 0.03
+    search_limit_multiplier: int = 3
+    forget_days: int = 100
 
     class Config:
         env_prefix = "QDRANT_"

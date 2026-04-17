@@ -1,1 +1,31 @@
-{"mcpServers": {"brain": {"type": "stdio", "command": "venv312/Scripts/python.exe", "args": ["-m", "brain_mcp"], "disabled": false}, "eye": {"type": "stdio", "command": "venv312/Scripts/python.exe", "args": ["-m", "mcp_servers.eye_mcp.server"], "disabled": false}, "computer": {"type": "stdio", "command": "venv312/Scripts/python.exe", "args": ["-m", "mcp_servers.computer_mcp.server"], "disabled": false}}}
+{
+  "mcpServers": {
+    "brain": {
+      "type": "stdio",
+      "command": "venv312/Scripts/python.exe",
+      "args": [
+        "-m",
+        "brain_mcp"
+      ],
+      "disabled": false
+    },
+    "eye": {
+      "type": "stdio",
+      "command": "venv312/Scripts/python.exe",
+      "args": [
+        "-m",
+        "mcp_servers.eye_mcp.server"
+      ],
+      "disabled": false
+    },
+    "computer": {
+      "type": "stdio",
+      "command": "venv312/Scripts/python.exe",
+      "args": [
+        "-m",
+        "mcp_servers.computer_mcp.server"
+      ],
+      "disabled": false
+    }
+  }
+}

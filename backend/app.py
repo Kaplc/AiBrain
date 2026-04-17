@@ -107,13 +107,20 @@ def _preload():
     if _ready["qdrant"]:
         try:
             # 确保 collection 存在
-            from brain_mcp._core import get_client
+            from modules.brain.memory import get_client
             get_client()
             count = stats_db.sync_qdrant_count()
             if count is not None:
                 logger.info(f"Synced memory count from Qdrant: {count}")
         except Exception as e:
             logger.error(f"Failed to sync qdrant count: {e}")
+
+        # 启动后台遗忘清理
+        try:
+            from modules.brain.memory import start_cleanup_loop
+            start_cleanup_loop()
+        except Exception as e:
+            logger.warning(f"Cleanup loop failed to start: {e}")
 
     device_setting = settings_mgr.load().get("device", "cpu")
     model_mgr.load(device_setting)

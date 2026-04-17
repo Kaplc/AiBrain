@@ -132,7 +132,14 @@
       "Bash(awk '{print \"Killing PID\", $5}')",
       "Bash(cmd /c \"echo test\")",
       "Bash(cmd /c \"start.bat\")",
-      "Bash(cmd /c \"netstat -ano | findstr /C:\\\\\":18765 \\\\\" | findstr LISTENING\")"
+      "Bash(cmd /c \"netstat -ano | findstr /C:\\\\\":18765 \\\\\" | findstr LISTENING\")",
+      "Bash(taskkill:*)",
+      "Bash(PYTHONPATH=\"$\\(pwd\\);$\\(pwd\\)/backend\" FLASK_PORT=18765 QDRANT_HTTP_PORT=18766 QDRANT_GRPC_PORT=18767 venv312/Scripts/python.exe backend/app.py)",
+      "Bash(PYTHONPATH=\"E:/Project/MemoryExtra;E:/Project/MemoryExtra/backend\" FLASK_PORT=18765 QDRANT_HTTP_PORT=18766 QDRANT_GRPC_PORT=18767 venv312/Scripts/python.exe:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(start \"\" /MIN backend/qdrant/qdrant.exe --config-path /tmp/qdrant_config.yaml)",
+      "Bash(PYTHONPATH=\"E:/Project/MemoryExtra;E:/Project/MemoryExtra/backend\" FLASK_PORT=18765 QDRANT_HTTP_PORT=18766 QDRANT_GRPC_PORT=18767 FORCE_CPU=1 venv312/Scripts/python.exe backend/app.py)",
+      "Bash(echo \"PID=$!\")"
     ]
   },
   "enableAllProjectMcpServers": true,
