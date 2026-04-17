@@ -6,6 +6,8 @@ import psutil
 import subprocess
 from flask import request, jsonify
 
+_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
 
 def register(app, ready_state, logger, stats_db):
     @app.route('/status', methods=['GET'])
@@ -120,9 +122,35 @@ def register(app, ready_state, logger, stats_db):
             logger.error(f"[memory-count] error: {e}")
             return jsonify({"count": 0, "error": str(e)})
 
-    @app.route('/health', methods=['GET'])
-    def health():
-        return jsonify({"status": "ok"})
+    @app.route('/model-info', methods=['GET'])
+    def model_info():
+        """检查本地是否有已下载的模型"""
+        import os, huggingface_hub
+        # 1. 检查 models/ 目录
+        models_local = os.path.join(_PROJECT_ROOT, 'models')
+        model_name = emb.get_model_name()
+        local_path = os.path.join(models_local, model_name.replace('/', '_'))
+
+        local_exists = os.path.isdir(local_path) and any(
+            f.endswith(('.bin', '.safetensors', '.txt'))
+            for f in os.listdir(local_path) if os.path.isfile(os.path.join(local_path, f))
+        )
+
+        # 2. 检查 HuggingFace 缓存
+        cache_info = huggingface_hub.scan_cache_dir()
+        cached = any(
+            'BAAI' in str(m.model_id) or 'bge' in str(m.model_id).lower()
+            for m in cache_info.models
+        )
+
+        return jsonify({
+            "local_models_dir": models_local,
+            "model_name": model_name,
+            "local_path": local_path if local_exists else None,
+            "local_available": local_exists,
+            "hf_cache_available": cached,
+            "embedding_dim": int(os.environ.get('QDRANT_EMBEDDING_DIM', 1024)),
+        })
 
 
 def _get_model_info():
