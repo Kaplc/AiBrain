@@ -39,8 +39,13 @@ def is_port_free(port):
 
 
 def find_free_ports():
-    """从基础端口开始，查找5个连续空闲的端口"""
-    for start in range(BASE_FLASK, 65535 - 4):
+    """从项目专属起始端口开始，查找5个连续空闲的端口"""
+    offset, _ = project_hash_offset()
+    start = BASE_FLASK + offset
+    # 保障不超出合法端口范围
+    if start > 65535 - 4:
+        start = BASE_FLASK + (offset % 100)  # 兜底
+    for start in range(start, min(start + 100, 65535 - 4)):
         if all(is_port_free(start + i) for i in range(5)):
             return start, start + 1, start + 2, start + 3, start + 4
     raise RuntimeError("无法找到可用端口")
