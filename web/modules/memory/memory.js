@@ -116,6 +116,8 @@ function renderList(items, isSearch) {
         <div class="memory-meta">
           <span class="memory-time">🕐 ${formatTime(m.timestamp)}</span>
           ${m.score !== undefined ? `<span class="memory-score">相似度 ${(m.score*100).toFixed(1)}%</span>` : ''}
+          ${m.hit_count !== undefined ? `<span class="memory-hits">${m.hit_count}</span>` : ''}
+          ${m.decay_score !== undefined ? `<span class="memory-decay">${m.decay_score.toFixed(2)}</span>` : ''}
           <span class="memory-id">${(m.id||'').slice(0,8)}...</span>
         </div>
       </div>

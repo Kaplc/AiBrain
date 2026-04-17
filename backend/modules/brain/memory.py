@@ -222,16 +222,24 @@ def list_memories(offset: int = 0, limit: int = 200) -> list[dict]:
         offset=offset,
         limit=limit
     )
-    return [
+    memories = [
         {
             "id": str(r.id),
             "text": r.payload.get("text", ""),
             "timestamp": r.payload.get("timestamp"),
             "hit_count": r.payload.get("hit_count", 0),
-            "last_hit_at": r.payload.get("last_hit_at")
+            "last_hit_at": r.payload.get("last_hit_at"),
+            "decay_score": round(_calculate_decay_score(
+                1.0,
+                r.payload.get("hit_count", 0),
+                r.payload.get("last_hit_at"),
+                settings.decay_lambda
+            ), 4)
         }
         for r in results
     ]
+    memories.sort(key=lambda x: x["decay_score"], reverse=True)
+    return memories
 
 
 def delete_memory(memory_id: str) -> str:
