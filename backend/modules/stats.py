@@ -112,16 +112,17 @@ def _get_daily_data(stats_db, start_date, end_date, range_type):
 
 
 def _get_hourly_data(stats_db):
-    """获取最近24小时按小时统计的数据"""
+    """获取最近24小时按小时统计的数据，最新刻度为当前小时"""
     now = _dt.datetime.now()
-    # 24小时前的时间点
-    since = now - _dt.timedelta(hours=24)
+    # 当前已过的整小时（如 01:46 → 01:00）
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    # 24小时前的整点
+    since = current_hour - _dt.timedelta(hours=23)
     since_str = since.strftime('%Y-%m-%d %H:%M:%S')
-    current_hour = now.hour
 
     db = stats_db._get_conn()
 
-    # 查询最近24小时每小时的操作记录
+    # 查询24小时内的操作记录
     rows = db.execute('''
         SELECT strftime('%Y-%m-%d %H:00:00', created_at) as hour_slot,
                action, COUNT(*) as cnt
@@ -152,16 +153,15 @@ def _get_hourly_data(stats_db):
     db.close()
     total_so_far = prev_total['total'] or 0 if prev_total else 0
 
-    # 生成最近24小时数据
+    # 生成24小时数据（从 since=23小时前 到 current_hour=当前小时，共24个）
     hourly_data = []
     for i in range(24):
         slot_time = since + _dt.timedelta(hours=i)
-        slot_str = slot_time.strftime('%H:00')
         iso_slot = slot_time.strftime('%Y-%m-%d %H:00:00')
         stats = hour_stats.get(iso_slot, {'added': 0, 'updated': 0})
         total_so_far += stats['added']
         hourly_data.append({
-            "date": slot_str,
+            "date": slot_time.strftime('%H:00'),
             "added": stats['added'],
             "updated": stats['updated'],
             "total": max(0, total_so_far),

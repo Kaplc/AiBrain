@@ -207,7 +207,9 @@ function drawEChart(data, range) {
   // 保存原始数据供 tooltip 使用
   _chartData = data;
 
-  const dates = data.map(d => {
+  const chartData = data;
+
+  const dates = chartData.map(d => {
     if (range === 'today') return d.date;
     const day = d.date.slice(-2);
     if (day === '01') return d.date.slice(5, 7) + '月';
@@ -243,7 +245,7 @@ function drawEChart(data, range) {
         const fullDate = rawData ? rawData.date : params[0].axisValue;
         let html = '<div style="font-weight:600;color:#a78bfa;margin-bottom:6px">' + fullDate + '</div>';
         params.forEach(p => {
-          const colors = { '累计': '#a78bfa', '新增': '#86efac', '更新': '#fde047' };
+          const colors = { '累计': '#a78bfa', '新增': '#86efac' };
           html += '<div style="display:flex;justify-content:space-between;gap:12px;margin:2px 0"><span style="color:#94a3b8">' + p.seriesName + '</span><span style="font-weight:600;color:' + (colors[p.seriesName] || '#fff') + '">' + p.value + '</span></div>';
         });
         return html;
@@ -253,7 +255,7 @@ function drawEChart(data, range) {
       {
         name: '累计',
         type: 'line',
-        data: data.map(d => d.total),
+        data: chartData.map(d => d.total),
         smooth: true,
         symbol: 'circle',
         symbolSize: 6,
@@ -264,22 +266,12 @@ function drawEChart(data, range) {
       {
         name: '新增',
         type: 'line',
-        data: data.map(d => d.added || 0),
+        data: chartData.map(d => d.added || 0),
         smooth: true,
         symbol: 'circle',
         symbolSize: 6,
         lineStyle: { color: '#22c55e', width: 2 },
         itemStyle: { color: '#22c55e' },
-      },
-      {
-        name: '更新',
-        type: 'line',
-        data: data.map(d => d.updated || 0),
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#f59e0b', width: 2 },
-        itemStyle: { color: '#f59e0b' },
       },
     ],
   };
