@@ -8,6 +8,7 @@ from modules.brain.memory import (
 
 
 def register(app, stats_db):
+    import threading
     @app.route('/store', methods=['POST'])
     def store():
         data = request.get_json()
@@ -85,6 +86,29 @@ def register(app, stats_db):
             result = update_memory(memory_id, new_text)
             stats_db.append_stream('update', content=new_text, memory_id=memory_id)
             return jsonify({"result": result})
+        except Exception as e:
+            return jsonify({"error": str(e)})
+
+    @app.route('/update-async', methods=['POST'])
+    def update_async():
+        """异步更新记忆，立即返回，更新在后台执行"""
+        data = request.get_json() or {}
+        memory_id = (data or {}).get('memory_id', '').strip()
+        new_text = (data or {}).get('new_text', '').strip()
+        if not memory_id:
+            return jsonify({"error": "缺少 memory_id"})
+        if not new_text:
+            return jsonify({"error": "新内容不能为空"})
+        try:
+            # 后台异步执行，不阻塞
+            def _do_update():
+                try:
+                    update_memory(memory_id, new_text)
+                    stats_db.append_stream('update', content=new_text, memory_id=memory_id)
+                except Exception:
+                    pass  # 后台任务，忽略错误
+            threading.Thread(target=_do_update, daemon=True).start()
+            return jsonify({"result": "更新已提交后台"})
         except Exception as e:
             return jsonify({"error": str(e)})
 

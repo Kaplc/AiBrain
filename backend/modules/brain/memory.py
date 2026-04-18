@@ -252,7 +252,7 @@ def delete_memory(memory_id: str) -> str:
 
 
 def update_memory(memory_id: str, new_text: str) -> str:
-    """更新指定记忆的内容，保留 hit_count 和 last_hit_at"""
+    """更新指定记忆的内容，降低 hit_count（内容更新后引用关联减弱）"""
     client = get_client()
 
     try:
@@ -268,6 +268,8 @@ def update_memory(memory_id: str, new_text: str) -> str:
 
     vector = encode_texts([new_text])[0]
     current = existing[0].payload
+    # hit_count 降低为原来的一半
+    new_hit_count = max(0, int(current.get("hit_count", 0) * 0.5))
     client.upsert(
         collection_name=settings.collection_name,
         points=[PointStruct(
@@ -276,8 +278,8 @@ def update_memory(memory_id: str, new_text: str) -> str:
             payload={
                 "text": new_text,
                 "timestamp": _now().isoformat(),
-                "hit_count": current.get("hit_count", 0),
-                "last_hit_at": current.get("last_hit_at")
+                "hit_count": new_hit_count,
+                "last_hit_at": None
             }
         )]
     )

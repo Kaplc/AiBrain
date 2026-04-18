@@ -50,3 +50,19 @@ def search_memory(query: str) -> list[dict]:
     if "error" in result:
         raise RuntimeError(result["error"])
     return [{"id": r["id"], "text": r["text"]} for r in result.get("results", [])]
+
+
+def update_memory(memory_id: str, new_text: str) -> str:
+    """更新指定记忆的内容（同步）"""
+    result = _call("/update", {"memory_id": memory_id, "new_text": new_text})
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result.get("result", "已更新")
+
+
+def update_memory_async(memory_id: str, new_text: str) -> str:
+    """更新指定记忆的内容（异步，后台执行）"""
+    result = _call("/update-async", {"memory_id": memory_id, "new_text": new_text})
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result.get("result", "更新已提交后台")
