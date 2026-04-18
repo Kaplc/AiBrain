@@ -180,8 +180,9 @@ def _get_qdrant_count(settings):
         client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port, check_compatibility=False)
         collection_info = client.get_collection(settings.collection_name)
         count = collection_info.points_count
-        # 通过文件系统获取存储大小
-        storage_path = os.environ.get('QDRANT_STORAGE_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'storage'))
+        # 通过文件系统获取存储大小（storage 在项目根目录）
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        storage_path = os.path.join(project_root, 'storage')
         disk_size = 0
         try:
             for dirpath, dirnames, filenames in os.walk(storage_path):
