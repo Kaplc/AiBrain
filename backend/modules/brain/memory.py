@@ -272,8 +272,8 @@ def update_memory(memory_id: str, new_text: str) -> str:
 
     vector = encode_texts([new_text])[0]
     current = existing[0].payload
-    # hit_count 降低为原来的一半
-    new_hit_count = max(0, int(current.get("hit_count", 0) * 0.5))
+    # hit_count 降低1次
+    new_hit_count = max(0, current.get("hit_count", 0) - 1)
     client.upsert(
         collection_name=settings.collection_name,
         points=[PointStruct(
