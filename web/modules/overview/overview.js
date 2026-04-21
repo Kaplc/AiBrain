@@ -275,17 +275,6 @@ function drawEChart(data, range) {
     },
     series: [
       {
-        name: '累计',
-        type: 'line',
-        data: chartData.map(d => d.total),
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#7c3aed', width: 2 },
-        itemStyle: { color: '#7c3aed' },
-        areaStyle: { color: 'rgba(124,58,237,0.1)' },
-      },
-      {
         name: '新增',
         type: 'line',
         data: chartData.map(d => d.added || 0),
@@ -294,6 +283,16 @@ function drawEChart(data, range) {
         symbolSize: 6,
         lineStyle: { color: '#22c55e', width: 2 },
         itemStyle: { color: '#22c55e' },
+      },
+      {
+        name: '累计',
+        type: 'line',
+        data: chartData.map(d => d.total),
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#7c3aed', width: 2 },
+        itemStyle: { color: '#7c3aed' },
       },
     ],
   };
@@ -314,18 +313,25 @@ async function fetchAndDrawChart(range) {
     const res = await fetchJson(API + '/chart-data?range=' + range);
     // 页面切换守卫：DOM 已被替换则跳过
     if (!document.getElementById('chartContainer')) return;
-    const data = res.data || [];
+    const rawData = res.data || [];
+    const data = rawData;
 
-    // 更新时间段累计统计
+    // 图表用的 total 改为从当前范围起点开始的增量累计
+    let running = 0;
+    data.forEach(d => {
+      running += d.added || 0;
+      d.total = running;
+    });
+
+    // 更新时间段统计（取图表最后一个点的增量累计，即24h/7d/30d新增总数）
     const statEl = document.getElementById('statToday');
     const statLabel = document.getElementById('statLabel');
     if (statEl) {
-      // 累加当前时间范围内的所有新增数
-      const rangeAdded = data.reduce((sum, d) => sum + (d.added || 0), 0);
-      statEl.textContent = rangeAdded;
+      const lastTotal = data.length > 0 ? data[data.length - 1].total : 0;
+      statEl.textContent = lastTotal;
     }
     if (statLabel) {
-      const labels = { 'today': '24h累计', 'week': '7天累计', 'month': '30天累计', 'all': '全部累计' };
+      const labels = { 'today': '24h新增', 'week': '7天新增', 'month': '30天新增', 'all': '全部新增' };
       statLabel.textContent = labels[range] || '累计';
     }
 

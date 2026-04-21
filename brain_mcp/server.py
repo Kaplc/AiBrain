@@ -12,11 +12,10 @@ mcp = FastMCP("AiBrain Memory Server")
 
 @mcp.tool()
 def store(text: str) -> str:
-    """Store a memory. LLM automatically extracts facts and stores them.
-    Returns the actual stored text lines.
+    """存储记忆。LLM 自动从文本中提取事实并存储。存储时自动添加「最后以中文结果输出结构化」提示，返回实际记住的文本行。
 
     Args:
-        text: The memory text (can contain multiple facts; LLM will split them).
+        text: 记忆文本（可包含多个事实，LLM 会自动拆分）
     """
     return store_memory(text)
 
