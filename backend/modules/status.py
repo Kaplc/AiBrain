@@ -35,6 +35,7 @@ def register(app, ready_state, logger, stats_db):
             "qdrant_collection": settings.collection_name,
             "qdrant_top_k": settings.top_k,
             "qdrant_disk_size": _get_qdrant_count(settings).get("disk_size", 0),
+            "qdrant_storage_path": _get_qdrant_count(settings).get("storage_path", ""),
         })
 
     @app.route('/system-info', methods=['GET'])
@@ -194,6 +195,7 @@ def _get_qdrant_count(settings):
         return {
             "count": count,
             "disk_size": disk_size,
+            "storage_path": os.path.relpath(storage_path, project_root),
         }
     except Exception as e:
         print(f"[debug] _get_qdrant_count error: {e}")

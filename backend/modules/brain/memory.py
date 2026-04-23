@@ -117,13 +117,15 @@ def search_memory(query: str) -> list[dict]:
 
 
 def list_memories(offset: int = 0, limit: int = 200) -> list[dict]:
-    """列出所有记忆（前端 UI 用）"""
+    """列出所有记忆（前端 UI 用），按最新时间倒序排列"""
     client = get_mem0_client()
     result = client.get_all(
         filters={"user_id": DEFAULT_USER_ID},
         top_k=10000,
     )
     all_memories = result.get("results", [])
+    # 按创建时间倒序（最新的在前面）
+    all_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
     paged = all_memories[offset:offset + limit]
     return [
         {
