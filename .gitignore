@@ -49,3 +49,4 @@ backend/qdrant/config/config.yaml
 .mem0_migrated
 .codebuddy/scheduled_tasks.lockrag/lightrag_data/
 rag/lightrag_data/
+.claude\settings.local.json
