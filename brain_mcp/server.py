@@ -21,11 +21,14 @@ def store(text: str) -> str:
 
 
 @mcp.tool()
-def search(query: str) -> list[dict]:
+def search(query: str) -> dict:
     """Search memories. Returns matching text with relevance scores.
     Backend auto-adapts strategy based on data volume.
 
     Args:
         query: The search query string.
     """
-    return search_memory(query)
+    if not query or not query.strip():
+        raise ValueError("搜索关键词不能为空")
+    results = search_memory(query)
+    return {"query": query, "results": results}
