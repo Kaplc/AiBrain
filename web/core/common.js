@@ -2,6 +2,15 @@
 
 const API = window.location.origin;
 
+// ── 在浏览器中打开当前页面（PyWebView 调用系统默认浏览器）──
+function openInBrowser() {
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.open_in_browser();
+  } else {
+    window.open(window.location.href, '_blank');
+  }
+}
+
 // ── 全局 F5 刷新支持（PyWebView 默认不支持）────────
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {

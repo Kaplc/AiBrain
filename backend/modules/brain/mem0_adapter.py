@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
+# 项目根目录（本文件在 backend/modules/brain/，向上3级到根目录）
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
+
 # 本地 BGE-M3 模型的项目相对路径（相对于本文件位置）
 # 本文件在 backend/modules/brain/mem0_adapter.py
 # 向上3级到项目根目录: backend -> AiBrain -> models/bge-m3

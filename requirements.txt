@@ -25,6 +25,10 @@ mem0ai>=2.0.0
 
 # Wiki RAG engine (LightRAG)
 lightrag-hku>=1.4.15
+fastembed
+
+# NLP (mem0 文本预处理 + 实体抽取)
+spacy
 
 # Embedding model
 sentence-transformers==5.4.1

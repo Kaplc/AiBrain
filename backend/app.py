@@ -5,6 +5,7 @@ Memory Manager - PyWebView 前端入口
 """
 import os
 import sys
+import json
 import threading
 import webview
 
@@ -92,6 +93,86 @@ def log():
     elif level == 'warn': logger.warning(msg)
     else: logger.info(msg)
     return jsonify({"ok": True})
+
+
+@app.route('/logs', methods=['GET'])
+def get_logs():
+    """读取后端日志文件的最后 N 行"""
+    import glob
+    try:
+        log_dir = os.path.join(_PROJECT_ROOT, 'logs')
+        pattern = os.path.join(log_dir, 'app_*.log')
+        files = glob.glob(pattern)
+        if not files:
+            return jsonify({"lines": [], "file": None})
+
+        log_file = max(files, key=os.path.getmtime)
+        lines_param = request.args.get('lines', '300', type=int)
+        lines_param = min(max(lines_param, 10), 1000)
+
+        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+            all_lines = f.readlines()
+
+        tail = all_lines[-lines_param:] if len(all_lines) > lines_param else all_lines
+        return jsonify({
+            "lines": [l.rstrip() for l in tail],
+            "file": os.path.basename(log_file),
+            "total": len(all_lines),
+            "returned": len(tail),
+        })
+    except Exception as e:
+        logger.error(f"[API✗] /logs 失败: {e}")
+        return jsonify({"error": str(e), "lines": []})
+
+
+def _get_ui_settings_path():
+    """用户目录下的 UI 偏好配置"""
+    cfg_dir = os.path.join(os.path.expanduser("~"), ".aibrain", "config")
+    os.makedirs(cfg_dir, exist_ok=True)
+    return os.path.join(cfg_dir, "ui_settings.json")
+
+
+def _load_ui_settings() -> dict:
+    """加载 UI 设置（不存在则返回默认）"""
+    path = _get_ui_settings_path()
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # 默认值
+    return {
+        "log_auto_refresh": True,
+        "log_interval": 3,
+    }
+
+
+@app.route('/ui-settings', methods=['GET', 'POST'])
+def ui_settings():
+    """读取/保存 UI 偏好设置"""
+    if request.method == 'GET':
+        return jsonify(_load_ui_settings())
+
+    try:
+        data = request.get_json() or {}
+        current = _load_ui_settings()
+
+        # 白名单字段，只允许更新已知 key
+        allowed_keys = {'log_auto_refresh', 'log_interval'}
+        for k in allowed_keys:
+            if k in data:
+                current[k] = data[k]
+
+        path = _get_ui_settings_path()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(current, f, indent=2, ensure_ascii=False)
+
+        logger.info("[API←] /ui-settings 已保存")
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error(f"[API✗] /ui-settings 失败: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── 预加载（模型 + Qdrant）────────────────────────────────
@@ -205,6 +286,8 @@ if __name__ == '__main__':
 
     ui_path = os.path.join(os.path.dirname(__file__), '..', 'web', 'index.html')
     project_name = os.path.basename(_PROJECT_ROOT)
+    import webbrowser
+
     window = webview.create_window(
         title=f'Memory Manager - {project_name}',
         url=f'http://127.0.0.1:{_FLASK_PORT}',
@@ -213,6 +296,11 @@ if __name__ == '__main__':
         min_size=(800, 500),
         background_color='#0f1117',
     )
+
+    def open_in_browser():
+        webbrowser.open(f'http://127.0.0.1:{_FLASK_PORT}')
+
+    window.expose(open_in_browser)
 
     # 窗口关闭时清理
     def on_window_close():

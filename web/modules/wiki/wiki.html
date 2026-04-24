@@ -89,10 +89,71 @@
 
 /* Empty state */
 .empty-state { text-align: center; color: #64748b; padding: 40px 20px; font-size: 13px; }
+
+/* Settings button */
+.wiki-header { display: flex; align-items: center; justify-content: space-between; }
+.btn-settings {
+  padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all .2s; user-select: none;
+  border: none; background: #1e293b; color: #94a3b8; display: flex; align-items: center; gap: 4px;
+}
+.btn-settings:hover { background: #263044; color: #cbd5e1; }
+
+/* Settings modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: #00000066; z-index: 200;
+  display: none; align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; animation: fadeIn .15s ease; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+.modal-box {
+  background: #1a1d27; border: 1px solid #2d3149; border-radius: 16px;
+  width: 480px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 16px 48px #00000044;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 22px; border-bottom: 1px solid #2d3149;
+}
+.modal-title { font-size: 15px; font-weight: 700; }
+.modal-close {
+  width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
+  color: #64748b; cursor: pointer; font-size: 16px; line-height: 1;
+}
+.modal-close:hover { background: #2d3149; color: #cbd5e1; }
+
+.modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-label { font-size: 12px; font-weight: 600; color: #94a3b8; }
+.form-input, .form-select {
+  padding: 9px 12px; border-radius: 8px; border: 1px solid #2d3149;
+  background: #12141c; color: #e2e8f0; font-size: 13px;
+  outline: none; transition: border-color .2s;
+}
+.form-input:focus, .form-select:focus { border-color: #7c3aed; }
+.form-row { display: flex; gap: 12px; }
+.form-row .form-group { flex: 1; }
+
+.modal-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 22px; border-top: 1px solid #2d3149;
+}
+
+.btn-save {
+  padding: 8px 24px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .2s; border: none; user-select: none;
+  background: #7c3aed33; color: #a78bfa; border: 1px solid #7c3aed44;
+}
+.btn-save:hover { background: #7c3aed55; }
 </style>
 
 <div class="wiki-wrap">
-  <div class="wiki-title">Wiki 知识库</div>
+  <div class="wiki-header">
+    <div class="wiki-title">Wiki 知识库</div>
+    <button class="btn-settings" onclick="openWikiSettings()">&#9881; 设置</button>
+  </div>
 
   <!-- Stats cards -->
   <div class="wiki-row">
@@ -136,6 +197,72 @@
           <div id="wikiTableWrap"><div class="mini-loading"></div></div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="wikiSettingsModal" onclick="closeWikiSettings()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div class="modal-title">Wiki 设置</div>
+      <button class="modal-close" onclick="closeWikiSettings()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Wiki 目录（相对于项目根目录）</label>
+        <input class="form-input" id="wsWikiDir" type="text" placeholder="如: wiki 或 /path/to/wiki">
+      </div>
+      <div class="form-group">
+        <label class="form-label">LightRAG 数据目录</label>
+        <input class="form-input" id="wsLightragDir" type="text" placeholder="如: rag/lightrag_data">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">语言</label>
+          <select class="form-select" id="wsLanguage">
+            <option value="Chinese">Chinese</option>
+            <option value="English">English</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">分块大小 (token)</label>
+          <input class="form-input" id="wsChunkSize" type="number" placeholder="1200" min="200" max="8000">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">搜索超时 (秒)</label>
+        <input class="form-input" id="wsTimeout" type="number" placeholder="30" min="5" max="300">
+      </div>
+      <div style="border-top:1px solid #2d3149;padding-top:12px;">
+        <div class="form-label" style="margin-bottom:8px;">LLM 配置（用于知识图谱构建）</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Provider</label>
+            <select class="form-select" id="wsLlmProvider">
+              <option value="">未配置</option>
+              <option value="openai">OpenAI</option>
+              <option value="minimax">MiniMax</option>
+              <option value="zhipu">智谱</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Model</label>
+            <input class="form-input" id="wsLlmModel" type="text" placeholder="如: gpt-4o-mini">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Base URL</label>
+          <input class="form-input" id="wsLlmBaseUrl" type="text" placeholder="如: https://api.openai.com/v1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <input class="form-input" id="wsLlmApiKey" type="password" placeholder="留空则不修改">
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-save" onclick="saveWikiSettings()">保存设置</button>
     </div>
   </div>
 </div>

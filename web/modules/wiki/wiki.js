@@ -1,18 +1,28 @@
 /* Wiki 状态页面 */
 
-let _wikiFiles = [];
-let _sortKey = 'modified';
-let _sortAsc = false;
+var _wikiFiles = [];
+var _sortKey = 'modified';
+var _sortAsc = false;
+var _wikiConfig = null;
 
 function escHtml(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 function escAttr(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function onPageLoad() {
-  loadWikiData();
+  loadWikiConfig().then(function() { loadWikiData(); });
+}
+
+async function loadWikiConfig() {
+  try {
+    _wikiConfig = await fetchJson(API + '/wiki/settings');
+  } catch (e) {
+    console.error('[wiki] loadWikiConfig error:', e);
+    _wikiConfig = {};
+  }
 }
 
 async function loadWikiData() {
@@ -218,6 +228,85 @@ async function rebuildIndex() {
   } finally {
     btn.disabled = false;
     btn.textContent = '重建索引';
+  }
+}
+
+/* Wiki Settings */
+function openWikiSettings() {
+  fillSettingsForm(_wikiConfig || {});
+  document.getElementById('wikiSettingsModal').classList.add('show');
+}
+
+function closeWikiSettings() {
+  document.getElementById('wikiSettingsModal').classList.remove('show');
+}
+
+async function loadWikiSettingsData() {
+  try {
+    var data = await fetchJson(API + '/wiki/settings');
+    _wikiConfig = data;
+  } catch (e) {
+    console.error('[wiki] loadWikiSettingsData error:', e);
+  }
+  fillSettingsForm(_wikiConfig || {});
+}
+
+function fillSettingsForm(data) {
+  if (data.error) return;
+  document.getElementById('wsWikiDir').value = data.wiki_dir || 'wiki';
+  document.getElementById('wsLightragDir').value = data.lightrag_dir || 'rag/lightrag_data';
+  document.getElementById('wsLanguage').value = data.language || 'Chinese';
+  document.getElementById('wsChunkSize').value = data.chunk_token_size || 1200;
+  document.getElementById('wsTimeout').value = data.search_timeout || 30;
+  if (data.llm) {
+    document.getElementById('wsLlmProvider').value = data.llm.provider || '';
+    document.getElementById('wsLlmModel').value = data.llm.model || '';
+    document.getElementById('wsLlmBaseUrl').value = data.llm.base_url || '';
+    var keyEl = document.getElementById('wsLlmApiKey');
+    if (data.llm.api_key === '****') {
+      keyEl.placeholder = '已配置（留空不修改）';
+      keyEl.value = '';
+    } else if (data.llm.api_key) {
+        keyEl.placeholder = '已配置';
+        keyEl.value = '';
+      } else {
+        keyEl.placeholder = '留空则不修改';
+      }
+    }
+}
+
+async function saveWikiSettings() {
+  var payload = {
+    wiki_dir: document.getElementById('wsWikiDir').value.trim(),
+    lightrag_dir: document.getElementById('wsLightragDir').value.trim(),
+    language: document.getElementById('wsLanguage').value,
+    chunk_token_size: parseInt(document.getElementById('wsChunkSize').value) || 1200,
+    search_timeout: parseInt(document.getElementById('wsTimeout').value) || 30,
+    llm: {
+      provider: document.getElementById('wsLlmProvider').value,
+      model: document.getElementById('wsLlmModel').value.trim(),
+      api_key: document.getElementById('wsLlmApiKey').value.trim(),
+      base_url: document.getElementById('wsLlmBaseUrl').value.trim(),
+    },
+  };
+  try {
+    var resp = await fetch(API + '/wiki/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    var data = await resp.json();
+    if (data.ok) {
+      _wikiConfig = Object.assign({}, _wikiConfig || {}, payload);
+      closeWikiSettings();
+      toast('设置已保存');
+      await loadWikiData();
+    } else {
+      alert('保存失败: ' + (data.error || '未知错误'));
+    }
+  } catch (e) {
+    console.error('[wiki] saveWikiSettings error:', e);
+    alert('请求失败: ' + e.message);
   }
 }
 

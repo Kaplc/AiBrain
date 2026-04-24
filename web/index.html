@@ -24,7 +24,8 @@ body {
   padding: 16px 0;
   flex-shrink: 0;
 }
-.nav-logo { font-size: 16px; font-weight: 700; color: #a78bfa; margin-bottom: 24px; }
+.nav-logo { font-size: 16px; font-weight: 700; color: #a78bfa; margin-bottom: 24px; cursor: pointer; border-radius: 8px; padding: 6px 4px; transition: background .2s; }
+.nav-logo:hover { background: #7c3aed22; }
 .nav-items { display: flex; flex-direction: column; gap: 6px; flex: 1; width: 100%; padding: 0 10px; }
 .nav-item {
   display: flex;
@@ -70,7 +71,7 @@ body {
 
 <div class="app">
   <nav class="nav-sidebar">
-    <div class="nav-logo">M</div>
+    <div class="nav-logo" onclick="openInBrowser()" title="在浏览器中打开">M</div>
     <div class="nav-items">
       <button class="nav-item active" data-page="overview" onclick="loadPage('overview')">
         <span class="nav-label">总览</span>

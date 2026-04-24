@@ -197,3 +197,50 @@ def register(app, stats_db=None):
         except Exception as e:
             logger.error(f"[API✗] /wiki/log 失败: {e}")
             return jsonify({"error": str(e), "lines": []})
+
+    @app.route('/wiki/settings', methods=['GET', 'POST'])
+    def wiki_settings():
+        """读取/保存 Wiki 配置"""
+        try:
+            from rag.lightrag_wiki.config import load_wiki_config, _get_config_path
+
+            if request.method == 'GET':
+                cfg = load_wiki_config()
+                # 隐藏敏感字段
+                result = {k: v for k, v in cfg.items()}
+                if 'llm' in result and result['llm'].get('api_key'):
+                    result['llm']['api_key'] = '****'
+                return jsonify(result)
+
+            if request.method == 'POST':
+                data = request.get_json() or {}
+                config_path = _get_config_path()
+                current = load_wiki_config()
+
+                # 只允许更新特定字段
+                allowed = {'wiki_dir', 'lightrag_dir', 'language',
+                           'chunk_token_size', 'search_timeout'}
+                for key in allowed:
+                    if key in data:
+                        current[key] = data[key]
+
+                # LLM 配置（允许更新，但 api_key 为空时保留原值）
+                if 'llm' in data:
+                    old_llm = current.get('llm', {})
+                    new_llm = data['llm']
+                    for k in ('provider', 'model', 'api_key', 'base_url'):
+                        if k in new_llm and new_llm[k]:
+                            old_llm[k] = new_llm[k]
+                        elif k == 'api_key' and not new_llm.get(k):
+                            pass  # 保留旧值
+                    current['llm'] = old_llm
+
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(current, f, indent=2, ensure_ascii=False)
+
+                logger.info("[API←] /wiki/settings 已保存")
+                return jsonify({"ok": True})
+
+        except Exception as e:
+            logger.error(f"[API✗] /wiki/settings 失败: {e}")
+            return jsonify({"error": str(e)}), 500
