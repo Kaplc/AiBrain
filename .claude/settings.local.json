@@ -155,7 +155,8 @@
       "WebFetch(domain:qdrant.github.io)",
       "Bash(venv312\\\\Scripts\\\\python.exe -c \"from qdrant_client import QdrantClient; c = QdrantClient\\(host='localhost', port=6333\\); info = c.get_collection\\('mem0_memories'\\); print\\(dir\\(info\\)\\); print\\('points_count:', info.points_count\\)\")",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
