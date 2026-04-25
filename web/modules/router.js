@@ -36,35 +36,57 @@ window.onunhandledrejection = (e) => {
 
 // ── 页面加载 ──────────────────────────────────────────────
 let _currentScript = null;
+let _loadVersion = 0;  // 页面版本号，用于检测过期回调
 
 async function loadPage(page, force = false) {
+  console.log('[router] loadPage start', page, {force, currentPage});
   if (typeof cleanup === 'function') cleanup();
-  if (currentPage === page && !force) return;
+  if (currentPage === page && !force) {
+    console.log('[router] loadPage skipped (same page, no force)');
+    return;
+  }
 
   const content = document.getElementById('page-content');
   if (!pageCache[page]) {
     try {
+      console.log('[router] fetching HTML:', page);
       const resp = await fetch(`modules/${page}/${page}.html`);
       pageCache[page] = await resp.text();
+      console.log('[router] HTML cached:', page);
     } catch(e) {
+      console.error('[router] fetch HTML failed:', e);
       content.innerHTML = `<div style="padding:24px;color:#ef4444">加载失败: ${page}</div>`;
       return;
     }
   }
 
+  console.log('[router] rendering page:', page);
   content.innerHTML = pageCache[page];
 
   if (_currentScript) { _currentScript.remove(); _currentScript = null; }
 
+  // 递增版本号，使旧脚本的 onload 回调失效
+  const thisVersion = ++_loadVersion;
+
   const script = document.createElement('script');
   script.src = `modules/${page}/${page}.js?_t=${Date.now()}`;
-  script.onload = () => { if (typeof onPageLoad === 'function') onPageLoad(); };
+  script.onload = () => {
+    // 检查页面是否已切换（版本号变化说明已不是当前页面）
+    if (thisVersion !== _loadVersion) {
+      console.log('[router] onload skipped (stale version)', thisVersion, _loadVersion);
+      return;
+    }
+    // 延迟一下，等 DOM 完全替换完毕再执行 init
+    console.log('[router] onload executing, calling onPageLoad');
+    setTimeout(() => { if (typeof onPageLoad === 'function') onPageLoad(); }, 0);
+  };
   document.body.appendChild(script);
   _currentScript = script;
 
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.querySelector(`.nav-item[data-page="${page}"]`).classList.add('active');
   currentPage = page;
+  console.log('[router] loadPage done', page);
 }
 
 // ── 共享状态 UI 更新 ───────────────────────────────────────
@@ -94,14 +116,13 @@ function updateStatusUI(d) {
 let _lastModelLoaded = false;
 
 async function checkStatus(retries = 3) {
+  const t0 = Date.now();
   try {
     const d = await fetch(API + '/status').then(r => r.json());
+    const elapsed = Date.now() - t0;
+    console.log('[router] /status response:', d.model_loaded, 'latency=' + elapsed + 'ms');
     updateStatusUI(d);
-    if (!_lastModelLoaded && d.model_loaded && currentPage === 'overview') {
-      loadPage('overview', true);
-    }
     _lastModelLoaded = d.model_loaded;
-    if (!d.model_loaded) setTimeout(checkStatus, 3000);
   } catch {
     if (retries > 0) { setTimeout(() => checkStatus(retries - 1), 1000); return; }
 
@@ -111,8 +132,8 @@ async function checkStatus(retries = 3) {
     const sbText = document.getElementById('sbModelText');
     if (sbDot) sbDot.className = 'statusbar-dot err';
     if (sbText) sbText.textContent = '未连接';
-    setTimeout(checkStatus, 3000);
   }
+  setTimeout(checkStatus, 3000);
 }
 
 // Init

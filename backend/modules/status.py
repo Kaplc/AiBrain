@@ -10,6 +10,10 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__
 
 
 def register(app, ready_state, logger, stats_db):
+    # 启动时查询一次 Qdrant 存储大小，之后每次 /status 直接返回缓存值
+    from brain_mcp.config import settings
+    qdrant_info = _get_qdrant_count_cached(settings, logger)
+
     @app.route('/status', methods=['GET'])
     def status():
         from brain_mcp import embedding as emb
@@ -19,6 +23,8 @@ def register(app, ready_state, logger, stats_db):
         # 区分：无 GPU 硬件 / 有 GPU 但缺 CUDA 版 PyTorch
         cuda_available = torch.cuda.is_available()
         gpu_hardware = _has_nvidia_gpu()
+
+        qdrant_info = _get_qdrant_count_cached(settings, logger)
 
         return jsonify({
             "model_loaded": ready_state["model"],
@@ -34,8 +40,8 @@ def register(app, ready_state, logger, stats_db):
             "qdrant_port": settings.qdrant_port,
             "qdrant_collection": settings.collection_name,
             "qdrant_top_k": settings.top_k,
-            "qdrant_disk_size": _get_qdrant_count(settings).get("disk_size", 0),
-            "qdrant_storage_path": _get_qdrant_count(settings).get("storage_path", ""),
+            "qdrant_disk_size": qdrant_info.get("disk_size", 0),
+            "qdrant_storage_path": qdrant_info.get("storage_path", ""),
         })
 
     @app.route('/system-info', methods=['GET'])
@@ -181,15 +187,19 @@ def _get_qdrant_count(settings):
         collection_info = client.get_collection(settings.collection_name)
         count = collection_info.points_count
 
-        # 通过文件系统获取存储大小（storage 在项目根目录）
+        # 通过文件系统获取存储大小（storage 在 qdrant 目录下）
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        storage_path = os.path.join(project_root, 'storage')
+        storage_path = os.path.join(project_root, 'qdrant', 'storage')
         disk_size = 0
         try:
-            for dirpath, dirnames, filenames in os.walk(storage_path):
-                for f in filenames:
-                    fp = os.path.join(dirpath, f)
-                    disk_size += os.path.getsize(fp)
+            # 递归遍历所有子目录
+            for root, dirs, files in os.walk(storage_path):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        disk_size += os.path.getsize(fp)
+                    except:
+                        pass
         except Exception:
             pass
         return {
@@ -200,6 +210,27 @@ def _get_qdrant_count(settings):
     except Exception as e:
         print(f"[debug] _get_qdrant_count error: {e}")
         return {"count": 0, "disk_size": 0}
+
+
+# ── Qdrant 启动时查询一次 ──────────────────────────────────
+_qdrant_cache = {"data": None}  # 启动后只查一次
+
+
+def _get_qdrant_count_cached(settings, logger=None):
+    """只查一次，启动后不再重复查询"""
+    if _qdrant_cache["data"] is not None:
+        return _qdrant_cache["data"]
+
+    try:
+        data = _get_qdrant_count(settings)
+        _qdrant_cache["data"] = data
+        if logger:
+            logger.info(f"[status] Qdrant cache init: {data.get('count', 0)} points, disk_size={data.get('disk_size', 0)}")
+        return data
+    except Exception as e:
+        if logger:
+            logger.warning(f"[status] Qdrant cache init failed: {e}")
+        return {"count": 0, "disk_size": 0, "storage_path": ""}
 
 
 def _has_nvidia_gpu():

@@ -1,3 +1,75 @@
+<div class="overview-wrap">
+  <!-- Status indicators row -->
+  <div class="overview-row">
+    <div class="status-card" id="scModelCard">
+      <div class="sc-label-row">
+        <div class="sc-label" id="scModelLabel">模型状态</div>
+        <span class="sc-badge" id="scModelBadge"></span>
+      </div>
+      <div class="sc-value" id="scModelValue"></div>
+      <div class="sc-sub" id="scModelSub"></div>
+    </div>
+    <div class="status-card">
+      <div class="sc-label-row">
+        <div class="sc-label" id="scQdrantLabel">Qdrant 状态</div>
+        <span class="sc-badge green" id="scQdrantBadge">OK</span>
+      </div>
+      <div class="sc-value" id="scQdrantValue"></div>
+      <div class="sc-sub" id="scDimSub"></div>
+      <div class="sc-sub" id="scQdrantHostPortSub"></div>
+      <div class="sc-sub" id="scQdrantCollectionSub"></div>
+      <div class="sc-sub" id="scQdrantStorageSub"></div>
+      <div class="sc-sub" id="scQdrantDiskSizeSub"></div>
+      <div class="sc-sub" id="scQdrantTopKSub"></div>
+    </div>
+    <div class="status-card">
+      <div class="sc-label">设备信息</div>
+      <div class="sc-sub" id="scDeviceSub1"></div>
+      <div class="sc-sub" id="scDeviceSub2"></div>
+      <div class="sc-sub" id="scDeviceSub2b"></div>
+      <div class="sc-sub" id="scDeviceSub3"></div>
+      <div class="sc-sub" id="scDeviceSub4"></div>
+      <div class="sc-sub" id="scDeviceSub5"></div>
+      <div class="sc-sub" id="scDeviceSub6"></div>
+    </div>
+  </div>
+
+  <!-- Memory chart -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <div class="chart-title">记忆趋势</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="chart-legend">
+          <span><i class="ldot purple"></i>累计</span>
+          <span><i class="ldot green"></i>新增</span>
+
+        </div>
+        <div class="chart-tabs" id="chartTabs">
+          <button class="chart-tab active" data-range="today">近24小时</button>
+          <button class="chart-tab" data-range="week">7天</button>
+          <button class="chart-tab" data-range="month">30天</button>
+          <button class="chart-tab" data-range="all">全部</button>
+        </div>
+      </div>
+    </div>
+    <div class="chart-scroll-container" id="chartScrollContainer">
+      <div id="chartContainer" style="width:100%;height:140px;"></div>
+    </div>
+
+    <!-- Stats row inside chart -->
+    <div class="chart-stats">
+      <div class="stat-box">
+        <div class="sb-value" id="statTotal">-</div>
+        <div class="sb-label">记忆总数</div>
+      </div>
+      <div class="stat-box">
+        <div class="sb-value" id="statToday">-</div>
+        <div class="sb-label" id="statLabel">24h新增</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <style>
 .overview-wrap { padding: 24px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; gap: 20px; box-sizing: border-box; }
 .overview-title { font-size: 18px; font-weight: 700; }
@@ -78,75 +150,3 @@
 .sb-value { font-size: 22px; font-weight: 700; color: #a78bfa; }
 .sb-label { font-size: 11px; color: #64748b; margin-top: 4px; }
 </style>
-
-<div class="overview-wrap">
-  <!-- Status indicators row -->
-  <div class="overview-row">
-    <div class="status-card" id="scModelCard">
-      <div class="sc-label-row">
-        <div class="sc-label" id="scModelLabel">模型状态</div>
-        <span class="sc-badge" id="scModelBadge"></span>
-      </div>
-      <div class="sc-value" id="scModelValue"></div>
-      <div class="sc-sub" id="scModelSub"></div>
-    </div>
-    <div class="status-card">
-      <div class="sc-label-row">
-        <div class="sc-label" id="scQdrantLabel">Qdrant 状态</div>
-        <span class="sc-badge green" id="scQdrantBadge">OK</span>
-      </div>
-      <div class="sc-value" id="scQdrantValue"></div>
-      <div class="sc-sub" id="scDimSub"></div>
-      <div class="sc-sub" id="scQdrantHostSub"></div>
-      <div class="sc-sub" id="scQdrantPortSub"></div>
-      <div class="sc-sub" id="scQdrantCollectionSub"></div>
-      <div class="sc-sub" id="scQdrantStorageSub"></div>
-      <div class="sc-sub" id="scQdrantTopKSub"></div>
-    </div>
-    <div class="status-card">
-      <div class="sc-label">设备信息</div>
-      <div class="sc-sub" id="scDeviceSub1"></div>
-      <div class="sc-sub" id="scDeviceSub2"></div>
-      <div class="sc-sub" id="scDeviceSub2b"></div>
-      <div class="sc-sub" id="scDeviceSub3"></div>
-      <div class="sc-sub" id="scDeviceSub4"></div>
-      <div class="sc-sub" id="scDeviceSub5"></div>
-      <div class="sc-sub" id="scDeviceSub6"></div>
-    </div>
-  </div>
-
-  <!-- Memory chart -->
-  <div class="chart-section">
-    <div class="chart-header">
-      <div class="chart-title">记忆趋势</div>
-      <div style="display:flex;align-items:center;gap:12px">
-        <div class="chart-legend">
-          <span><i class="ldot purple"></i>累计</span>
-          <span><i class="ldot green"></i>新增</span>
-          
-        </div>
-        <div class="chart-tabs" id="chartTabs">
-          <button class="chart-tab active" data-range="today">近24小时</button>
-          <button class="chart-tab" data-range="week">7天</button>
-          <button class="chart-tab" data-range="month">30天</button>
-          <button class="chart-tab" data-range="all">全部</button>
-        </div>
-      </div>
-    </div>
-    <div class="chart-scroll-container" id="chartScrollContainer">
-      <div id="chartContainer" style="width:100%;height:140px;"></div>
-    </div>
-
-    <!-- Stats row inside chart -->
-    <div class="chart-stats">
-      <div class="stat-box">
-        <div class="sb-value" id="statTotal">-</div>
-        <div class="sb-label">记忆总数</div>
-      </div>
-      <div class="stat-box">
-        <div class="sb-value" id="statToday">-</div>
-        <div class="sb-label" id="statLabel">24h新增</div>
-      </div>
-    </div>
-  </div>
-</div>

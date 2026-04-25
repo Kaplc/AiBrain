@@ -5,7 +5,16 @@ var _currentChartRange = 'today';
 var _resizeTimer = null;
 
 function onPageLoad() {
+  console.log('[overview] onPageLoad start');
+  // 立即加载图表和记忆总数（不等待模型）
+  console.log('[overview] fetching chart and memory count');
+  fetchAndDrawChart(_currentChartRange);
+  fetchMemoryCount();
+
+  // 加载页面数据
+  console.log('[overview] loading overview page data');
   loadOverviewPage();
+
   // 模型加载轮询（3秒）
   if (_overviewTimer) clearInterval(_overviewTimer);
   _overviewTimer = setInterval(async () => {
@@ -25,7 +34,7 @@ function onPageLoad() {
         if (_overviewTimer) { clearInterval(_overviewTimer); _overviewTimer = null; }
       }
     } catch {}
-  }, 3000);
+  }, 1000);
 
   // 系统信息轮询（1秒）
   if (_sysInfoTimer) clearInterval(_sysInfoTimer);
@@ -49,9 +58,11 @@ function onPageLoad() {
       _currentChartRange = range;
       tabsEl.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
+      console.log('[overview] chart tab changed, fetching range:', range);
       await fetchAndDrawChart(range);
     });
   }
+  console.log('[overview] onPageLoad done');
 }
 
 function cleanup() {
@@ -101,13 +112,14 @@ function updateDeviceCard(sysInfo) {
 async function loadOverviewPage() {
   // 页面切换守卫：如果 overview 容器已不存在，直接返回
   if (!document.getElementById('chartContainer')) return;
-  
+  console.log('[overview] loadOverviewPage start');
   try {
     const [cfg, st, sysInfo] = await Promise.all([
       fetchJson(API + '/settings'),
       fetchJson(API + '/status'),
       fetchJson(API + '/system-info'),
     ]);
+    console.log('[overview] settings/status/sysinfo loaded', {cfg_exists: !!cfg, st_model_loaded: st.model_loaded});
 
     // Model status
     const modelValue = document.getElementById('scModelValue');
@@ -133,33 +145,33 @@ async function loadOverviewPage() {
       if (st.qdrant_ready) { qBadge.textContent = 'OK'; qBadge.className = 'sc-badge green'; }
       else { qBadge.textContent = 'ERR'; qBadge.className = 'sc-badge red'; }
     }
-    const qHostSub = document.getElementById('scQdrantHostSub');
-    const qPortSub = document.getElementById('scQdrantPortSub');
+    const qHostPortSub = document.getElementById('scQdrantHostPortSub');
     const qCollectionSub = document.getElementById('scQdrantCollectionSub');
     const qStorageSub = document.getElementById('scQdrantStorageSub');
     const qTopKSub = document.getElementById('scQdrantTopKSub');
     const qDimSub = document.getElementById('scDimSub');
-    if (qHostSub) qHostSub.textContent = `Host: ${st.qdrant_host || 'localhost'}`;
-    if (qPortSub) qPortSub.textContent = `Port: ${st.qdrant_port || 6333}`;
+    if (qHostPortSub) qHostPortSub.textContent = `${st.qdrant_host || 'localhost'}:${st.qdrant_port || 6333}`;
     if (qCollectionSub) qCollectionSub.textContent = `Collection: ${st.qdrant_collection || 'memories'}`;
     if (qStorageSub) qStorageSub.textContent = `存储: ${st.qdrant_storage_path || 'storage'}`;
     if (qTopKSub) qTopKSub.textContent = `Top-K: ${st.qdrant_top_k || 5}`;
     if (qDimSub) qDimSub.textContent = `维度: ${st.embedding_dim || 1024}`;
     const qDiskSizeSub = document.getElementById('scQdrantDiskSizeSub');
-    if (qDiskSizeSub && !document.getElementById('scQdrantStorageSub')) {
-      // Only show disk size if storage path is not available
-      const diskSize = st.qdrant_disk_size || 0;
+    // 显示磁盘大小（如果 qStorageSub 不存在则用 disk size）
+    const diskSize = st.qdrant_disk_size || 0;
+    if (qDiskSizeSub) {
+      let sizeStr = '';
       if (diskSize >= 1024 * 1024 * 1024) {
-        qDiskSizeSub.textContent = `存储: ${(diskSize / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        sizeStr = `${(diskSize / (1024 * 1024 * 1024)).toFixed(2)} GB`;
       } else if (diskSize >= 1024 * 1024) {
-        qDiskSizeSub.textContent = `存储: ${(diskSize / (1024 * 1024)).toFixed(1)} MB`;
+        sizeStr = `${(diskSize / (1024 * 1024)).toFixed(1)} MB`;
       } else if (diskSize >= 1024) {
-        qDiskSizeSub.textContent = `存储: ${(diskSize / 1024).toFixed(1)} KB`;
+        sizeStr = `${(diskSize / 1024).toFixed(1)} KB`;
       } else if (diskSize > 0) {
-        qDiskSizeSub.textContent = `存储: ${diskSize} B`;
+        sizeStr = `${diskSize} B`;
       } else {
-        qDiskSizeSub.textContent = `存储: 0 B`;
+        sizeStr = '0 B';
       }
+      qDiskSizeSub.textContent = sizeStr;
     }
 
     // Device info
@@ -199,17 +211,9 @@ async function loadOverviewPage() {
       [devSub4, devSub5, devSub6].forEach(el => { if (el) el.textContent = ''; });
     }
 
-    // Stats & chart
-    await fetchAndDrawChart(_currentChartRange);
+    // Stats & chart（已在上层立即触发，这里不再重复调用）
+    // 记忆总数已在上层立即加载，无需重复请求
 
-    // 记忆总数从数据库获取（启动时已同步 Qdrant）
-    try {
-      const countRes = await fetchJson(API + '/memory-count');
-      const statTotal = document.getElementById('statTotal');
-      if (statTotal) statTotal.textContent = countRes.count || 0;
-    } catch (e) {
-      console.error('[overview] failed to get memory count:', e);
-    }
 
   } catch(e) { console.error('[overview] load failed:', e && e.message ? e.message : String(e)); }
 }
@@ -312,10 +316,12 @@ window.addEventListener('resize', () => {
 });
 
 async function fetchAndDrawChart(range) {
+  console.log('[overview] fetchAndDrawChart start', range);
   try {
     const res = await fetchJson(API + '/chart-data?range=' + range);
     // 页面切换守卫：DOM 已被替换则跳过
     if (!document.getElementById('chartContainer')) return;
+    console.log('[overview] chart data received', res.data ? res.data.length + ' points' : 'no data');
     const rawData = res.data || [];
     const data = rawData;
 
@@ -352,4 +358,35 @@ async function fetchAndDrawChart(range) {
 
     drawEChart(data, range);
   } catch(e) { console.error('[overview] chart error:', e); }
+}
+
+/* ==================== 数字递增动画 ==================== */
+function animateCount(el, target) {
+  const current = parseInt(el.textContent) || 0;
+  if (current === target) return;
+  const diff = target - current;
+  const step = Math.max(1, Math.ceil(Math.abs(diff) / 10));
+  const interval = setInterval(() => {
+    const now = parseInt(el.textContent) || 0;
+    const delta = target > now ? Math.min(step, target - now) : Math.max(-step, target - now);
+    if (now === target || (delta > 0 ? now >= target : now <= target)) {
+      el.textContent = target;
+      clearInterval(interval);
+    } else {
+      el.textContent = now + delta;
+    }
+  }, 50);
+}
+
+/* ==================== 加载记忆总数 ==================== */
+async function fetchMemoryCount() {
+  console.log('[overview] fetchMemoryCount start');
+  try {
+    const res = await fetchJson(API + '/memory-count');
+    const statTotal = document.getElementById('statTotal');
+    if (statTotal) animateCount(statTotal, res.count || 0);
+    console.log('[overview] memory count:', res.count);
+  } catch (e) {
+    console.error('[overview] memory count error:', e);
+  }
 }
