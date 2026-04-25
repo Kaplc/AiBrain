@@ -14,7 +14,7 @@ function cleanup() {
 
 async function loadStream() {
   try {
-    // 并行获取写入和搜索记录
+    // 获取 MCP 调用和搜索记录
     const [storeRes, searchRes] = await Promise.all([
       fetchJson(API + '/stream?action=store&limit=30'),
       fetchJson(API + '/stream?action=search&limit=30'),
@@ -27,7 +27,7 @@ async function loadStream() {
 
     // 更新总计数
     const countEl = document.getElementById('streamCount');
-    if (countEl) countEl.textContent = `写入 ${storeTotal} 条 / 搜索 ${searchTotal} 条`;
+    if (countEl) countEl.textContent = `MCP ${storeTotal} 条 / 搜索 ${searchTotal} 条`;
 
     // 更新各栏计数
     const storeCountEl = document.getElementById('storeCount');
@@ -35,8 +35,8 @@ async function loadStream() {
     if (storeCountEl) storeCountEl.textContent = `${storeItems.length} 条`;
     if (searchCountEl) searchCountEl.textContent = `${searchItems.length} 条`;
 
-    // 渲染左侧：写入操作
-    renderList('storeList', storeItems, true);
+    // 渲染左侧：MCP调用
+    renderList('storeList', storeItems, false);
 
     // 渲染右侧：查询操作
     renderList('searchList', searchItems, false);
