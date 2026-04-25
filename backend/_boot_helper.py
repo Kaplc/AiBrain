@@ -115,7 +115,7 @@ def check_deps():
     if not os.path.exists(req_file):
         return True  # 文件不存在则跳过检查
 
-    with open(req_file, 'r') as f:
+    with open(req_file, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith('#'):

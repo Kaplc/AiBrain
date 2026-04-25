@@ -233,7 +233,7 @@ async function rebuildIndex() {
 
 /* Wiki Settings */
 function openWikiSettings() {
-  fillSettingsForm(_wikiConfig || {});
+  loadWikiSettingsData();
   document.getElementById('wikiSettingsModal').classList.add('show');
 }
 
