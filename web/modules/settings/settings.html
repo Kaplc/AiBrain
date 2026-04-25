@@ -1,35 +1,63 @@
 <div class="settings-wrap">
   <div class="settings-header">
     <div class="settings-title">设置</div>
+  </div>
+
+  <!-- Tab 选择 -->
+  <div class="config-tabs">
+    <button class="tab-btn active" data-tab="model" onclick="switchTab('model')">模型</button>
+    <button class="tab-btn" data-tab="mem0" onclick="switchTab('mem0')">mem0.json</button>
+    <button class="tab-btn" data-tab="wiki" onclick="switchTab('wiki')">wiki.json</button>
+  </div>
+
+  <!-- Tab 内容 -->
+  <div class="tab-content" id="tab-model">
+    <div class="set-row">
+      <div class="set-row-label">
+        <div class="set-label">模型</div>
+        <div class="set-desc" id="modelDesc">BAAI/bge-m3 · 向量维度 1024</div>
+      </div>
+      <select class="model-select" id="modelSelect">
+        <option value="BAAI/bge-m3" selected>BAAI/bge-m3</option>
+      </select>
+    </div>
+
+    <div class="set-row">
+      <div class="set-row-label">
+        <div class="set-label">推理设备</div>
+        <div class="set-desc">选择模型推理使用的硬件</div>
+      </div>
+      <select class="device-select" id="deviceSelect" onchange="selectDevice(this.value)">
+        <option value="auto">自动</option>
+        <option value="gpu">GPU</option>
+        <option value="cpu">CPU</option>
+      </select>
+    </div>
+
+    <div class="gpu-info" id="gpuInfo">检测中...</div>
+
     <div class="header-actions">
       <button class="btn btn-secondary" id="resetBtn" onclick="resetSettings()">重置</button>
       <button class="btn btn-primary" id="saveBtn" onclick="applySettings()">保存</button>
     </div>
   </div>
 
-  <div class="set-row">
-    <div class="set-row-label">
-      <div class="set-label">模型</div>
-      <div class="set-desc" id="modelDesc">BAAI/bge-m3 · 向量维度 1024</div>
+  <div class="tab-content" id="tab-mem0" style="display:none">
+    <div class="config-form" id="mem0Form"><div class="loading">加载中...</div></div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" onclick="resetMem0Config()">恢复默认</button>
+      <button class="btn btn-primary" onclick="saveMem0Config()">保存</button>
     </div>
-    <select class="model-select" id="modelSelect">
-      <option value="BAAI/bge-m3" selected>BAAI/bge-m3</option>
-    </select>
   </div>
 
-  <div class="set-row">
-    <div class="set-row-label">
-      <div class="set-label">推理设备</div>
-      <div class="set-desc">选择模型推理使用的硬件</div>
+  <div class="tab-content" id="tab-wiki" style="display:none">
+    <div class="config-form" id="wikiForm"><div class="loading">加载中...</div></div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" onclick="resetWikiConfig()">恢复默认</button>
+      <button class="btn btn-primary" onclick="saveWikiConfig()">保存</button>
     </div>
-    <select class="device-select" id="deviceSelect" onchange="selectDevice(this.value)">
-      <option value="auto">自动</option>
-      <option value="gpu">GPU</option>
-      <option value="cpu">CPU</option>
-    </select>
   </div>
 
-  <div class="gpu-info" id="gpuInfo">检测中...</div>
 </div>
 
 <style>
@@ -66,4 +94,35 @@
   min-width: 140px;
 }
 .model-select:focus, .device-select:focus { border-color: #7c3aed; }
+.config-tabs { display: flex; gap: 8px; background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 8px; }
+.tab-btn { flex: 1; padding: 8px 16px; background: transparent; border: none; border-radius: 6px; color: #94a3b8; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s; }
+.tab-btn:hover { color: #e2e8f0; background: #2d3149; }
+.tab-btn.active { color: #fff; background: #7c3aed; }
+.tab-content { background: #1a1d27; border: 1px solid #2d3149; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.config-form { display: flex; flex-direction: column; gap: 10px; }
+.form-row { display: flex; align-items: center; gap: 12px; }
+.form-row label { font-size: 12px; color: #94a3b8; min-width: 120px; }
+.form-row input {
+  flex: 1;
+  background: #0f1117;
+  border: 1px solid #2d3149;
+  border-radius: 6px;
+  color: #e2e8f0;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.form-row input:focus { border-color: #7c3aed; }
+.config-list { display: flex; flex-direction: column; gap: 8px; }
+.config-item { font-size: 12px; color: #64748b; padding: 8px 12px; background: #0f1117; border-radius: 6px; }
+.config-item.sub { padding-left: 16px; }
+.loading { font-size: 12px; color: #64748b; text-align: center; padding: 20px; }
+.dir-input-wrap { display: flex; align-items: center; flex: 1; gap: 8px; }
+.dir-input-wrap input { flex: 1; }
+.dir-browse-btn { padding: 6px 10px; background: #2d3149; border: 1px solid #2d3149; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.dir-browse-btn:hover { background: #7c3aed; border-color: #7c3aed; }
+.dir-status { font-size: 12px; min-width: 60px; }
+.dir-status.ok { color: #86efac; }
+.dir-status.err { color: #fca5a5; }
 </style>

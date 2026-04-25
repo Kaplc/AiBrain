@@ -38,6 +38,19 @@ def register(app, stats_db):
         except Exception as e:
             return jsonify({"error": str(e), "results": []})
 
+    @app.route('/memory/search', methods=['POST'])
+    def memory_search():
+        """MCP专用搜索，不保存搜索历史"""
+        data = request.get_json()
+        query = (data or {}).get('query', '').strip()
+        if not query:
+            return jsonify({"results": []})
+        try:
+            results = search_memory(query)
+            return jsonify({"results": results})
+        except Exception as e:
+            return jsonify({"error": str(e), "results": []})
+
     @app.route('/list', methods=['POST'])
     def list_route():
         data = request.get_json() or {}

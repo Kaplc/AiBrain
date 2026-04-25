@@ -223,6 +223,11 @@ def clear_console_queue():
 
 def _preload():
     import time, urllib.request
+
+    # ── 初始化用户配置目录 ─────────────────────────────────
+    from modules.settings_mod import AibrainConfigManager
+    AibrainConfigManager.get_instance().init_default_configs()
+
     # 重试连接 Qdrant（最多 20 秒）
     for attempt in range(10):
         try:

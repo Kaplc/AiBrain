@@ -46,7 +46,7 @@ def store_memory(text: str) -> str:
 
 def search_memory(query: str) -> list[dict]:
     """搜索记忆（后端自动根据数据量选择最优策略），返回匹配的文本和分数"""
-    result = _call("/search", {"query": query})
+    result = _call("/memory/search", {"query": query})
     if "error" in result:
         raise RuntimeError(result["error"])
     return [{"text": r["text"], "score": r.get("score", 0)} for r in result.get("results", [])]
