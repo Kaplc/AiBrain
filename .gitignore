@@ -1,3 +1,6 @@
+# Wiki 本地文件（不跟踪）
+wiki/local/
+
 # 忽略向量数据库
 storage/
 qdrant/storage/
