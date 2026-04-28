@@ -37,9 +37,15 @@ class StatsDB:
                 action TEXT NOT NULL,
                 content TEXT,
                 memory_id TEXT,
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                status TEXT DEFAULT 'done'
             )
         ''')
+        # 迁移：给已有的 stream 表添加 status 列
+        try:
+            db.execute('ALTER TABLE stream ADD COLUMN status TEXT DEFAULT "done"')
+        except Exception:
+            pass  # 列已存在则忽略
         db.execute('CREATE INDEX IF NOT EXISTS idx_stream_time ON stream(created_at DESC)')
         db.execute('''
             CREATE TABLE IF NOT EXISTS search_history (
@@ -112,12 +118,12 @@ class StatsDB:
 
     # ── Stream（操作流）─────────────────────────────────────
 
-    def append_stream(self, action, content='', memory_id=''):
+    def append_stream(self, action, content='', memory_id='', status='done'):
         """写入一条操作记录"""
         db = self._get_conn()
         db.execute(
-            'INSERT INTO stream (action, content, memory_id) VALUES (?, ?, ?)',
-            (action, content[:500], memory_id)  # content 截断防过长
+            'INSERT INTO stream (action, content, memory_id, status) VALUES (?, ?, ?, ?)',
+            (action, content[:500], memory_id, status)
         )
         db.commit()
         rowid = db.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -128,17 +134,24 @@ class StatsDB:
 
         return rowid
 
+    def update_stream_status(self, rowid, status):
+        """更新流记录的状态"""
+        db = self._get_conn()
+        db.execute('UPDATE stream SET status=? WHERE id=?', (status, rowid))
+        db.commit()
+        db.close()
+
     def query_stream(self, action=None, limit=50):
         """查询最近的操作流，最新的在前面"""
         db = self._get_conn()
         if action:
             rows = db.execute(
-                'SELECT id, action, content, memory_id, created_at FROM stream WHERE action=? ORDER BY id DESC LIMIT ?',
+                'SELECT id, action, content, memory_id, created_at, status FROM stream WHERE action=? ORDER BY id DESC LIMIT ?',
                 (action, limit)
             ).fetchall()
         else:
             rows = db.execute(
-                'SELECT id, action, content, memory_id, created_at FROM stream ORDER BY id DESC LIMIT ?',
+                'SELECT id, action, content, memory_id, created_at, status FROM stream ORDER BY id DESC LIMIT ?',
                 (limit,)
             ).fetchall()
         db.close()

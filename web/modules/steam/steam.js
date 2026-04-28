@@ -60,11 +60,23 @@ function renderList(listId, items, showDelete) {
     const timeStr = (item.created_at || '').slice(11, 19);
     const text = item.content || item.memory_id || '';
 
+    // 状态图标
+    let statusIcon = '';
+    const status = item.status || '';
+    if (status === 'pending') {
+      statusIcon = '<div class="steam-status-icon"><div class="steam-spinner"></div></div>';
+    } else if (status === 'done') {
+      statusIcon = '<div class="steam-status-icon"><span class="steam-check">✓</span></div>';
+    } else if (status === 'error') {
+      statusIcon = '<div class="steam-status-icon"><span class="steam-error">✗</span></div>';
+    }
+
     html += `<div class="steam-item" data-id="${item.id}">
       <div class="${dotClass}"></div>
       <div class="steam-body">
-        <span style="font-weight:600;color:#a78bfa;margin-right:6px">${actionLabel}</span>
+        <span style="font-weight:600;color:#a78bfa;margin-right:6px;flex-shrink:0">${actionLabel}</span>
         <span class="steam-text">${escapeHtml(text)}</span>
+        ${statusIcon}
       </div>
       <div class="steam-time">${timeStr}</div>
     </div>`;

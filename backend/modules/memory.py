@@ -51,18 +51,27 @@ def register(app, stats_db):
 
     @app.route('/mcp/store', methods=['POST'])
     def mcp_store():
-        """MCP专用存储，走独立API，需要记录到记忆流"""
+        """MCP专用存储，异步后台执行，立即返回"""
         data = request.get_json()
         text = (data or {}).get('text', '').strip()
         if not text:
             return jsonify({"error": "内容不能为空"})
-        try:
-            result = store_memory(text)
-            stats_db.record_action(added=1)
-            stats_db.append_stream('store', content=text)
-            return jsonify(result)
-        except Exception as e:
-            return jsonify({"error": str(e)})
+
+        # 先写入 stream（pending 状态），前端立即可见
+        rowid = stats_db.append_stream('store', content=text, status='pending')
+
+        def _bg_store():
+            """后台线程：执行实际存储并更新状态"""
+            try:
+                store_memory(text)
+                stats_db.record_action(added=1)
+                stats_db.update_stream_status(rowid, 'done')
+            except Exception as e:
+                logger.error(f"[mcp/store] 后台保存失败: {e}")
+                stats_db.update_stream_status(rowid, 'error')
+
+        threading.Thread(target=_bg_store, daemon=True).start()
+        return jsonify({"rowid": rowid, "status": "pending"})
 
     @app.route('/mcp/search', methods=['POST'])
     def mcp_search():

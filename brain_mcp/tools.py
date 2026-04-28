@@ -33,14 +33,17 @@ def _call(path: str, data: dict) -> dict:
 
 
 def store_memory(text: str) -> str:
-    """存储记忆（LLM 自动拆分事实），返回实际记住的文本"""
+    """存储记忆（异步后台执行），返回确认文本"""
     result = _call("/mcp/store", {"text": text})
     if "error" in result:
         raise RuntimeError(result["error"])
+    # 异步模式：立即返回，实际存储在后台
+    if "rowid" in result:
+        return f"已提交后台保存（#{result['rowid']}）"
+    # 同步模式 fallback（兼容旧版）
     texts = result.get("stored_texts", [])
     if texts:
-        return f"已记住:\n" + "\n".join(f"  • {t}" for t in texts)
-    # stored_texts为空时返回原始输入文本
+        return "已记住:\n" + "\n".join(f"  • {t}" for t in texts)
     return f"已记住:\n  • {text}"
 
 
