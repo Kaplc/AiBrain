@@ -3,8 +3,8 @@ AiBrain 统一进程管理器
 管理 Qdrant + Flask + PyWebView 的完整生命周期
 
 用法:
-  python backend/process_manager.py          # 正常启动（全部组件）
-  python backend/process_manager.py --no-ui  # 无 UI 模式（仅 Qdrant + Flask）
+  python backend/launcher/process_manager.py          # 正常启动（全部组件）
+  python backend/launcher/process_manager.py --no-ui  # 无 UI 模式（仅 Qdrant + Flask）
 
 进程树:
   process_manager.py (主进程, PID=X)
@@ -22,8 +22,9 @@ import urllib.request
 import argparse
 
 # ── 路径 ──────────────────────────────────────────────
-_BASE = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.normpath(os.path.join(_BASE, '..'))
+_BASE = os.path.dirname(os.path.abspath(__file__))          # backend/launcher/
+_BACKEND = os.path.normpath(os.path.join(_BASE, '..'))      # backend/
+_PROJECT_ROOT = os.path.normpath(os.path.join(_BASE, '..', '..'))  # 项目根
 _PYTHON = os.path.join(_PROJECT_ROOT, 'venv312', 'Scripts', 'python.exe')
 _QDRANT_EXE = os.path.join(_PROJECT_ROOT, 'qdrant', 'qdrant.exe')
 _QDRANT_CONFIG = os.path.join(_PROJECT_ROOT, 'qdrant', 'config', 'config.yaml')
@@ -83,7 +84,7 @@ class ProcessManager:
         """启动 Flask 服务"""
         env = {
             **os.environ,
-            'PYTHONPATH': f'{_PROJECT_ROOT};{_BASE}',
+            'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',
             'FLASK_PORT': str(self.ports['flask']),
             'QDRANT_HTTP_PORT': str(self.ports['qdrant_http']),
             'QDRANT_GRPC_PORT': str(self.ports['qdrant_grpc']),
@@ -91,7 +92,7 @@ class ProcessManager:
         }
         print(f"  [flask] Starting on port {self.ports['flask']}...")
         proc = subprocess.Popen(
-            [_PYTHON, os.path.join(_BASE, 'app.py'), '--flask-only'],
+            [_PYTHON, os.path.join(_BACKEND, 'app.py'), '--flask-only'],
             cwd=_PROJECT_ROOT,
             env=env,
         )
@@ -106,6 +107,43 @@ class ProcessManager:
             print(f"  [flask] WARNING: not ready after 30s")
             return False
 
+    def restart_flask(self):
+        """重启 Flask 服务（供文件监控调用）"""
+        print(f"  [flask] Restarting...")
+        # 1. 先杀已记录的进程
+        proc = self.procs.get('flask')
+        if proc and proc.poll() is None:
+            try:
+                subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            except Exception as e:
+                print(f"  [flask] Stop failed: {e}")
+        # 2. 再用端口强杀，确保所有残留进程被清除
+        flask_port = self.ports['flask']
+        try:
+            result = subprocess.run(
+                ['netstat', '-ano'], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f':{flask_port}' in line and 'LISTENING' in line:
+                    parts = line.split()
+                    pid_str = parts[-1]
+                    try:
+                        subprocess.run(
+                            ['taskkill', '/F', '/T', '/PID', pid_str],
+                            capture_output=True, timeout=5,
+                        )
+                        print(f"  [flask] Port-killed residual PID {pid_str}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # 3. 等端口释放后再启动
+        time.sleep(1)
+        return self.start_flask()
+
     def start_webview(self):
         """启动 PyWebView 窗口"""
         if self.no_ui:
@@ -114,14 +152,14 @@ class ProcessManager:
 
         env = {
             **os.environ,
-            'PYTHONPATH': f'{_PROJECT_ROOT};{_BASE}',
+            'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',
             'FLASK_PORT': str(self.ports['flask']),
             'QDRANT_HTTP_PORT': str(self.ports['qdrant_http']),
             'QDRANT_GRPC_PORT': str(self.ports['qdrant_grpc']),
         }
         print(f"  [webview] Starting...")
         proc = subprocess.Popen(
-            [_PYTHON, os.path.join(_BASE, 'app.py'), '--webview-only'],
+            [_PYTHON, os.path.join(_BACKEND, 'app.py'), '--webview-only'],
             cwd=_PROJECT_ROOT,
             env=env,
         )
@@ -161,11 +199,66 @@ class ProcessManager:
                     print(f"  [{name}] Stop failed: {e}")
         print("=== All stopped ===")
 
+    def start_file_watcher(self):
+        """监控 backend/*.py 变更，自动重启 Flask（需要 watchdog）"""
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+        except ImportError:
+            print("  [hot-reload] watchdog 未安装，跳过（pip install watchdog 启用）")
+            return
+
+        import threading as _threading
+
+        watch_dir = _BACKEND
+        _launcher_dir = os.path.normcase(os.path.abspath(_BASE))
+        _lock = _threading.Lock()
+        _pending = [False]
+
+        mgr = self
+
+        class _Handler(FileSystemEventHandler):
+            def on_modified(self, event):
+                if not isinstance(event, FileModifiedEvent):
+                    return
+                if not event.src_path.endswith('.py'):
+                    return
+                # 排除 launcher/ 目录（启动管理脚本不触发重载）
+                if os.path.normcase(os.path.abspath(event.src_path)).startswith(_launcher_dir):
+                    return
+                with _lock:
+                    if _pending[0]:
+                        return
+                    _pending[0] = True
+                rel = os.path.relpath(event.src_path, _PROJECT_ROOT)
+                print(f"  [hot-reload] 🔄 {rel} 已修改，2秒后重启 Flask...")
+                def _do():
+                    time.sleep(2)
+                    mgr.restart_flask()
+                    with _lock:
+                        _pending[0] = False
+                _threading.Thread(target=_do, daemon=True).start()
+
+        observer = Observer()
+        observer.schedule(_Handler(), watch_dir, recursive=True)
+        observer.start()
+        print(f"  [hot-reload] ✅ 文件监控已启动: backend/ （改.py自动重启）")
+
     # ── 监控主循环 ──
     def monitor(self):
-        """监控子进程，崩溃时自动重启"""
+        """监控子进程，崩溃时自动重启；同时检查文件变更标记重启 Flask"""
+        restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
         while self._running:
             time.sleep(3)
+            # 检查文件变更重启标记
+            if os.path.exists(restart_flag):
+                try:
+                    os.remove(restart_flag)
+                    print("  [mgr] Detected Flask restart flag, restarting...")
+                    self.restart_flask()
+                except Exception as e:
+                    print(f"  [mgr] Restart flag handling error: {e}")
+            # 检查子进程状态
             for name, proc in list(self.procs.items()):
                 if proc.poll() is not None:
                     rc = proc.returncode
@@ -251,6 +344,7 @@ def main():
     pm.start_qdrant()
     pm.start_flask()
     pm.start_webview()
+    pm.start_file_watcher()
 
     print("\n=== All services running ===")
     print("  Press Ctrl+C to stop all services\n")

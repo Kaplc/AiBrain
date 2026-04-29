@@ -22,7 +22,19 @@ def _run_async(coro):
     """在同步上下文中运行异步协程（每次创建新event loop避免锁冲突）"""
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return pool.submit(asyncio.run, coro).result(timeout=30)
+
+
+def _run_async_with_timeout(coro, timeout=30):
+    """运行异步协程，带超时保护"""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(f"异步操作超时({timeout}s)")
 
 
 def _load_llm_config() -> dict:
@@ -256,7 +268,10 @@ def _create_rag():
     logger.info(f"[TRACE] LightRAG() 构造耗时 {t_rag_create:.2f}s")
 
     t4 = _t.time()
-    _run_async(rag.initialize_storages())
+    try:
+        _run_async_with_timeout(rag.initialize_storages(), timeout=30)
+    except TimeoutError as e:
+        logger.warning(f"[TRACE] initialize_storages 超时: {e}，继续执行")
     t_init = _t.time() - t4
     total = _t.time() - t0
     logger.info(
@@ -279,22 +294,14 @@ def insert_document(text: str, file_path: str | None = None) -> str:
 def query_wiki_context(question: str, mode: str = "hybrid") -> str:
     """查询 wiki，仅返回检索到的上下文（不经过 LLM 生成）
 
-    使用 _rag_lock 保证线程安全 + 超时检测自动重建 RAG 实例
-    （LightRAG query() 存在首次后卡死的已知问题）
+    每个查询创建独立 RAG 实例，彻底避免 LightRAG 线程安全问题导致卡死
+    （LightRAG query() 存在单实例多次调用后永久阻塞的已知问题）
     """
-    global _rag_instance  # 提前声明，用于后续重建
     import time as _t
-    import concurrent.futures
     t_start = _t.time()
     logger.info(f"[TRACE] query_wiki_context 开始 | question={question[:50]} mode={mode}")
 
     from lightrag.base import QueryParam
-
-    # === 跟踪: RAG 初始化 ===
-    t0 = _t.time()
-    rag = get_rag()
-    t_rag = _t.time() - t0
-    logger.info(f"[TRACE] get_rag() 耗时 {t_rag:.2f}s")
 
     valid_modes = ("naive", "local", "global", "hybrid", "mix")
     if mode not in valid_modes:
@@ -302,46 +309,19 @@ def query_wiki_context(question: str, mode: str = "hybrid") -> str:
 
     param = QueryParam(mode=mode, only_need_context=True)
 
-    # === 使用全局锁 + 线程超时保护查询 ===
-    t1 = _t.time()
-    acquired = _rag_lock.acquire(timeout=60)
-    if not acquired:
-        logger.error("[RAG] 无法获取 RAG 查询锁（60s超时），强制重建")
-        _rag_instance = None
-        rag = _create_rag()
-        _rag_lock.acquire()
-    try:
-        # 用 ThreadPoolExecutor 执行 query，支持超时检测
-        # LightRAG 已知问题：首次查询成功后后续可能永久阻塞
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(rag.query, question, param)
-            try:
-                result = future.result(timeout=25)  # 25秒超时
-            except concurrent.futures.TimeoutError:
-                logger.warning("[RAG] query() 超时(25s)，检测到 LightRAG 卡死，重建实例重试")
-                future.cancel()
-                # 重建 RAG 实例
-                _rag_instance = None
-                rag = _create_rag()
-                # 重试一次（新实例应该能正常工作）
-                result = rag.query(question, param=param)
-            except RuntimeError as e:
-                if "event loop" in str(e) or "lock" in str(e).lower():
-                    logger.warning(f"[RAG] event loop冲突，重建RAG: {e}")
-                    _rag_instance = None
-                    rag = _create_rag()
-                    result = rag.query(question, param=param)
-                else:
-                    raise
-    finally:
-        _rag_lock.release()
+    # === 每个查询创建独立 RAG 实例（避免 LightRAG 卡死问题）===
+    t0 = _t.time()
+    rag = _create_rag()
+    t_rag = _t.time() - t0
+    logger.info(f"[TRACE] _create_rag() 耗时 {t_rag:.2f}s (独立实例)")
 
+    t1 = _t.time()
+    result = rag.query(question, param=param)
     t_query = _t.time() - t1
     total = _t.time() - t_start
-    result_len = len(result) if result else 0
     logger.info(
         f"[TRACE] query_wiki_context 完成 | mode={mode} "
-        f"rag_init={t_rag:.2f}s query={t_query:.2f}s total={total:.2f}s result_len={result_len}"
+        f"rag_init={t_rag:.2f}s query={t_query:.2f}s total={total:.2f}s result_len={len(result) if result else 0}"
     )
     return result
 

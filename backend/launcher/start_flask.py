@@ -5,6 +5,7 @@
 """
 import os
 import sys
+import time
 
 # ── 路径设置 ──
 _BASE = os.path.dirname(os.path.abspath(__file__))
@@ -24,8 +25,11 @@ logger = logging.getLogger('flask-server')
 
 
 def _start_file_watcher():
-    """文件变更监控：修改 backend/*.py 后自动重启进程"""
-    reload_enabled = os.environ.get('FLASK_RELOAD', '1') == '1'
+    """文件变更监控：修改 backend/*.py 后自动重启 Flask 进程
+
+    注意：此功能仅在 FLASK_RELOAD=1 时启用
+    """
+    reload_enabled = os.environ.get('FLASK_RELOAD', '0') == '1'
     if not reload_enabled:
         return
 
@@ -51,8 +55,17 @@ def _start_file_watcher():
                 _th.Timer(2.0, self._do_restart).start()
 
         def _do_restart(self):
-            logger.warning("[hot-reload] 正在重启...")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            logger.warning("[hot-reload] 文件变更，通知 ProcessManager 重启 Flask...")
+            # 通过创建标记文件通知 ProcessManager 重启 Flask
+            _project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+            restart_flag = os.path.join(_project_root, '.restart_flask')
+            try:
+                with open(restart_flag, 'w') as f:
+                    f.write(str(time.time()))
+            except Exception as e:
+                logger.error(f"[hot-reload] 写入重启标记失败: {e}")
+            # 当前进程退出，由 ProcessManager 检测到后重启
+            os._exit(0)
 
     observer = Observer()
     observer.schedule(_ReloadHandler(), watch_dir, recursive=True)

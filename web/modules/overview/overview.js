@@ -15,7 +15,7 @@ function onPageLoad() {
   console.log('[overview] loading overview page data');
   loadOverviewPage();
 
-  // 模型加载轮询（3秒）
+  // 模型 & Qdrant 状态轮询（1秒，两者都就绪后停止）
   if (_overviewTimer) clearInterval(_overviewTimer);
   _overviewTimer = setInterval(async () => {
     try {
@@ -24,6 +24,15 @@ function onPageLoad() {
       const st = await fetch(API + '/status').then(r => r.json());
       const modelValue = document.getElementById('scModelValue');
       const modelSub = document.getElementById('scModelSub');
+      const modelBadge = document.getElementById('scModelBadge');
+      const qBadge = document.getElementById('scQdrantBadge');
+
+      // 更新 Qdrant badge
+      if (qBadge) {
+        if (st.qdrant_ready) { qBadge.textContent = 'OK'; qBadge.className = 'sc-badge green'; }
+        else { qBadge.textContent = 'ERR'; qBadge.className = 'sc-badge red'; }
+      }
+
       if (st.model_loaded) {
         if (modelValue) modelValue.innerHTML = '';
         if (modelSub) {
@@ -31,7 +40,9 @@ function onPageLoad() {
           const size = st.model_size || '';
           modelSub.innerHTML = `${name} ${size}`;
         }
-        if (_overviewTimer) { clearInterval(_overviewTimer); _overviewTimer = null; }
+        if (modelBadge) { modelBadge.textContent = 'OK'; modelBadge.className = 'sc-badge green'; }
+        // 两者都就绪才停止轮询
+        if (st.qdrant_ready && _overviewTimer) { clearInterval(_overviewTimer); _overviewTimer = null; }
       }
     } catch {}
   }, 1000);

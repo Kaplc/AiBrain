@@ -18,7 +18,7 @@ MAX_OFFSET = 2000
 def project_hash_offset():
     """根据项目根目录路径生成确定性偏移量，不同项目自动分配不同端口"""
     # 项目根目录 = backend/ 的上级目录
-    project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
     path_bytes = project_root.encode('utf-8')
     digest = hashlib.md5(path_bytes).hexdigest()
     offset = int(digest[:8], 16) % MAX_OFFSET
@@ -53,7 +53,7 @@ def find_free_ports():
 
 def get_ports():
     """返回端口列表：优先读 .port_config，否则分配并保存"""
-    config_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '.port_config'))
+    config_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '.port_config'))
 
     if os.path.exists(config_path):
         try:
@@ -77,7 +77,7 @@ def get_ports():
 
 def kill_old_instance():
     """检测并清理旧实例"""
-    port_file = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '.port'))
+    port_file = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '.port'))
     old_port = None
 
     if os.path.exists(port_file):
@@ -110,7 +110,7 @@ def kill_old_instance():
 def check_deps():
     """从 requirements.txt 读取包名并检查是否已安装"""
     import re, importlib.util
-    req_file = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'requirements.txt'))
+    req_file = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'requirements.txt'))
     missing = []
     if not os.path.exists(req_file):
         return True  # 文件不存在则跳过检查

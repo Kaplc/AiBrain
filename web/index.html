@@ -226,14 +226,34 @@ body {
 #page-content { flex: 1; min-height: 0; overflow-y: auto; }
 .statusbar { height: 28px; background: #1a1d27; border-top: 1px solid #2d3149; display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding: 0 16px; font-size: 11px; color: #64748b; flex-shrink: 0; }
 .statusbar-item { display: flex; align-items: center; gap: 5px; }
-.statusbar-dot { width: 6px; height: 6px; border-radius: 50%; }
-.statusbar-dot.ok { background: #22c55e; box-shadow: 0 0 4px #22c55e; animation: breathe 2s ease-in-out infinite; }
-.statusbar-dot.err { background: #ef4444; box-shadow: 0 0 4px #ef4444; }
-.statusbar-dot.loading { background: #eab308; box-shadow: 0 0 4px #eab308; animation: breathe 1s ease-in-out infinite; }
+.statusbar-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  flex-shrink: 0;
+  box-sizing: content-box;
+  transform: none;
+}
+.statusbar-dot.ok {
+  background: #22c55e;
+  box-shadow: 0 0 5px #22c55e;
+  animation: dot-pulse-ok 2s ease-in-out infinite;
+}
+.statusbar-dot.err {
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+}
+.statusbar-dot.loading {
+  background: #eab308;
+  box-shadow: 0 0 5px #eab308;
+  animation: dot-pulse-loading 1s ease-in-out infinite;
+}
 
-@keyframes breathe {
-  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 4px currentColor; }
-  50% { opacity: 0.6; transform: scale(0.85); box-shadow: 0 0 2px currentColor; }
+@keyframes dot-pulse-ok {
+  0%, 100% { opacity: 1; box-shadow: 0 0 5px #22c55e; }
+  50%       { opacity: 0.5; box-shadow: 0 0 2px #22c55e; }
+}
+@keyframes dot-pulse-loading {
+  0%, 100% { opacity: 1; box-shadow: 0 0 5px #eab308; }
+  50%       { opacity: 0.5; box-shadow: 0 0 2px #eab308; }
 }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -15,9 +15,12 @@ import subprocess
 
 
 def main():
-    _project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    _project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
     _project_root_lower = _project_root.lower()
     _self_pid = os.getpid()
+    # 排除父进程（process_manager.py 调用 kill_old 时，父进程也不能杀）
+    _parent_pid = os.getppid()
+    _exclude_pids = {_self_pid, _parent_pid}
 
     # ── A. 收集目标 PID ──────────────────────────────
     target_pids = set()
@@ -57,30 +60,22 @@ def main():
             capture_output=True, text=True, timeout=10
         )
         for line in result.stdout.splitlines():
-            parts = [p.strip() for p in line.split(',') if p.strip()]
-            if len(parts) < 2:
+            # csv 格式: Node,CommandLine,ProcessId
+            parts = line.split(',')
+            if len(parts) < 3:
                 continue
-            pid_str = parts[-1]
-            exe_path = ''
-            cmd_line = ''
-            for p in parts:
-                pl = p.lower()
-                if '.exe' in pl and '\\' in pl:
-                    exe_path = p
-                elif 'app.py' in pl or 'start_flask' in pl:
-                    cmd_line = p
+            # 最后一列是 PID，中间列是 CommandLine（可能含逗号，取除第一列和最后列的所有内容）
+            pid_str = parts[-1].strip()
+            cmd_line = ','.join(parts[1:-1]).strip()
             try:
                 pid = int(pid_str)
             except ValueError:
                 continue
-            if pid == _self_pid:
+            if pid in _exclude_pids:
                 continue
-            # 必须同时满足：命令行含 app.py/start_flask 且 路径在项目目录下
-            is_app_process = (
-                'app.py' in (cmd_line + exe_path) or
-                'start_flask' in (cmd_line + exe_path)
-            )
-            is_our_path = _project_root_lower in (exe_path.lower() + cmd_line.lower())
+            cmd_lower = cmd_line.lower()
+            is_app_process = 'app.py' in cmd_lower or 'start_flask' in cmd_lower
+            is_our_path = _project_root_lower in cmd_lower
             if not (is_app_process and is_our_path):
                 continue
             target_pids.add(pid)
@@ -95,13 +90,17 @@ def main():
             capture_output=True, text=True, timeout=10
         )
         for line in result.stdout.splitlines():
-            parts = [p.strip() for p in line.split(',') if p.strip()]
-            if len(parts) >= 2 and parts[0].lower().endswith('qdrant.exe'):
-                if _project_root.lower() in parts[0].lower():
-                    try:
-                        target_pids.add(int(parts[-1]))
-                    except (ValueError, IndexError):
-                        pass
+            # csv 格式: Node,ExecutablePath,ProcessId
+            parts = line.split(',')
+            if len(parts) < 3:
+                continue
+            pid_str = parts[-1].strip()
+            exe_path = ','.join(parts[1:-1]).strip()
+            if _project_root_lower in exe_path.lower():
+                try:
+                    target_pids.add(int(pid_str))
+                except (ValueError, IndexError):
+                    pass
     except Exception as e:
         print(f"  [warn] qdrant scan skipped: {e}")
 

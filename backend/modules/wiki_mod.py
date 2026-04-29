@@ -170,8 +170,9 @@ def register(app, stats_db=None):
             # 找到最新的日志文件
             project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
             log_dir = os.path.join(project_root, 'logs')
-            pattern = os.path.join(log_dir, 'app_*.log')
-            files = glob.glob(pattern)
+            files = []
+            for pat in ('app_*.log', 'flask_*.log', 'ui_*.log'):
+                files.extend(glob.glob(os.path.join(log_dir, pat)))
             if not files:
                 return jsonify({"lines": [], "file": None})
 

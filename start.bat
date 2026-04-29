@@ -41,12 +41,12 @@ echo Virtual Environment: Python %PY_VER%
 
 :: ── 检查依赖 ──────────────────────────────────────────
 echo === Checking Dependencies ===
-"venv312\Scripts\python.exe" "backend\_boot_helper.py" deps 2>NUL
+"venv312\Scripts\python.exe" "backend\launcher\_boot_helper.py" deps 2>NUL
 if %ERRORLEVEL% neq 0 (
     echo Missing dependencies detected, installing...
     echo This may take a few minutes on first run...
     call "venv312\Scripts\pip.exe" install -r "requirements.txt" 2>NUL
-    "venv312\Scripts\python.exe" "backend\_boot_helper.py" deps 2>NUL
+    "venv312\Scripts\python.exe" "backend\launcher\_boot_helper.py" deps 2>NUL
     if %ERRORLEVEL% neq 0 (
         echo Failed to install dependencies.
         pause
@@ -58,9 +58,9 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: ── 获取端口 ───────────────────────────────────────────
-"venv312\Scripts\python.exe" "backend\_boot_helper.py" ports > "%TEMP%\mem_ports.txt" 2>&1
+"venv312\Scripts\python.exe" "backend\launcher\_boot_helper.py" ports > "%TEMP%\mem_ports.txt" 2>&1
 
 :: ── 启动 ProcessManager（统一管理 Qdrant + Flask + PyWebView）──
 echo === Starting Process Manager ===
 set "PYTHONPATH=%~dp0;%~dp0backend"
-"venv312\Scripts\python.exe" "backend\process_manager.py" %*
+"venv312\Scripts\python.exe" "backend\launcher\process_manager.py" %*

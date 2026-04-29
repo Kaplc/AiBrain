@@ -114,8 +114,9 @@ def get_logs():
     import glob
     try:
         log_dir = os.path.join(_PROJECT_ROOT, 'logs')
-        pattern = os.path.join(log_dir, 'app_*.log')
-        files = glob.glob(pattern)
+        files = []
+        for pat in ('app_*.log', 'flask_*.log', 'ui_*.log'):
+            files.extend(glob.glob(os.path.join(log_dir, pat)))
         if not files:
             return jsonify({"lines": [], "file": None})
 
@@ -210,9 +211,14 @@ def poll_console_queue():
     try:
         queue_file = os.path.join(os.path.expanduser("~"), ".aibrain", "console_queue.json")
         if os.path.exists(queue_file):
-            with open(queue_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            try:
+                with open(queue_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
                 return jsonify({"commands": data.get("commands", [])})
+            except (json.JSONDecodeError, ValueError):
+                # 文件损坏/为空，重置
+                with open(queue_file, 'w', encoding='utf-8') as f:
+                    json.dump({"commands": []}, f)
         return jsonify({"commands": []})
     except Exception as e:
         logger.error(f"[API✗] /console/poll 失败: {e}")
@@ -224,8 +230,13 @@ def clear_console_queue():
     """清空命令队列（前端执行完成后调用）"""
     try:
         queue_file = os.path.join(os.path.expanduser("~"), ".aibrain", "console_queue.json")
-        with open(queue_file, 'w', encoding='utf-8') as f:
-            json.dump({"commands": [], "timestamp": int(time.time())}, f)
+        import tempfile
+        dir_ = os.path.dirname(queue_file)
+        os.makedirs(dir_, exist_ok=True)
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=dir_, delete=False, suffix='.tmp') as tf:
+            json.dump({"commands": [], "timestamp": int(time.time())}, tf)
+            tmp_path = tf.name
+        os.replace(tmp_path, queue_file)
         return jsonify({"ok": True})
     except Exception as e:
         logger.error(f"[API✗] /console/poll(clear) 失败: {e}")
@@ -328,8 +339,11 @@ def start_flask():
 
 
 def _start_file_watcher():
-    """文件变更监控：修改 backend/*.py 后自动重启进程（替代 Flask reloader）"""
-    reload_enabled = os.environ.get('FLASK_RELOAD', '1') == '1'
+    """文件变更监控：修改 backend/*.py 后自动重启 Flask 进程（替代 Flask reloader）
+
+    注意：此功能仅在 FLASK_RELOAD=1 时启用，由 ProcessManager 启动的进程默认关闭
+    """
+    reload_enabled = os.environ.get('FLASK_RELOAD', '0') == '1'
     if not reload_enabled:
         return
 
@@ -355,8 +369,16 @@ def _start_file_watcher():
                 _th.Timer(2.0, self._do_restart).start()
 
         def _do_restart(self):
-            logger.warning("[hot-reload] 正在重启...")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            logger.warning("[hot-reload] 文件变更，通知 ProcessManager 重启 Flask...")
+            # 通过创建标记文件通知 ProcessManager 重启 Flask
+            restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
+            try:
+                with open(restart_flag, 'w') as f:
+                    f.write(str(time.time()))
+            except Exception as e:
+                logger.error(f"[hot-reload] 写入重启标记失败: {e}")
+            # 当前进程退出，由 ProcessManager 检测到后重启
+            os._exit(0)
 
     observer = Observer()
     observer.schedule(_ReloadHandler(), watch_dir, recursive=True)
@@ -462,9 +484,9 @@ if __name__ == '__main__':
 
     if args.flask_only:
         # ── Flask-only 模式：主线程跑 Flask ──────────────
-        _reload = os.environ.get('FLASK_RELOAD', '1') == '1'
-        if not _reload:
-            # 仅在关闭 reloader 时才启动 watchdog 做日志归档
+        _reload = os.environ.get('FLASK_RELOAD', '0') == '1'
+        if _reload:
+            # 仅在开启 reloader 时才启动 watchdog 做热重启
             _start_file_watcher()
         logger.info(f"[Flask-Only] Starting on port {_FLASK_PORT}")
         start_flask()

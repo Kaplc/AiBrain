@@ -12,6 +12,7 @@ import shutil
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_PY = os.path.join(BASE_DIR, "venv312", "Scripts", "python.exe")
 BACKEND_DIR = os.path.join(BASE_DIR, "backend")
+LAUNCHER_DIR = os.path.join(BASE_DIR, "backend", "launcher")
 
 
 def run(args, **kwargs):
@@ -46,7 +47,7 @@ def main():
 
     # 1. 杀掉旧进程
     print("\n[1/5] Killing old processes...")
-    kill_script = os.path.join(BACKEND_DIR, "kill_old.py")
+    kill_script = os.path.join(LAUNCHER_DIR, "kill_old.py")
     if os.path.exists(kill_script):
         run([VENV_PY, kill_script])
 
@@ -63,7 +64,7 @@ def main():
 
     # 3. 检查依赖
     print("\n[3/5] Checking dependencies...")
-    boot_helper = os.path.join(BACKEND_DIR, "_boot_helper.py")
+    boot_helper = os.path.join(LAUNCHER_DIR, "_boot_helper.py")
     result = run([VENV_PY, boot_helper, "deps"])
     if result.returncode != 0:
         print("  Installing dependencies...")
