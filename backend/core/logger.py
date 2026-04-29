@@ -40,6 +40,8 @@ def setup_logger(project_root, role='app'):
     log.setLevel(logging.INFO)
     # 静默 werkzeug 日志
     logging.getLogger('werkzeug').setLevel(logging.ERROR)
+    # 过滤 LightRAG 的 "Task was destroyed but it is pending" 无害噪音
+    logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
     return log
 

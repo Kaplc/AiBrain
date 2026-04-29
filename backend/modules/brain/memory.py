@@ -12,6 +12,22 @@ logger = logging.getLogger('memory')
 # 默认 user_id，mem0 需要至少一个 entity id
 DEFAULT_USER_ID = "default"
 
+# 记忆数量缓存：启动时预热，store 时自增，避免每次搜索都调 get_all
+_memory_count_cache = None
+
+
+def warmup_memory_count():
+    """预热记忆数量缓存（在 _preload 中调用）"""
+    global _memory_count_cache
+    try:
+        client = get_mem0_client()
+        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=1)
+        _memory_count_cache = len(result.get("results", []))
+        logger.info(f"[memory] 记忆数量缓存已预热: {_memory_count_cache} 条")
+    except Exception as e:
+        logger.warning(f"[memory] 预热记忆数量失败: {e}")
+        _memory_count_cache = 0
+
 
 def get_client():
     """兼容接口：返回 mem0 客户端"""
@@ -19,28 +35,24 @@ def get_client():
 
 
 def _get_search_options():
-    """根据数据量自适应返回最优搜索参数。
-
-    数据量 < 100:     top_k=15,  threshold=None,  rerank=False   （全召回）
-    数据量 100~1000:  top_k=15,  threshold=0.5,    rerank=False   （轻过滤）
-    数据量 > 1000:    top_k=15,  threshold=0.65,   rerank=True    （精确+重排）
-
-    top_k 固定不变——控制"想看几条"，不随数据量变化。
-    threshold 控制质量底线，rerank 在数据量大时提升排序精度。
-    """
-    try:
-        client = get_mem0_client()
-        count_result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=1)
-        total = len(count_result.get("results", []))
-    except Exception:
-        total = 0
+    """根据数据量自适应返回最优搜索参数（使用缓存，避免每次 get_all）"""
+    global _memory_count_cache
+    if _memory_count_cache is None:
+        # 缓存未预热时临时查询一次
+        try:
+            client = get_mem0_client()
+            result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=1)
+            _memory_count_cache = len(result.get("results", []))
+        except Exception:
+            _memory_count_cache = 0
+    total = _memory_count_cache
 
     if total < 100:
-        return {"top_k": 15, "threshold": None, "rerank": False}
+        return {"top_k": 50, "threshold": None, "rerank": False}
     elif total <= 1000:
-        return {"top_k": 15, "threshold": 0.5, "rerank": False}
+        return {"top_k": 50, "threshold": 0.55, "rerank": False}
     else:
-        return {"top_k": 15, "threshold": 0.65, "rerank": True}
+        return {"top_k": 50, "threshold": 0.60, "rerank": True}
 
 
 def store_memory(text: str) -> dict:
@@ -74,6 +86,11 @@ def store_memory(text: str) -> dict:
     added = [e["memory"] for e in events if e.get("event") == "ADD"]
     updated = [e["memory"] for e in events if e.get("event") == "UPDATE"]
 
+    # 有新增时自增缓存计数
+    global _memory_count_cache
+    if added and _memory_count_cache is not None:
+        _memory_count_cache += len(added)
+
     parts = []
     if added:
         parts.append(f"新增 {len(added)} 条记忆")
@@ -106,13 +123,29 @@ def search_memory(query: str) -> list[dict]:
 
     result = client.search(**kwargs)
 
-    memories = []
+    threshold = opts.get("threshold")
+    all_memories = []
     for r in result.get("results", []):
-        memories.append({
+        all_memories.append({
             "id": r["id"],
             "text": r["memory"],
             "score": round(r.get("score", 0), 4),
         })
+    # 按评分降序
+    all_memories.sort(key=lambda x: x["score"], reverse=True)
+
+    MIN_COUNT = 10
+    if threshold is not None:
+        above = [m for m in all_memories if m["score"] >= threshold]
+        if len(above) >= MIN_COUNT:
+            # 阈值内结果足够，全部返回
+            memories = above
+        else:
+            # 阈值内不足 10 条，用评分最高的 10 条补足
+            memories = all_memories[:MIN_COUNT]
+    else:
+        memories = all_memories
+
     return memories
 
 

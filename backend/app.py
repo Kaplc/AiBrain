@@ -298,6 +298,13 @@ def _preload():
     device_setting = settings_mgr.load().get("device", "cpu")
     model_mgr.load(device_setting)
 
+    # 预热记忆数量缓存（模型加载后 mem0 client 已就绪）
+    try:
+        from modules.brain.memory import warmup_memory_count
+        warmup_memory_count()
+    except Exception as e:
+        logger.warning(f"warmup_memory_count failed (non-fatal): {e}")
+
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:
         from rag.lightrag_wiki.rag_engine import get_rag

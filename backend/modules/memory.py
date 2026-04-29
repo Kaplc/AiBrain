@@ -182,7 +182,7 @@ def register(app, stats_db):
             return jsonify({"error": "查询词不能为空"})
         try:
             result = organize_memories(query)
-            stats_db.append_stream('organize', query=query, total=result.get('total_found', 0))
+            stats_db.append_stream('organize', content=f"dedup: {result.get('total_found', 0)} found")
             return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)})
@@ -223,7 +223,7 @@ def register(app, stats_db):
             return jsonify({"error": "没有需要写入的项目"})
         try:
             result = apply_organize(items)
-            stats_db.append_stream('organize', action='apply', applied=result['applied'], deleted=result['deleted'], added=result['added'])
+            stats_db.append_stream('organize', content=f"apply: +{result['added']} -{result['deleted']}")
             return jsonify(result)
         except Exception as e:
             logger.error(f"[organize/apply] 失败: {e}")

@@ -22,7 +22,7 @@
       "env": {
         "PYTHONPATH": "."
       },
-      "disabled": false
+      "disabled": true
     },
     "computer": {
       "type": "stdio",
@@ -34,7 +34,7 @@
       "env": {
         "PYTHONPATH": "."
       },
-      "disabled": false
+      "disabled": true
     },
     "wiki": {
       "type": "stdio",

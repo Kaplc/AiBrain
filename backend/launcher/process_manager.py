@@ -110,8 +110,9 @@ class ProcessManager:
     def restart_flask(self):
         """重启 Flask 服务（供文件监控调用）"""
         print(f"  [flask] Restarting...")
-        # 1. 先杀已记录的进程
-        proc = self.procs.get('flask')
+        # 先将 procs['flask'] 置 None，防止 monitor() 检测到进程退出后也触发重启（双启问题）
+        proc = self.procs.pop('flask', None)
+        # 1. 杀已记录的进程
         if proc and proc.poll() is None:
             try:
                 subprocess.run(
@@ -120,7 +121,7 @@ class ProcessManager:
                 )
             except Exception as e:
                 print(f"  [flask] Stop failed: {e}")
-        # 2. 再用端口强杀，确保所有残留进程被清除
+        # 2. 端口强杀兜底
         flask_port = self.ports['flask']
         try:
             result = subprocess.run(
@@ -140,8 +141,16 @@ class ProcessManager:
                         pass
         except Exception:
             pass
-        # 3. 等端口释放后再启动
-        time.sleep(1)
+        # 3. 轮询等端口真正释放再启动（最多等 10 秒）
+        for _ in range(20):
+            result = subprocess.run(
+                ['netstat', '-ano'], capture_output=True, text=True, timeout=5
+            )
+            if f':{flask_port}' not in result.stdout or 'LISTENING' not in result.stdout:
+                break
+            time.sleep(0.5)
+        else:
+            print(f"  [flask] WARNING: port {flask_port} still occupied after 10s, starting anyway")
         return self.start_flask()
 
     def start_webview(self):
