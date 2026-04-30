@@ -16,6 +16,7 @@ AiBrain 统一进程管理器
 import os
 import sys
 import signal
+import socket
 import subprocess
 import time
 import urllib.request
@@ -28,6 +29,8 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(_BASE, '..', '..'))  # 项目根
 _PYTHON = os.path.join(_PROJECT_ROOT, 'venv312', 'Scripts', 'python.exe')
 _QDRANT_EXE = os.path.join(_PROJECT_ROOT, 'qdrant', 'qdrant.exe')
 _QDRANT_CONFIG = os.path.join(_PROJECT_ROOT, 'qdrant', 'config', 'config.yaml')
+_LOGS_DIR = os.path.join(_BACKEND, 'logs')                  # backend/logs/
+os.makedirs(_LOGS_DIR, exist_ok=True)
 
 # ── 端口 ──────────────────────────────────────────────
 def _load_ports():
@@ -113,7 +116,7 @@ class ProcessManager:
         策略：优先通过端口查找并杀死实际监听的 Flask 进程，
         不依赖 self.procs 记录（可能与实际运行的进程不一致）
         """
-        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        _dbg_path = os.path.join(_LOGS_DIR, 'restart_trace.log')
         try:
             with open(_dbg_path, 'a') as _f:
                 _f.write(f"[{time.strftime('%H:%M:%S')}] === restart_flask() ENTER ===\n")
@@ -152,7 +155,6 @@ class ProcessManager:
         except Exception as e:
             print(f"  [flask] netstat check failed: {e}")
 
-        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
         with open(_dbg_path, 'a') as _f:
             _f.write(f"  [STEP1] killed_pids={killed_pids}\n")
 
@@ -174,18 +176,14 @@ class ProcessManager:
             with open(_dbg_path, 'a') as _f:
                 _f.write(f"  [STEP2] proc=None or already dead (pid={proc.pid if proc else None})\n")
 
-        # 3. 轮询等端口真正释放再启动（最多等 15 秒）
+        # 3. 轮询等端口释放（用 socket 试绑定，最多 5 秒）
         port_freed = False
-        for attempt in range(30):
-            result = subprocess.run(
-                ['netstat', '-ano'], capture_output=True, text=True, timeout=5
-            )
-            if f':{flask_port}' not in result.stdout or 'LISTENING' not in result.stdout:
+        for attempt in range(10):
+            if self._is_port_free(flask_port):
                 port_freed = True
                 break
             time.sleep(0.5)
 
-        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
         with open(_dbg_path, 'a') as _f:
             _f.write(f"  [STEP3] port freed={port_freed} after {(attempt+1)*0.5:.1f}s\n")
             _f.write(f"  [STEP4] calling start_flask()...\n")
@@ -253,8 +251,8 @@ class ProcessManager:
     # ── 监控主循环 ──
     def monitor(self):
         """监控子进程，崩溃时自动重启；同时检查文件变更标记重启 Flask"""
-        restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
-        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        restart_flag = os.path.join(_BACKEND, '.restart_flask')
+        _dbg_path = os.path.join(_LOGS_DIR, 'restart_trace.log')
         _loop_count = 0
 
         with open(_dbg_path, 'a') as _f:
@@ -316,16 +314,20 @@ class ProcessManager:
                         self.start_webview()
 
     # ── 工具方法 ──
-    def _is_port_listening(self, port):
-        """检查端口是否被监听"""
+    def _is_port_free(self, port):
+        """用 socket 试绑定判断端口是否空闲"""
         try:
-            r = subprocess.run(
-                ['netstat', '-ano'],
-                capture_output=True, text=True, timeout=5
-            )
-            return f':{port}' in r.stdout and 'LISTENING' in r.stdout
-        except Exception:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(('127.0.0.1', port))
+            s.close()
+            return True
+        except OSError:
             return False
+
+    def _is_port_listening(self, port):
+        """检查端口是否被监听（反向判断：不空闲 = 被监听）"""
+        return not self._is_port_free(port)
 
     def _wait_url(self, url, timeout=30, label=''):
         """轮询 URL 直到返回 200"""
@@ -352,6 +354,52 @@ class ProcessManager:
             f.write(f"  storage_path: ./qdrant/storage\n")
 
 
+# ── 单例锁 ──────────────────────────────────────────
+_PM_LOCK_FILE = os.path.join(_BACKEND, '.pm.pid')
+
+
+def _is_pid_alive(pid):
+    """检查进程是否存活（Windows 兼容）"""
+    try:
+        proc = subprocess.run(
+            ['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'],
+            capture_output=True, text=True, timeout=5,
+        )
+        return str(pid) in proc.stdout
+    except Exception:
+        return False
+
+
+def _acquire_pm_lock():
+    """获取 PM 单例锁：如果已有 PM 在运行则退出"""
+    if os.path.exists(_PM_LOCK_FILE):
+        try:
+            with open(_PM_LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            if _is_pid_alive(old_pid):
+                print(f"[mgr] Another PM already running (PID {old_pid}), exiting.")
+                sys.exit(1)
+            else:
+                print(f"[mgr] Stale lock from PID {old_pid}, taking over.")
+        except (ValueError, OSError):
+            pass
+    # 写入当前 PID
+    with open(_PM_LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    # 注册退出时清理锁文件
+    import atexit
+    atexit.register(lambda: _release_pm_lock())
+
+
+def _release_pm_lock():
+    """退出时删除锁文件"""
+    try:
+        if os.path.exists(_PM_LOCK_FILE):
+            os.remove(_PM_LOCK_FILE)
+    except OSError:
+        pass
+
+
 # ── 入口 ──────────────────────────────────────────────
 def main():
     try:
@@ -359,6 +407,9 @@ def main():
         ctypes.windll.kernel32.SetConsoleTitleW("AiBrain Manager")
     except Exception:
         pass
+
+    # 0. 单例锁 + 清理旧进程
+    _acquire_pm_lock()
 
     parser = argparse.ArgumentParser(description='AiBrain Process Manager')
     parser.add_argument('--no-ui', action='store_true', help='Skip PyWebView (headless mode)')
@@ -378,8 +429,7 @@ def main():
     print(f"  Flask: {pm.ports['flask']}  Qdrant: {pm.ports['qdrant_http']}/{pm.ports['qdrant_grpc']}")
     print("=" * 50)
 
-    # 1. 清理旧进程
-    # （进程清理由 start.py 负责调用 kill_old.py，此处不再重复）
+    # 1. 清理旧进程（由 start.py 负责调用 kill_old.py）
 
     # 2. 按顺序启动
     print("\n=== Starting services ===")

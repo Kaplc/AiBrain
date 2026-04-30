@@ -27,7 +27,7 @@ function startModelPoll() {
       _updateQdrantBadge(st);   // 顺带更新 Qdrant badge（同一个请求）
       if (st.model_loaded && st.qdrant_ready) { clearInterval(_modelTimer); _modelTimer = null; }
     } catch {}
-  }, 1000);
+  }, 2000);
 }
 
 // ── Flask card 轮询 ──────────────────────────────────────────
@@ -46,10 +46,12 @@ function startFlaskPoll(waitRestart, onBack) {
       if (waitRestart && !hasFailed) return;   // 旧进程还在，不算恢复
       // Flask 已恢复
       clearInterval(_flaskTimer); _flaskTimer = null;
+      var cb = onBack;
+      onBack = null;
       _updateFlaskCard(st);
       var fb = document.getElementById('scFlaskBadge');
       if (fb) { fb.textContent = 'OK'; fb.className = 'sc-badge green'; }
-      if (onBack) onBack(st);
+      if (cb) cb(st);
     } catch {
       hasFailed = true;   // 标记已经历过失败（旧进程已死）
       if (waitRestart) {
@@ -82,7 +84,7 @@ function startQdrantPoll() {
       _updateQdrantCard(st);
       if (st.qdrant_ready) { clearInterval(_qdrantTimer); _qdrantTimer = null; }
     } catch {}
-  }, 1000);
+  }, 2000);
 }
 
 // ── card 更新函数 ────────────────────────────────────────────
@@ -373,6 +375,7 @@ var _chartData = null;  // 存储原始数据供 tooltip 使用
 function initChart() {
   const container = document.getElementById('chartContainer');
   if (!container) return;
+  container.innerHTML = '';
   _chartInstance = echarts.init(container, null, { renderer: 'canvas' });
 }
 
@@ -526,6 +529,7 @@ var _addedChartData = null;
 function initAddedChart() {
   var container = document.getElementById('addedChartContainer');
   if (!container) return;
+  container.innerHTML = '';
   _addedChartInstance = echarts.init(container, null, { renderer: 'canvas' });
 }
 
@@ -553,6 +557,7 @@ function drawAddedChart(data, range) {
     yAxis: {
       type: 'value',
       position: 'right',
+      minInterval: 1,
       splitLine: { lineStyle: { color: '#2d314922' } },
       axisLabel: { color: '#64748b', fontSize: 10 },
       axisLine: { show: false },

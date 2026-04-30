@@ -53,3 +53,6 @@ scikit-learn==1.8.0
 scipy==1.17.1
 tqdm==4.67.3
 python-dotenv==1.2.2
+
+# E2E testing
+playwright
