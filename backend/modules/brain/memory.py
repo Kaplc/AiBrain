@@ -48,11 +48,11 @@ def _get_search_options():
     total = _memory_count_cache
 
     if total < 100:
-        return {"top_k": 50, "threshold": None, "rerank": False}
+        return {"top_k": 50, "threshold": 0.55, "rerank": False}
     elif total <= 1000:
         return {"top_k": 50, "threshold": 0.55, "rerank": False}
     else:
-        return {"top_k": 50, "threshold": 0.60, "rerank": True}
+        return {"top_k": 50, "threshold": 0.55, "rerank": True}
 
 
 def store_memory(text: str) -> dict:
@@ -105,7 +105,7 @@ def store_memory(text: str) -> dict:
 
 
 def search_memory(query: str) -> list[dict]:
-    """搜索记忆，后端自动根据数据量选择最优策略。
+    """搜索记忆，直接请求高于阈值的结果，不足 15 条时补足。
 
     Returns:
         list[dict]: [{id, text, score}, ...]
@@ -113,38 +113,51 @@ def search_memory(query: str) -> list[dict]:
     client = get_mem0_client()
     opts = _get_search_options()
 
-    kwargs = {"query": query, "filters": {"user_id": DEFAULT_USER_ID}}
-    if opts.get("top_k"):
-        kwargs["top_k"] = opts["top_k"]
-    if opts.get("threshold") is not None:
-        kwargs["threshold"] = opts["threshold"]
-    if opts.get("rerank"):
-        kwargs["rerank"] = opts["rerank"]
+    threshold = opts.get("threshold", 0.55)
+    rerank = opts.get("rerank", False)
+    MIN_COUNT = 15
+
+    # 第一次请求：只拿高于阈值的
+    kwargs = {
+        "query": query,
+        "filters": {"user_id": DEFAULT_USER_ID},
+        "top_k": 75,
+        "threshold": threshold,
+    }
+    if rerank:
+        kwargs["rerank"] = rerank
 
     result = client.search(**kwargs)
-
-    threshold = opts.get("threshold")
-    all_memories = []
+    memories = []
     for r in result.get("results", []):
-        all_memories.append({
-            "id": r["id"],
+        memories.append({
+            "id": r.get("id"),
             "text": r["memory"],
             "score": round(r.get("score", 0), 4),
         })
-    # 按评分降序
-    all_memories.sort(key=lambda x: x["score"], reverse=True)
+    memories.sort(key=lambda x: x["score"], reverse=True)
 
-    MIN_COUNT = 10
-    if threshold is not None:
-        above = [m for m in all_memories if m["score"] >= threshold]
-        if len(above) >= MIN_COUNT:
-            # 阈值内结果足够，全部返回
-            memories = above
-        else:
-            # 阈值内不足 10 条，用评分最高的 10 条补足
-            memories = all_memories[:MIN_COUNT]
-    else:
-        memories = all_memories
+    # 不足 MIN_COUNT 时，去掉阈值再请求补足
+    if len(memories) < MIN_COUNT:
+        kwargs_no_thresh = {
+            "query": query,
+            "filters": {"user_id": DEFAULT_USER_ID},
+            "top_k": MIN_COUNT,
+        }
+        if rerank:
+            kwargs_no_thresh["rerank"] = rerank
+        result2 = client.search(**kwargs_no_thresh)
+        seen_ids = {m["id"] for m in memories}
+        for r in result2.get("results", []):
+            if r.get("id") not in seen_ids:
+                memories.append({
+                    "id": r.get("id"),
+                    "text": r["memory"],
+                    "score": round(r.get("score", 0), 4),
+                })
+                seen_ids.add(r.get("id"))
+        memories.sort(key=lambda x: x["score"], reverse=True)
+        memories = memories[:MIN_COUNT]
 
     return memories
 

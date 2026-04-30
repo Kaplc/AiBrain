@@ -46,29 +46,35 @@ function cleanup() {
 async function restoreIndexProgress() {
   try {
     var pdata = await fetchJson(API + '/wiki/index-progress');
-    if (pdata.status === 'running' || pdata.status === 'idle') {
+    if (pdata.status === 'running') {
       var btn = document.getElementById('btnReindex');
       var progWrap = document.getElementById('indexProgressWrap');
       var progLabel = document.getElementById('indexProgressLabel');
       var progFill = document.getElementById('indexProgressFill');
+      var progPct = document.getElementById('indexProgressPct');
       if (btn) { btn.disabled = true; btn.textContent = '索引中...'; }
       if (progWrap) progWrap.style.display = 'block';
-      if (progFill) progFill.style.width = (pdata.total > 0 ? Math.round((pdata.done / pdata.total) * 100) : 0) + '%';
+      var pct = pdata.total > 0 ? Math.round((pdata.done / pdata.total) * 100) : 0;
+      if (progFill) progFill.style.width = pct + '%';
+      if (progPct) progPct.textContent = pct + '%';
       if (progLabel) progLabel.textContent = (pdata.current_file || '进行中...') + ' (' + pdata.done + '/' + pdata.total + ')';
       _lastIndexDone = pdata.done;
-      startIndexPoll();
     }
+    // 始终启动轮询，被动检测后端索引状态
+    startIndexPoll();
   } catch (e) {
     console.error('[wiki] restoreIndexProgress error:', e);
   }
 }
 
-// 启动索引进度轮询
+// 启动索引进度轮询（始终运行，被动检测后端索引状态）
 function startIndexPoll() {
   if (_indexPollTimer !== null) return;
   var progLabel = document.getElementById('indexProgressLabel');
   var progFill = document.getElementById('indexProgressFill');
+  var progPct = document.getElementById('indexProgressPct');
   var progWrap = document.getElementById('indexProgressWrap');
+  var indexLogWrap = document.getElementById('indexLogWrap');
   var btn = document.getElementById('btnReindex');
   var resultDiv = document.getElementById('indexResult');
 
@@ -76,36 +82,56 @@ function startIndexPoll() {
     try {
       var pdata = await fetchJson(API + '/wiki/index-progress');
 
-      if (pdata.status === 'running' || pdata.status === 'idle') {
+      if (pdata.status === 'running') {
+        // 后端正在索引 → 显示进度 UI
+        if (btn) { btn.disabled = true; btn.textContent = '索引中...'; }
+        if (progWrap) progWrap.style.display = 'block';
         var pct = pdata.total > 0 ? Math.round((pdata.done / pdata.total) * 100) : 0;
         if (progFill) progFill.style.width = pct + '%';
-        // 文字显示当前正在处理的文件
+        if (progPct) progPct.textContent = pct + '%';
         var label = pdata.current_file
           ? '索引: ' + pdata.current_file + ' (' + pdata.done + '/' + pdata.total + ')'
           : ('进行中 ' + pct + '%');
         if (progLabel) progLabel.textContent = label;
-        // 仅在完成数真正增加时才刷新文件列表
+        // 刷新日志
+        await refreshIndexLog(indexLogWrap);
         if (pdata.done !== _lastIndexDone) {
           _lastIndexDone = pdata.done;
           await loadWikiData();
         }
       } else {
-        clearInterval(_indexPollTimer);
-        _indexPollTimer = null;
-        _lastIndexDone = -1;
-        if (progWrap) progWrap.style.display = 'none';
-        if (btn) { btn.disabled = false; btn.textContent = '重建索引'; }
-        await loadWikiData();
-        if (pdata.status === 'done') {
-          if (resultDiv) resultDiv.innerHTML = '<div class="index-result ok">索引完成</div>';
-        } else if (pdata.status === 'error') {
-          if (resultDiv) resultDiv.innerHTML = '<div class="index-result err">索引出错</div>';
+        // 后端非索引状态 → 隐藏进度 UI（仅在之前是 running 时才刷新）
+        if (_lastIndexDone !== -1) {
+          _lastIndexDone = -1;
+          if (progWrap) progWrap.style.display = 'none';
+          if (btn) { btn.disabled = false; btn.textContent = '重建索引'; }
+          if (indexLogWrap) indexLogWrap.innerHTML = '';
+          await loadWikiData();
+          if (pdata.status === 'done') {
+            if (resultDiv) resultDiv.innerHTML = '<div class="index-result ok">索引完成</div>';
+          } else if (pdata.status === 'error') {
+            if (resultDiv) resultDiv.innerHTML = '<div class="index-result err">索引出错</div>';
+          }
         }
       }
     } catch (e) {
       console.error('[wiki] index poll error:', e);
     }
   }, 500);
+}
+
+async function refreshIndexLog(container) {
+  try {
+    var data = await fetchJson(API + '/wiki/index-log?lines=20');
+    if (!container || !data.lines) return;
+    var html = data.lines.map(function(line) {
+      return '<div class="log-line">' + escHtml(line) + '</div>';
+    }).join('');
+    container.innerHTML = html;
+    container.scrollTop = container.scrollHeight;
+  } catch (e) {
+    // 日志获取失败不阻塞
+  }
 }
 
 async function loadWikiConfig() {
@@ -306,6 +332,7 @@ function switchSideTab(tab) {
   var panel = document.getElementById('sidePanel' + tab.charAt(0).toUpperCase() + tab.slice(1));
   if (panel) panel.classList.add('active');
   if (tab === 'settings') loadWikiSettingsData();
+  if (tab === 'ops') restoreIndexProgress();
 }
 
 /* ==================== 设置管理 ==================== */
@@ -326,21 +353,6 @@ function fillSettingsForm(data) {
   document.getElementById('wsLanguage').value = data.language || 'Chinese';
   document.getElementById('wsChunkSize').value = data.chunk_token_size || 1200;
   document.getElementById('wsTimeout').value = data.search_timeout || 30;
-  if (data.llm) {
-    document.getElementById('wsLlmProvider').value = data.llm.provider || '';
-    document.getElementById('wsLlmModel').value = data.llm.model || '';
-    document.getElementById('wsLlmBaseUrl').value = data.llm.base_url || '';
-    var keyEl = document.getElementById('wsLlmApiKey');
-    if (data.llm.api_key === '****') {
-      keyEl.placeholder = '已配置（留空不修改）';
-      keyEl.value = '';
-    } else if (data.llm.api_key) {
-      keyEl.placeholder = '已配置';
-      keyEl.value = '';
-    } else {
-      keyEl.placeholder = '留空则不修改';
-    }
-  }
 }
 
 async function saveWikiSettings() {
@@ -350,12 +362,6 @@ async function saveWikiSettings() {
     language: document.getElementById('wsLanguage').value,
     chunk_token_size: parseInt(document.getElementById('wsChunkSize').value) || 1200,
     search_timeout: parseInt(document.getElementById('wsTimeout').value) || 30,
-    llm: {
-      provider: document.getElementById('wsLlmProvider').value,
-      model: document.getElementById('wsLlmModel').value.trim(),
-      api_key: document.getElementById('wsLlmApiKey').value.trim(),
-      base_url: document.getElementById('wsLlmBaseUrl').value.trim(),
-    },
   };
   try {
     var resp = await fetch(API + '/wiki/settings', {

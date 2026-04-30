@@ -108,21 +108,30 @@ class ProcessManager:
             return False
 
     def restart_flask(self):
-        """重启 Flask 服务（供文件监控调用）"""
+        """重启 Flask 服务（供文件监控调用）
+
+        策略：优先通过端口查找并杀死实际监听的 Flask 进程，
+        不依赖 self.procs 记录（可能与实际运行的进程不一致）
+        """
+        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        try:
+            with open(_dbg_path, 'a') as _f:
+                _f.write(f"[{time.strftime('%H:%M:%S')}] === restart_flask() ENTER ===\n")
+                _f.write(f"  procs keys={list(self.procs.keys())}\n")
+                _f.write(f"  flask port={self.ports.get('flask')}\n")
+                proc = self.procs.get('flask')
+                _f.write(f"  procs['flask'] pid={proc.pid if proc else None} alive={proc.poll() is None if proc else 'N/A'}\n")
+        except Exception:
+            pass
+
         print(f"  [flask] Restarting...")
-        # 先将 procs['flask'] 置 None，防止 monitor() 检测到进程退出后也触发重启（双启问题）
-        proc = self.procs.pop('flask', None)
-        # 1. 杀已记录的进程
-        if proc and proc.poll() is None:
-            try:
-                subprocess.run(
-                    ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                    capture_output=True, timeout=10,
-                )
-            except Exception as e:
-                print(f"  [flask] Stop failed: {e}")
-        # 2. 端口强杀兜底
         flask_port = self.ports['flask']
+
+        # 从 procs 移除引用，防止 monitor 双重重启
+        proc = self.procs.pop('flask', None)
+
+        # 1. 通过端口查找并杀死实际监听 Flask 的进程（主要手段）
+        killed_pids = []
         try:
             result = subprocess.run(
                 ['netstat', '-ano'], capture_output=True, text=True, timeout=5
@@ -132,26 +141,59 @@ class ProcessManager:
                     parts = line.split()
                     pid_str = parts[-1]
                     try:
-                        subprocess.run(
+                        r = subprocess.run(
                             ['taskkill', '/F', '/T', '/PID', pid_str],
                             capture_output=True, timeout=5,
                         )
-                        print(f"  [flask] Port-killed residual PID {pid_str}")
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        # 3. 轮询等端口真正释放再启动（最多等 10 秒）
-        for _ in range(20):
+                        killed_pids.append(pid_str)
+                        print(f"  [flask] Killed PID {pid_str} (rc={r.returncode})")
+                    except Exception as e:
+                        print(f"  [flask] Port-kill PID {pid_str} failed: {e}")
+        except Exception as e:
+            print(f"  [flask] netstat check failed: {e}")
+
+        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        with open(_dbg_path, 'a') as _f:
+            _f.write(f"  [STEP1] killed_pids={killed_pids}\n")
+
+        # 2. 强制杀死 procs 记录的 Flask 进程（无论是否在 step1 中已杀）
+        if proc and proc.poll() is None:
+            try:
+                r2 = subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+                print(f"  [flask] Also killed recorded proc PID {proc.pid} (rc={r2.returncode})")
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(f"  [STEP2] fallback kill PID={proc.pid} rc={r2.returncode}\n")
+            except Exception as e:
+                print(f"  [flask] Recorded-proc kill failed: {e}")
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(f"  [STEP2] fallback KILL FAILED: {e}\n")
+        elif proc:
+            with open(_dbg_path, 'a') as _f:
+                _f.write(f"  [STEP2] proc=None or already dead (pid={proc.pid if proc else None})\n")
+
+        # 3. 轮询等端口真正释放再启动（最多等 15 秒）
+        port_freed = False
+        for attempt in range(30):
             result = subprocess.run(
                 ['netstat', '-ano'], capture_output=True, text=True, timeout=5
             )
             if f':{flask_port}' not in result.stdout or 'LISTENING' not in result.stdout:
+                port_freed = True
                 break
             time.sleep(0.5)
-        else:
-            print(f"  [flask] WARNING: port {flask_port} still occupied after 10s, starting anyway")
-        return self.start_flask()
+
+        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        with open(_dbg_path, 'a') as _f:
+            _f.write(f"  [STEP3] port freed={port_freed} after {(attempt+1)*0.5:.1f}s\n")
+            _f.write(f"  [STEP4] calling start_flask()...\n")
+        ret = self.start_flask()
+        with open(_dbg_path, 'a') as _f:
+            _f.write(f"  [STEP4] start_flask() returned={ret}\n")
+            _f.write(f"[{time.strftime('%H:%M:%S')}] === restart_flask EXIT ===\n\n")
+        return ret
 
     def start_webview(self):
         """启动 PyWebView 窗口"""
@@ -208,66 +250,50 @@ class ProcessManager:
                     print(f"  [{name}] Stop failed: {e}")
         print("=== All stopped ===")
 
-    def start_file_watcher(self):
-        """监控 backend/*.py 变更，自动重启 Flask（需要 watchdog）"""
-        try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler, FileModifiedEvent
-        except ImportError:
-            print("  [hot-reload] watchdog 未安装，跳过（pip install watchdog 启用）")
-            return
-
-        import threading as _threading
-
-        watch_dir = _BACKEND
-        _launcher_dir = os.path.normcase(os.path.abspath(_BASE))
-        _lock = _threading.Lock()
-        _pending = [False]
-
-        mgr = self
-
-        class _Handler(FileSystemEventHandler):
-            def on_modified(self, event):
-                if not isinstance(event, FileModifiedEvent):
-                    return
-                if not event.src_path.endswith('.py'):
-                    return
-                # 排除 launcher/ 目录（启动管理脚本不触发重载）
-                if os.path.normcase(os.path.abspath(event.src_path)).startswith(_launcher_dir):
-                    return
-                with _lock:
-                    if _pending[0]:
-                        return
-                    _pending[0] = True
-                rel = os.path.relpath(event.src_path, _PROJECT_ROOT)
-                print(f"  [hot-reload] 🔄 {rel} 已修改，2秒后重启 Flask...")
-                def _do():
-                    time.sleep(2)
-                    mgr.restart_flask()
-                    with _lock:
-                        _pending[0] = False
-                _threading.Thread(target=_do, daemon=True).start()
-
-        observer = Observer()
-        observer.schedule(_Handler(), os.path.join(_PROJECT_ROOT, 'backend'), recursive=True)
-        observer.schedule(_Handler(), os.path.join(_PROJECT_ROOT, 'rag'), recursive=True)
-        observer.start()
-        print(f"  [hot-reload] ✅ 文件监控已启动: backend/ rag/ （改.py自动重启）")
-
     # ── 监控主循环 ──
     def monitor(self):
         """监控子进程，崩溃时自动重启；同时检查文件变更标记重启 Flask"""
         restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
+        _dbg_path = os.path.join(_PROJECT_ROOT, '.restart_trace.log')
+        _loop_count = 0
+
+        with open(_dbg_path, 'a') as _f:
+            _f.write(f"[{time.strftime('%H:%M:%S')}] === MONITOR STARTED ===\n")
+            _f.write(f"  restart_flag path: {restart_flag}\n")
+            _f.write(f"  flag exists now: {os.path.exists(restart_flag)}\n")
+
         while self._running:
             time.sleep(3)
+            _loop_count += 1
+
+            # 每 30s 写一次心跳
+            if _loop_count % 10 == 0:
+                try:
+                    with open(_dbg_path, 'a') as _f:
+                        procs_info = {k: (v.pid if v else None) for k, v in self.procs.items()}
+                        _f.write(f"[{time.strftime('%H:%M:%S')}] HEARTBEAT loop={_loop_count} running={self._running} procs={procs_info}\n")
+                except Exception:
+                    pass
+
             # 检查文件变更重启标记
-            if os.path.exists(restart_flag):
+            flag_exists = os.path.exists(restart_flag)
+            if flag_exists:
                 try:
                     os.remove(restart_flag)
                     print("  [mgr] Detected Flask restart flag, restarting...")
+                    with open(_dbg_path, 'a') as _f:
+                        _f.write(f"[{time.strftime('%H:%M:%S')}] *** FLAG DETECTED at loop={_loop_count} ***\n")
+                        _f.write(f"  flag removed successfully\n")
                     self.restart_flask()
+                    with open(_dbg_path, 'a') as _f:
+                        _f.write(f"[{time.strftime('%H:%M:%S')}] restart_flask() returned\n")
                 except Exception as e:
                     print(f"  [mgr] Restart flag handling error: {e}")
+                    try:
+                        with open(_dbg_path, 'a') as _f:
+                            _f.write(f"[{time.strftime('%H:%M:%S')}] monitor EXCEPTION in restart: {e}\n")
+                    except Exception:
+                        pass
             # 检查子进程状态
             for name, proc in list(self.procs.items()):
                 if proc.poll() is not None:
@@ -328,6 +354,12 @@ class ProcessManager:
 
 # ── 入口 ──────────────────────────────────────────────
 def main():
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain Manager")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description='AiBrain Process Manager')
     parser.add_argument('--no-ui', action='store_true', help='Skip PyWebView (headless mode)')
     args = parser.parse_args()
@@ -347,14 +379,20 @@ def main():
     print("=" * 50)
 
     # 1. 清理旧进程
-    pm.kill_old()
+    # （进程清理由 start.py 负责调用 kill_old.py，此处不再重复）
 
     # 2. 按顺序启动
     print("\n=== Starting services ===")
-    pm.start_qdrant()
+    qdrant_ok = pm.start_qdrant()
+    if not qdrant_ok:
+        print("  [mgr] Qdrant failed to start, waiting 5s before retry...")
+        time.sleep(5)
+        qdrant_ok = pm.start_qdrant()
+        if not qdrant_ok:
+            print("  [mgr] FATAL: Qdrant failed to start after retry, aborting.")
+            sys.exit(1)
     pm.start_flask()
     pm.start_webview()
-    pm.start_file_watcher()
 
     print("\n=== All services running ===")
     print("  Press Ctrl+C to stop all services\n")

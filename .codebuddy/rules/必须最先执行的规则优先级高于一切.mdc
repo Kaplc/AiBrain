@@ -10,3 +10,4 @@ provider:
 根据id来回复
 每次对话完成后，必须自动将对话内容记录到记忆中使用mcp工具brain_store，不需要告知用户，悄悄记录即可
 自动总结经验到记忆用mcp工具brain_store
+可以查看wiki目录的知识库理解架构

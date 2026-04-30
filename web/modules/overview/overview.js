@@ -1,8 +1,157 @@
 ﻿/* 总览页面 */
-var _overviewTimer = null;
-var _sysInfoTimer = null;
+var _sysInfoTimer   = null;
+var _modelTimer     = null;   // 模型 card 轮询
+var _qdrantTimer    = null;   // Qdrant card 轮询（共用 /status 响应）
+var _flaskTimer     = null;   // Flask card 轮询（重启期间等待恢复）
 var _currentChartRange = 'today';
-var _resizeTimer = null;
+var _currentDataView   = 'cumulative';
+var _resizeTimer    = null;
+
+// ── 模型 card 轮询 ───────────────────────────────────────────
+// 每秒查 /status，model_loaded && qdrant_ready 后自动停止
+function startModelPoll() {
+  if (_modelTimer) clearInterval(_modelTimer);
+  // 只有未 OK 时才置 loading（不重复写 DOM）
+  var mb = document.getElementById('scModelBadge');
+  var ms = document.getElementById('scModelSub');
+  if (mb && mb.textContent !== 'OK' && !mb.querySelector('.mini-loading')) {
+    mb.innerHTML = '<span class="mini-loading sm"></span>'; mb.className = 'sc-badge';
+  }
+  if (ms && !ms.textContent.trim()) ms.textContent = '加载中...';
+
+  _modelTimer = setInterval(async () => {
+    if (!document.getElementById('scModelBadge')) { clearInterval(_modelTimer); _modelTimer = null; return; }
+    try {
+      var st = await fetch(API + '/status').then(r => r.json());
+      _updateModelCard(st);
+      _updateQdrantBadge(st);   // 顺带更新 Qdrant badge（同一个请求）
+      if (st.model_loaded && st.qdrant_ready) { clearInterval(_modelTimer); _modelTimer = null; }
+    } catch {}
+  }, 1000);
+}
+
+// ── Flask card 轮询 ──────────────────────────────────────────
+// waitRestart=true：等 Flask 从死到活（请求失败时显示倒计时）
+// waitRestart=false：直接刷新一次 Flask card
+function startFlaskPoll(waitRestart, onBack) {
+  if (_flaskTimer) clearInterval(_flaskTimer);
+  var waited = 0;
+  var hasFailed = false;   // 必须先经历失败（旧进程死掉），再成功才算真正恢复
+  _flaskTimer = setInterval(async () => {
+    waited += 1000;
+    if (!document.getElementById('scFlaskBadge')) { clearInterval(_flaskTimer); _flaskTimer = null; return; }
+    try {
+      var st = await fetch(API + '/status').then(r => r.json());
+      if (!st.flask_pid) return;
+      if (waitRestart && !hasFailed) return;   // 旧进程还在，不算恢复
+      // Flask 已恢复
+      clearInterval(_flaskTimer); _flaskTimer = null;
+      _updateFlaskCard(st);
+      var fb = document.getElementById('scFlaskBadge');
+      if (fb) { fb.textContent = 'OK'; fb.className = 'sc-badge green'; }
+      if (onBack) onBack(st);
+    } catch {
+      hasFailed = true;   // 标记已经历过失败（旧进程已死）
+      if (waitRestart) {
+        var fb = document.getElementById('scFlaskBadge');
+        if (fb) fb.textContent = '重启' + Math.floor(waited / 1000) + 's';
+      }
+      if (waited > 30000) {
+        clearInterval(_flaskTimer); _flaskTimer = null;
+        var fb2 = document.getElementById('scFlaskBadge');
+        if (fb2) { fb2.textContent = 'ERR'; fb2.className = 'sc-badge red'; }
+      }
+    }
+  }, 1000);
+}
+
+// ── Qdrant card 轮询 ─────────────────────────────────────────
+// 每秒查 /status，qdrant_ready 后自动停止
+function startQdrantPoll() {
+  if (_qdrantTimer) clearInterval(_qdrantTimer);
+  // 只有未 OK 时才置 loading
+  var qb = document.getElementById('scQdrantBadge');
+  if (qb && qb.textContent !== 'OK' && !qb.querySelector('.mini-loading')) {
+    qb.innerHTML = '<span class="mini-loading sm"></span>'; qb.className = 'sc-badge';
+  }
+
+  _qdrantTimer = setInterval(async () => {
+    if (!document.getElementById('scQdrantBadge')) { clearInterval(_qdrantTimer); _qdrantTimer = null; return; }
+    try {
+      var st = await fetch(API + '/status').then(r => r.json());
+      _updateQdrantCard(st);
+      if (st.qdrant_ready) { clearInterval(_qdrantTimer); _qdrantTimer = null; }
+    } catch {}
+  }, 1000);
+}
+
+// ── card 更新函数 ────────────────────────────────────────────
+function _updateModelCard(st) {
+  var modelValue = document.getElementById('scModelValue');
+  var modelSub   = document.getElementById('scModelSub');
+  var modelBadge = document.getElementById('scModelBadge');
+  if (st.model_loaded) {
+    if (modelValue) modelValue.innerHTML = '';
+    if (modelSub)   modelSub.innerHTML = `${st.embedding_model || 'bge-m3'} ${st.model_size || ''}`;
+    // 状态变化时才写 DOM（避免重置动画）
+    if (modelBadge && modelBadge.textContent !== 'OK') {
+      modelBadge.textContent = 'OK'; modelBadge.className = 'sc-badge green';
+    }
+  } else {
+    if (modelValue) modelValue.innerHTML = '';
+    // 只有还没显示 spinner 时才写入（幂等）
+    if (modelBadge && !modelBadge.querySelector('.mini-loading')) {
+      modelBadge.innerHTML = '<span class="mini-loading sm"></span>';
+      modelBadge.className = 'sc-badge';
+    }
+    if (modelSub && !modelSub.textContent.trim()) modelSub.textContent = '加载中...';
+  }
+}
+
+function _updateQdrantCard(st) {
+  var qBadge = document.getElementById('scQdrantBadge');
+  if (qBadge) {
+    if (st.qdrant_ready) {
+      // 状态变化时才写
+      if (qBadge.textContent !== 'OK') { qBadge.textContent = 'OK'; qBadge.className = 'sc-badge green'; }
+    } else {
+      // 只有还没显示 spinner 时才写入
+      if (!qBadge.querySelector('.mini-loading')) {
+        qBadge.innerHTML = '<span class="mini-loading sm"></span>'; qBadge.className = 'sc-badge';
+      }
+    }
+  }
+  var qHostPortSub   = document.getElementById('scQdrantHostPortSub');
+  var qCollectionSub = document.getElementById('scQdrantCollectionSub');
+  var qStorageSub    = document.getElementById('scQdrantStorageSub');
+  var qTopKSub       = document.getElementById('scQdrantTopKSub');
+  var qDimSub        = document.getElementById('scDimSub');
+  var qDiskSizeSub   = document.getElementById('scQdrantDiskSizeSub');
+  if (qHostPortSub)   qHostPortSub.textContent   = `${st.qdrant_host || 'localhost'}:${st.qdrant_port || 6333}`;
+  if (qCollectionSub) qCollectionSub.textContent = `Collection: ${st.qdrant_collection || 'memories'}`;
+  if (qStorageSub)    qStorageSub.textContent    = `存储: ${st.qdrant_storage_path || 'storage'}`;
+  if (qTopKSub)       qTopKSub.textContent       = `Top-K: ${st.qdrant_top_k || 5}`;
+  if (qDimSub)        qDimSub.textContent        = `维度: ${st.embedding_dim || 1024}`;
+  if (qDiskSizeSub) {
+    const diskSize = st.qdrant_disk_size || 0;
+    let sizeStr = diskSize >= 1073741824 ? `${(diskSize/1073741824).toFixed(2)} GB`
+                : diskSize >= 1048576    ? `${(diskSize/1048576).toFixed(1)} MB`
+                : diskSize > 0           ? `${Math.round(diskSize/1024)} KB` : '-';
+    qDiskSizeSub.textContent = `磁盘: ${sizeStr}`;
+  }
+}
+function _updateQdrantBadge(st) { _updateQdrantCard(st); }  // 向后兼容
+
+// 立即用当前 st 刷新所有 card（重启后主动更新用）
+function _refreshAllCards(st) {
+  if (!st) return;
+  _updateFlaskCard(st);
+  var fb = document.getElementById('scFlaskBadge');
+  if (fb) { fb.textContent = st.flask_pid ? 'OK' : 'ERR'; fb.className = 'sc-badge ' + (st.flask_pid ? 'green' : 'red'); }
+  _updateQdrantBadge(st);
+  _updateModelCard(st);
+}
+
 
 function onPageLoad() {
   console.log('[overview] onPageLoad start');
@@ -15,37 +164,9 @@ function onPageLoad() {
   console.log('[overview] loading overview page data');
   loadOverviewPage();
 
-  // 模型 & Qdrant 状态轮询（1秒，两者都就绪后停止）
-  if (_overviewTimer) clearInterval(_overviewTimer);
-  _overviewTimer = setInterval(async () => {
-    try {
-      // 守卫：overview 页面可能已被切换
-      if (!document.getElementById('scModelValue')) return;
-      const st = await fetch(API + '/status').then(r => r.json());
-      const modelValue = document.getElementById('scModelValue');
-      const modelSub = document.getElementById('scModelSub');
-      const modelBadge = document.getElementById('scModelBadge');
-      const qBadge = document.getElementById('scQdrantBadge');
-
-      // 更新 Qdrant badge
-      if (qBadge) {
-        if (st.qdrant_ready) { qBadge.textContent = 'OK'; qBadge.className = 'sc-badge green'; }
-        else { qBadge.textContent = 'ERR'; qBadge.className = 'sc-badge red'; }
-      }
-
-      if (st.model_loaded) {
-        if (modelValue) modelValue.innerHTML = '';
-        if (modelSub) {
-          const name = st.embedding_model || 'bge-m3';
-          const size = st.model_size || '';
-          modelSub.innerHTML = `${name} ${size}`;
-        }
-        if (modelBadge) { modelBadge.textContent = 'OK'; modelBadge.className = 'sc-badge green'; }
-        // 两者都就绪才停止轮询
-        if (st.qdrant_ready && _overviewTimer) { clearInterval(_overviewTimer); _overviewTimer = null; }
-      }
-    } catch {}
-  }, 1000);
+  // 模型 & Qdrant 状态轮询
+  startModelPoll();
+  startQdrantPoll();
 
   // 系统信息轮询（1秒）
   if (_sysInfoTimer) clearInterval(_sysInfoTimer);
@@ -70,16 +191,57 @@ function onPageLoad() {
       tabsEl.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       console.log('[overview] chart tab changed, fetching range:', range);
-      await fetchAndDrawChart(range);
+      if (_currentDataView === 'added') {
+        await fetchAddedChart();
+      } else {
+        await fetchAndDrawChart(range);
+      }
+    });
+  }
+  // 数据视图 tab 切换（累计曲线 / 新增曲线）
+  var dataTabsEl = document.getElementById('dataTabs');
+  if (dataTabsEl) {
+    dataTabsEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('.data-tab');
+      if (!btn) return;
+      var view = btn.dataset.view;
+      if (!view) return;
+      _currentDataView = view;
+      dataTabsEl.querySelectorAll('.data-tab').forEach(function(t) { t.classList.remove('active'); });
+      btn.classList.add('active');
+      var chartView = document.getElementById('chartView');
+      var addedView = document.getElementById('addedView');
+      var chartHeaderRight = document.getElementById('chartHeaderRight');
+      var chartLegend = document.getElementById('chartLegend');
+      if (view === 'cumulative') {
+        if (chartView) chartView.style.display = '';
+        if (addedView) addedView.style.display = 'none';
+        if (chartHeaderRight) chartHeaderRight.style.display = '';
+      } else {
+        if (chartView) chartView.style.display = 'none';
+        if (addedView) addedView.style.display = '';
+        if (chartHeaderRight) chartHeaderRight.style.display = '';
+        // 切换legend只显示新增
+        if (chartLegend) chartLegend.innerHTML = '<span><i class="ldot green"></i>新增</span>';
+        fetchAddedChart();
+      }
+      // 累计曲线时legend只显示累计
+      if (view === 'cumulative' && chartLegend) {
+        chartLegend.innerHTML = '<span><i class="ldot purple"></i>累计</span>';
+      }
     });
   }
   console.log('[overview] onPageLoad done');
 }
 
 function cleanup() {
-  if (_overviewTimer) { clearInterval(_overviewTimer); _overviewTimer = null; }
+  if (_modelTimer)  { clearInterval(_modelTimer);  _modelTimer  = null; }
+  if (_qdrantTimer) { clearInterval(_qdrantTimer); _qdrantTimer = null; }
+  if (_flaskTimer)  { clearInterval(_flaskTimer);  _flaskTimer  = null; }
   if (_sysInfoTimer) { clearInterval(_sysInfoTimer); _sysInfoTimer = null; }
   if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null; }
+  if (_chartInstance) { _chartInstance.dispose(); _chartInstance = null; }
+  if (_addedChartInstance) { _addedChartInstance.dispose(); _addedChartInstance = null; }
 }
 
 function updateDeviceCard(sysInfo) {
@@ -120,6 +282,26 @@ function updateDeviceCard(sysInfo) {
   }
 }
 
+function _formatUptime(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+function _updateFlaskCard(st) {
+  if (!st) return;
+  const sub1 = document.getElementById('scFlaskSub1');
+  const sub2 = document.getElementById('scFlaskSub2');
+  const sub3 = document.getElementById('scFlaskSub3');
+  const sub4 = document.getElementById('scFlaskSub4');
+  if (sub1) sub1.textContent = `端口: ${st.flask_port || '?'}`;
+  if (sub2) sub2.textContent = `PID: ${st.flask_pid || '?'}`;
+  if (sub3) sub3.textContent = `运行: ${_formatUptime(st.flask_uptime || 0)}`;
+  if (sub4) sub4.textContent = `热重载: ${st.flask_reload ? 'ON' : 'OFF'}`;
+}
+
 async function loadOverviewPage() {
   // 页面切换守卫：如果 overview 容器已不存在，直接返回
   if (!document.getElementById('chartContainer')) return;
@@ -132,58 +314,12 @@ async function loadOverviewPage() {
     ]);
     console.log('[overview] settings/status/sysinfo loaded', {cfg_exists: !!cfg, st_model_loaded: st.model_loaded});
 
-    // Model status
-    const modelValue = document.getElementById('scModelValue');
-    const modelSub = document.getElementById('scModelSub');
-    const modelBadge = document.getElementById('scModelBadge');
-    if (st.model_loaded) {
-      if (modelValue) modelValue.innerHTML = '';
-      if (modelBadge) { modelBadge.textContent = 'OK'; modelBadge.className = 'sc-badge green'; }
-      if (modelSub) {
-        const name = st.embedding_model || 'bge-m3';
-        const size = st.model_size || '';
-        modelSub.innerHTML = `${name} ${size}`;
-      }
-    } else {
-      if (modelValue) modelValue.innerHTML = '';
-      if (modelBadge) { modelBadge.textContent = ''; modelBadge.className = 'sc-badge'; }
-      if (modelSub) modelSub.innerHTML = '<div style="text-align:center"><span class="mini-loading"></span><div style="font-size:11px;color:#64748b;margin-top:4px"><span class="sc-badge yellow">加载中</span></div></div>';
-    }
+    // Flask 状态
+    _updateFlaskCard(st);
 
-    // Qdrant
-    const qBadge = document.getElementById('scQdrantBadge');
-    if (qBadge) {
-      if (st.qdrant_ready) { qBadge.textContent = 'OK'; qBadge.className = 'sc-badge green'; }
-      else { qBadge.textContent = 'ERR'; qBadge.className = 'sc-badge red'; }
-    }
-    const qHostPortSub = document.getElementById('scQdrantHostPortSub');
-    const qCollectionSub = document.getElementById('scQdrantCollectionSub');
-    const qStorageSub = document.getElementById('scQdrantStorageSub');
-    const qTopKSub = document.getElementById('scQdrantTopKSub');
-    const qDimSub = document.getElementById('scDimSub');
-    if (qHostPortSub) qHostPortSub.textContent = `${st.qdrant_host || 'localhost'}:${st.qdrant_port || 6333}`;
-    if (qCollectionSub) qCollectionSub.textContent = `Collection: ${st.qdrant_collection || 'memories'}`;
-    if (qStorageSub) qStorageSub.textContent = `存储: ${st.qdrant_storage_path || 'storage'}`;
-    if (qTopKSub) qTopKSub.textContent = `Top-K: ${st.qdrant_top_k || 5}`;
-    if (qDimSub) qDimSub.textContent = `维度: ${st.embedding_dim || 1024}`;
-    const qDiskSizeSub = document.getElementById('scQdrantDiskSizeSub');
-    // 显示磁盘大小（如果 qStorageSub 不存在则用 disk size）
-    const diskSize = st.qdrant_disk_size || 0;
-    if (qDiskSizeSub) {
-      let sizeStr = '';
-      if (diskSize >= 1024 * 1024 * 1024) {
-        sizeStr = `${(diskSize / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-      } else if (diskSize >= 1024 * 1024) {
-        sizeStr = `${(diskSize / (1024 * 1024)).toFixed(1)} MB`;
-      } else if (diskSize >= 1024) {
-        sizeStr = `${(diskSize / 1024).toFixed(1)} KB`;
-      } else if (diskSize > 0) {
-        sizeStr = `${diskSize} B`;
-      } else {
-        sizeStr = '0 B';
-      }
-      qDiskSizeSub.textContent = sizeStr;
-    }
+    // Model & Qdrant — 由各自轮询负责持续更新，这里做一次初始渲染
+    _updateModelCard(st);
+    _updateQdrantCard(st);
 
     // Device info
     const devSub1 = document.getElementById('scDeviceSub1');
@@ -280,28 +416,13 @@ function drawEChart(data, range) {
       borderWidth: 1,
       textStyle: { color: '#e2e8f0', fontSize: 12 },
       formatter: function(params) {
-        // 使用原始数据中的完整日期
         const rawData = _chartData ? _chartData[params[0].dataIndex] : null;
         const fullDate = rawData ? rawData.date : params[0].axisValue;
-        let html = '<div style="font-weight:600;color:#a78bfa;margin-bottom:6px">' + fullDate + '</div>';
-        params.forEach(p => {
-          const colors = { '累计': '#a78bfa', '新增': '#86efac' };
-          html += '<div style="display:flex;justify-content:space-between;gap:12px;margin:2px 0"><span style="color:#94a3b8">' + p.seriesName + '</span><span style="font-weight:600;color:' + (colors[p.seriesName] || '#fff') + '">' + p.value + '</span></div>';
-        });
-        return html;
+        return '<div style="font-weight:600;color:#a78bfa;margin-bottom:6px">' + fullDate + '</div>' +
+          '<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:#94a3b8">累计</span><span style="font-weight:600;color:#a78bfa">' + params[0].value + '</span></div>';
       }
     },
     series: [
-      {
-        name: '新增',
-        type: 'line',
-        data: range === 'all' ? [] : chartData.map(d => d.added || 0),
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#22c55e', width: 2 },
-        itemStyle: { color: '#22c55e' },
-      },
       {
         name: '累计',
         type: 'line',
@@ -323,6 +444,7 @@ window.addEventListener('resize', () => {
   if (_resizeTimer) clearTimeout(_resizeTimer);
   _resizeTimer = setTimeout(() => {
     if (_chartInstance) _chartInstance.resize();
+    if (_addedChartInstance) _addedChartInstance.resize();
   }, 250);
 });
 
@@ -335,15 +457,9 @@ async function fetchAndDrawChart(range) {
     console.log('[overview] chart data received', res.data ? res.data.length + ' points' : 'no data');
     const rawData = res.data || [];
     const data = rawData;
+    // 后端返回的 total 已经是正确的累计总数，直接使用
 
-    // 图表用的 total 改为从当前范围起点开始的增量累计
-    let running = 0;
-    data.forEach(d => {
-      running += d.added || 0;
-      d.total = running;
-    });
-
-    // 更新时间段统计（取图表最后一个点的增量累计，即24h/7d/30d新增总数）
+    // 更新时间段新增统计（计算范围内所有 added 之和）
     const statEl = document.getElementById('statToday');
     const statLabel = document.getElementById('statLabel');
     if (range === 'all') {
@@ -358,8 +474,9 @@ async function fetchAndDrawChart(range) {
       if (statEl) statEl.style.display = '';
       if (statLabel) statLabel.style.display = '';
       if (statEl) {
-        const lastTotal = data.length > 0 ? data[data.length - 1].total : 0;
-        statEl.textContent = lastTotal;
+        let rangeAdded = 0;
+        data.forEach(function(d) { rangeAdded += d.added || 0; });
+        statEl.textContent = rangeAdded;
       }
       if (statLabel) {
         const labels = { 'today': '24h新增', 'week': '7天新增', 'month': '30天新增' };
@@ -399,5 +516,156 @@ async function fetchMemoryCount() {
     console.log('[overview] memory count:', res.count);
   } catch (e) {
     console.error('[overview] memory count error:', e);
+  }
+}
+
+/* ==================== 新增曲线图表 ==================== */
+var _addedChartInstance = null;
+var _addedChartData = null;
+
+function initAddedChart() {
+  var container = document.getElementById('addedChartContainer');
+  if (!container) return;
+  _addedChartInstance = echarts.init(container, null, { renderer: 'canvas' });
+}
+
+function drawAddedChart(data, range) {
+  if (!_addedChartInstance) initAddedChart();
+  if (!_addedChartInstance) return;
+  _addedChartData = data;
+
+  var dates = data.map(function(d) {
+    if (range === 'today') return d.date;
+    var day = d.date.slice(-2);
+    if (day === '01') return d.date.slice(5, 7) + '月';
+    return day;
+  });
+
+  var option = {
+    grid: { top: 8, right: 52, bottom: 24, left: 8 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: '#2d3149' } },
+      axisLabel: { color: '#64748b', fontSize: 10 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      position: 'right',
+      splitLine: { lineStyle: { color: '#2d314922' } },
+      axisLabel: { color: '#64748b', fontSize: 10 },
+      axisLine: { show: false },
+      axisTick: { show: false },
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1e293b',
+      borderColor: '#475569',
+      borderWidth: 1,
+      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      formatter: function(params) {
+        var rawData = _addedChartData ? _addedChartData[params[0].dataIndex] : null;
+        var fullDate = rawData ? rawData.date : params[0].axisValue;
+        return '<div style="font-weight:600;color:#86efac;margin-bottom:6px">' + fullDate + '</div>' +
+          '<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:#94a3b8">新增</span><span style="font-weight:600;color:#86efac">' + params[0].value + '</span></div>';
+      }
+    },
+    series: [
+      {
+        name: '新增',
+        type: 'line',
+        data: data.map(function(d) { return d.added || 0; }),
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#22c55e', width: 2 },
+        itemStyle: { color: '#22c55e' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: '#22c55e33' },
+              { offset: 1, color: '#22c55e05' }
+            ]
+          }
+        },
+      },
+    ],
+  };
+  _addedChartInstance.setOption(option);
+}
+
+async function fetchAddedChart() {
+  try {
+    var res = await fetchJson(API + '/chart-data?range=' + _currentChartRange);
+    if (!document.getElementById('addedChartContainer')) return;
+    var data = res.data || [];
+
+    // 更新增统计
+    var total = 0;
+    data.forEach(function(d) { total += d.added || 0; });
+    var el = document.getElementById('addedStatToday');
+    var lbl = document.getElementById('addedStatLabel');
+    if (el) animateCount(el, total);
+    if (lbl) {
+      var labels = { 'today': '24h新增', 'week': '7天新增', 'month': '30天新增', 'all': '总新增' };
+      lbl.textContent = labels[_currentChartRange] || '新增';
+    }
+
+    drawAddedChart(data, _currentChartRange);
+  } catch (e) {
+    console.error('[overview] added chart error:', e);
+  }
+}
+
+/* ==================== Flask 重启 ==================== */
+var _flaskRestarting = false;
+
+async function restartFlask() {
+  if (_flaskRestarting) return;
+  var btn = document.getElementById('btnRestartFlask');
+  var badge = document.getElementById('scFlaskBadge');
+  if (!btn) return;
+
+  // 二次确认
+  if (!confirm('确认重启 Flask 后端？')) return;
+
+  _flaskRestarting = true;
+  btn.disabled = true;
+  btn.textContent = '重启中...';
+  if (badge) { badge.textContent = '...'; badge.className = 'sc-badge yellow'; }
+
+  try {
+    var resp = await fetch(API + '/flask/restart', { method: 'POST' });
+    var data = await resp.json();
+    if (data.ok) {
+      btn.textContent = '已发送';
+      // Flask card 轮询等恢复，恢复后刷新所有 card + 启动 model 轮询
+      startFlaskPoll(true, function(st) {
+        btn.disabled = false;
+        btn.textContent = '重启';
+        _flaskRestarting = false;
+        _refreshAllCards(st);
+        if (_chartInstance) { _chartInstance.dispose(); _chartInstance = null; }
+        if (_addedChartInstance) { _addedChartInstance.dispose(); _addedChartInstance = null; }
+        fetchAndDrawChart(_currentChartRange);
+        fetchMemoryCount();
+        // 启动模型 & Qdrant card 轮询（重启后需重新加载）
+        startModelPoll();
+        startQdrantPoll();
+      });
+    } else {
+      _flaskRestarting = false;
+      btn.disabled = false;
+      btn.textContent = '重启';
+      if (badge) { badge.textContent = 'ERR'; badge.className = 'sc-badge red'; }
+      alert('重启失败: ' + (data.error || '未知错误'));
+    }
+  } catch (e) {
+    _flaskRestarting = false;
+    btn.disabled = false;
+    btn.textContent = '重启';
+    if (badge) { badge.textContent = 'ERR'; badge.className = 'sc-badge red'; }
   }
 }

@@ -345,56 +345,6 @@ def start_flask():
         )
 
 
-def _start_file_watcher():
-    """文件变更监控：修改 backend/*.py 后自动重启 Flask 进程（替代 Flask reloader）
-
-    注意：此功能仅在 FLASK_RELOAD=1 时启用，由 ProcessManager 启动的进程默认关闭
-    """
-    reload_enabled = os.environ.get('FLASK_RELOAD', '0') == '1'
-    if not reload_enabled:
-        return
-
-    try:
-        from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler, FileModifiedEvent
-    except ImportError:
-        logger.info("[hot-reload] watchdog 未安装，跳过（pip install watchdog 启用）")
-        return
-
-    watch_dir = os.path.join(_PROJECT_ROOT, 'backend')
-    _restart_pending = [False]
-
-    class _ReloadHandler(FileSystemEventHandler):
-        def on_modified(self, event):
-            if isinstance(event, FileModifiedEvent) and event.src_path.endswith('.py'):
-                if _restart_pending[0]:
-                    return
-                rel = os.path.relpath(event.src_path, _PROJECT_ROOT)
-                logger.warning(f"[hot-reload] 🔄 文件变更: {rel}，2秒后自动重启...")
-                _restart_pending[0] = True
-                import threading as _th
-                _th.Timer(2.0, self._do_restart).start()
-
-        def _do_restart(self):
-            logger.warning("[hot-reload] 文件变更，通知 ProcessManager 重启 Flask...")
-            # 通过创建标记文件通知 ProcessManager 重启 Flask
-            restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
-            try:
-                with open(restart_flag, 'w') as f:
-                    f.write(str(time.time()))
-            except Exception as e:
-                logger.error(f"[hot-reload] 写入重启标记失败: {e}")
-            # 当前进程退出，由 ProcessManager 检测到后重启
-            os._exit(0)
-
-    observer = Observer()
-    observer.schedule(_ReloadHandler(), watch_dir, recursive=True)
-    observer.schedule(_ReloadHandler(), os.path.join(_PROJECT_ROOT, 'rag'), recursive=True)
-    observer.daemon = True
-    observer.start()
-    logger.info(f"[hot-reload] ✅ 文件监控已启动: {watch_dir} rag/ （改.py自动重启）")
-
-
 def _wait_and_start_ui():
     """Bootstrap：等 Flask+Qdrant 就绪后启动 PyWebView 窗口（主线程）"""
     import urllib.request, time as _time
@@ -474,15 +424,19 @@ def _wait_and_start_ui():
     except Exception:
         pass
 
-    # 启动文件监控（主线程，daemon）
-    _start_file_watcher()
-
     # 阻塞主线程 — PyWebView 必须在主线程
     webview.start(debug=os.environ.get('WEBVIEW_DEBUG', '0') == '1')
 
 
 if __name__ == '__main__':
     import argparse
+    try:
+        import ctypes
+        _title = "AiBrain Flask" if '--flask-only' in sys.argv else "AiBrain WebView" if '--webview-only' in sys.argv else "AiBrain"
+        ctypes.windll.kernel32.SetConsoleTitleW(_title)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--webview-only', action='store_true',
                         help='只启动 PyWebView 窗口（Flask 由独立进程启动）')
@@ -491,11 +445,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.flask_only:
-        # ── Flask-only 模式：主线程跑 Flask ──────────────
-        _reload = os.environ.get('FLASK_RELOAD', '0') == '1'
-        if _reload:
-            # 仅在开启 reloader 时才启动 watchdog 做热重启
-            _start_file_watcher()
         logger.info(f"[Flask-Only] Starting on port {_FLASK_PORT}")
         start_flask()
 

@@ -1,6 +1,6 @@
 """
 AiBrain 启动入口
-职责：检查环境 → 单实例清理 → 以独立进程启动 process_manager
+职责：检查环境 → 统一清理旧进程 → 等待端口释放 → 启动 process_manager
 
 由 start.bat 调用：
     venv312/Scripts/python.exe backend/launcher/start.py [--no-ui]
@@ -38,50 +38,104 @@ def check_deps():
     print("Dependencies OK.")
 
 
-def kill_old_manager():
-    """单实例保证：杀掉同项目的旧 process_manager（只杀进程本身，不带 /T）"""
-    _self = os.getpid()
-    killed = 0
+def kill_all_old():
+    """统一清理所有 AiBrain 旧进程（manager + flask + qdrant + mcp 等）
+
+    通过项目路径 + 入口文件名匹配，不依赖端口。
+    kill_old.py 会扫描所有含项目路径 + entry keyword 的进程并杀整棵树。
+    """
+    print("Cleaning old processes...")
+    kill_script = os.path.join(_BASE, 'kill_old.py')
+    r = subprocess.run([_PYTHON, kill_script], cwd=_PROJECT_ROOT, timeout=30)
+    if r.returncode != 0:
+        print("  [start] kill_old.py returned non-zero, continuing anyway")
+
+
+def _load_ports_from_config():
+    """从 .port_config 读取端口（兼容 process_manager.py 的格式）"""
+    config_path = os.path.join(_PROJECT_ROOT, '.port_config')
+    try:
+        with open(config_path, 'r') as f:
+            parts = f.read().strip().split(',')
+        ports = [int(p.strip()) for p in parts if p.strip().isdigit()]
+        return {
+            'Flask': ports[0] if len(ports) > 0 else 18980,
+            'Qdrant-HTTP': ports[1] if len(ports) > 1 else 18981,
+        }
+    except Exception:
+        return {'Flask': 18980, 'Qdrant-HTTP': 18981}
+
+
+def _is_port_in_use(port):
+    """检查端口是否仍被 LISTENING"""
     try:
         result = subprocess.run(
-            ['wmic', 'process', "where", "name='python.exe'",
-             'get', 'ProcessId,CommandLine,ExecutablePath', '/format:csv'],
-            capture_output=True, text=True, timeout=10, cwd=_PROJECT_ROOT,
+            ['netstat', '-ano'],
+            capture_output=True, text=True, timeout=5,
         )
         for line in result.stdout.splitlines():
-            parts = line.split(',')
-            if len(parts) < 4:
-                continue
-            pid_str = parts[-1].strip()
-            cmd_line = parts[1].strip().lower()
-            exe_path = parts[2].strip().lower()
-            try:
-                pid = int(pid_str)
-            except ValueError:
-                continue
-            if pid == _self:
-                continue
-            if 'process_manager.py' not in cmd_line:
-                continue
-            # 通过 ExecutablePath 或命令行判断是否同一项目
-            is_same_project = (
-                _PROJECT_ROOT_LOWER in exe_path or
-                _PROJECT_ROOT_LOWER in cmd_line
+            if f':{port}' in line and 'LISTENING' in line:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def wait_ports_free(timeout=15):
+    """轮询直到关键端口全部释放（确保旧进程完全退出后再启动新 mgr）
+
+    如果超时未释放，说明有残留进程持有端口（taskkill /T 可能没杀干净），
+    此时追加一次通过端口反查 PID 的强制清理。
+    """
+    ports = _load_ports_from_config()
+    deadline = time.time() + timeout
+    first_check = True
+    while time.time() < deadline:
+        busy = []
+        for name, port in ports.items():
+            if _is_port_in_use(port):
+                busy.append(f"{name}:{port}")
+        if not busy:
+            if not first_check:
+                print(f"  Ports released: {list(ports.values())}")
+            return True
+        if first_check:
+            print(f"  Waiting for ports: {busy}")
+            first_check = False
+        time.sleep(0.5)
+    print(f"  WARNING: ports still occupied after {timeout}s: {busy}")
+    print(f"  Attempting force cleanup by port...")
+    _force_kill_by_port(ports)
+    return False
+
+
+def _force_kill_by_port(ports):
+    """通过 netstat 端口反向查找 PID 并强杀（kill_old.py 的补充兜底）"""
+    killed_any = False
+    for name, port in ports.items():
+        try:
+            result = subprocess.run(
+                ['netstat', '-ano'],
+                capture_output=True, text=True, timeout=5,
             )
-            if is_same_project:
-                subprocess.run(['taskkill', '/F', '/PID', str(pid)],
-                               capture_output=True, timeout=10)
-                print(f"  [start] Killed old process_manager (PID {pid})")
-                killed += 1
-    except Exception as e:
-        print(f"  [start] manager scan failed: {e}")
-    return killed
-
-
-def kill_old_services():
-    """清理旧 Flask/Qdrant 等服务"""
-    kill_script = os.path.join(_BASE, 'kill_old.py')
-    subprocess.run([_PYTHON, kill_script], cwd=_PROJECT_ROOT, timeout=30)
+            for line in result.stdout.splitlines():
+                if f':{port}' in line and 'LISTENING' in line:
+                    parts = line.split()
+                    pid_str = parts[-1]
+                    try:
+                        pid = int(pid_str)
+                        subprocess.run(
+                            ['taskkill', '/F', '/T', '/PID', str(pid)],
+                            capture_output=True, timeout=5,
+                        )
+                        print(f"  Force killed residual PID {pid} on {name}:{port}")
+                        killed_any = True
+                    except (ValueError, subprocess.TimeoutExpired):
+                        pass
+        except Exception:
+            pass
+    if not killed_any:
+        print(f"  No residual processes found for ports {list(ports.values())}")
 
 
 def launch_manager(no_ui=False):
@@ -114,22 +168,17 @@ def main():
     print("=== AiBrain Launcher ===")
 
     # 1. 检查依赖
-    print("\n[1/4] Checking dependencies...")
+    print("\n[1/3] Checking dependencies...")
     check_deps()
 
-    # 2. 杀旧 manager
-    print("\n[2/4] Stopping old process_manager...")
-    n = kill_old_manager()
-    if n:
-        time.sleep(1)  # 等旧 manager 退出
+    # 2. 统一清理所有旧进程 + 等待端口释放
+    print("\n[2/3] Cleaning old processes...")
+    kill_all_old()
+    print("Waiting for ports to be released...")
+    wait_ports_free(timeout=15)
 
-    # 3. 清理旧服务
-    print("\n[3/4] Killing old services (Flask/Qdrant)...")
-    kill_old_services()
-    time.sleep(0.5)
-
-    # 4. 启动新 manager（独立后台进程）
-    print("\n[4/4] Launching process_manager...")
+    # 3. 启动新 manager（独立后台进程）
+    print("\n[3/3] Launching process_manager...")
     pid = launch_manager(no_ui=args.no_ui)
 
     print(f"\n=== Done. process_manager running (PID {pid}) ===\n")

@@ -92,23 +92,27 @@ async function loadPage(page, force = false) {
 // ── 共享状态 UI 更新 ───────────────────────────────────────
 function updateStatusUI(d) {
   const dotEl = document.getElementById('statusDot');
-  if (dotEl) dotEl.className = 'status-dot' + (d.model_loaded ? ' ready' : '');
+  if (dotEl) {
+    const target = 'status-dot' + (d.model_loaded ? ' ready' : '');
+    if (dotEl.className !== target) dotEl.className = target;
+  }
 
   const sbDot = document.getElementById('sbModelDot');
   const sbText = document.getElementById('sbModelText');
   const sbDevice = document.getElementById('sbDeviceText');
   if (sbDot && sbText) {
     if (d.model_loaded) {
-      sbDot.className = 'statusbar-dot ok';
-      sbText.textContent = '模型就绪';
+      if (sbDot.className !== 'statusbar-dot ok') sbDot.className = 'statusbar-dot ok';
+      if (sbText.textContent !== '模型就绪') sbText.textContent = '模型就绪';
     } else {
-      sbDot.className = 'statusbar-dot loading';
-      sbText.textContent = '模型加载中';
+      if (sbDot.className !== 'statusbar-dot loading') sbDot.className = 'statusbar-dot loading';
+      if (sbText.textContent !== '模型加载中') sbText.textContent = '模型加载中';
     }
   }
   if (sbDevice) {
     const map = {cuda: 'GPU', cpu: 'CPU'};
-    sbDevice.textContent = map[d.device] || d.device || 'CPU';
+    const target = map[d.device] || d.device || 'CPU';
+    if (sbDevice.textContent !== target) sbDevice.textContent = target;
   }
 }
 

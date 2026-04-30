@@ -5,6 +5,8 @@ import os
 import json
 import hashlib
 import logging
+import sys
+import io
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -19,9 +21,36 @@ _index_progress = {
     "result": None,
 }
 
+# 索引日志内存缓冲区（最多保留 20 条）
+_INDEX_LOG_BUFFER = []
+_INDEX_LOG_MAX = 20
+
+
+def _log_buffer_write(msg):
+    """写入索引日志缓冲区，线程安全（单线程 indexer）"""
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%H:%M:%S")
+    line = f"[{ts}] {msg}"
+    _INDEX_LOG_BUFFER.append(line)
+    if len(_INDEX_LOG_BUFFER) > _INDEX_LOG_MAX:
+        del _INDEX_LOG_BUFFER[:len(_INDEX_LOG_BUFFER) - _INDEX_LOG_MAX]
+
+
+def get_index_log(lines=50):
+    """获取最近的索引日志行"""
+    tail = _INDEX_LOG_BUFFER[-lines:] if len(_INDEX_LOG_BUFFER) > lines else list(_INDEX_LOG_BUFFER)
+    return {"lines": tail, "total": len(_INDEX_LOG_BUFFER)}
+
+
+def clear_index_log():
+    """清空日志缓冲区"""
+    global _INDEX_LOG_BUFFER
+    _INDEX_LOG_BUFFER = []
+
 
 def _set_progress(done, total, current_file, status="running"):
     # done 是已完成的文件数，显示时用 done+1 表示当前正在处理第几个
+    _index_progress["running"] = (status == "running")
     _index_progress["done"] = done
     _index_progress["total"] = total
     _index_progress["current_file"] = current_file
@@ -130,7 +159,21 @@ def sync_index() -> dict:
     for i, (rel_path, abs_path, md5, action) in enumerate(to_process):
         _set_progress(done, total, rel_path)
         try:
-            _index_file(abs_path, rel_path)
+            # 重定向 stdout 捕获 LightRAG 的 print 输出
+            old_stdout = sys.stdout
+            captured = io.StringIO()
+            sys.stdout = captured
+            try:
+                _index_file(abs_path, rel_path)
+            finally:
+                sys.stdout = old_stdout
+                output = captured.getvalue().strip()
+                if output:
+                    for line in output.split('\n'):
+                        line = line.strip()
+                        if line:
+                            _log_buffer_write(line)
+
             indexed_files[rel_path] = {
                 "md5": md5,
                 "indexed_at": datetime.now(timezone.utc).isoformat(),

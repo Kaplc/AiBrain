@@ -1,5 +1,8 @@
 """状态相关路由：/status, /system-info, /health, /db-status"""
 import os
+import sys
+import time
+import tempfile
 import platform
 import torch
 import psutil
@@ -7,6 +10,9 @@ import subprocess
 from flask import request, jsonify
 
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
+# Flask 启动时间（模块加载时记录）
+_FLASK_START_TIME = time.time()
 
 
 def register(app, ready_state, logger, stats_db):
@@ -42,6 +48,10 @@ def register(app, ready_state, logger, stats_db):
             "qdrant_top_k": settings.top_k,
             "qdrant_disk_size": qdrant_info.get("disk_size", 0),
             "qdrant_storage_path": qdrant_info.get("storage_path", ""),
+            "flask_port": int(os.environ.get('FLASK_PORT', '18765')),
+            "flask_pid": os.getpid(),
+            "flask_uptime": int(time.time() - _FLASK_START_TIME),
+            "flask_reload": os.environ.get('FLASK_RELOAD', '0') == '1',
         })
 
     @app.route('/system-info', methods=['GET'])
@@ -116,6 +126,58 @@ def register(app, ready_state, logger, stats_db):
             return jsonify({"ok": True, **st})
         except Exception as e:
             logger.error(f"[db-status] error: {e}")
+            return jsonify({"ok": False, "error": str(e)})
+
+    @app.route('/flask/restart', methods=['POST'])
+    def flask_restart():
+        """手动重启 Flask：通过杀父进程触发 PM 重启"""
+        try:
+            # 写标志文件（给 PM monitor）
+            restart_flag = os.path.join(_PROJECT_ROOT, '.restart_flask')
+            with open(restart_flag, 'w') as f:
+                f.write(str(time.time()))
+            logger.warning("[flask-restart] 手动重启请求，已写入标志文件")
+
+            # 找当前 Flask 进程的父进程 PID，然后用独立脚本延迟杀（避免自杀）
+            my_pid = os.getpid()
+            parent_pid = psutil.Process(my_pid).ppid()
+            flask_port = int(os.environ.get('FLASK_PORT', '18980'))
+            logger.warning(f"[flask-restart] my_pid={my_pid} parent_pid={parent_pid} port={flask_port}")
+
+            # 用 cmd /c start /B 启动完全脱离的子进程，1秒后杀父进程树
+            kill_cmd = (
+                f'{sys.executable} -c "'
+                f'import subprocess,time;'
+                f'time.sleep(1);'
+                f'r=subprocess.run([chr(116)+chr(97)+chr(115)+chr(107)+chr(107)+chr(105)+chr(108)+chr(108),'
+                f'chr(47)+chr(70),chr(47)+chr(84),chr(47)+chr(80)+chr(73)+chr(68),\\"{parent_pid}\\"],'
+                f'capture_output=True,timeout=5);'
+                f'print(r.returncode)"'
+            )
+            # 更简单：写临时文件
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='_kill.py',
+                                             delete=False, dir=_PROJECT_ROOT,
+                                             encoding='utf-8') as tf:
+                tf.write(f"""import subprocess, time
+time.sleep(1)
+r = subprocess.run(['taskkill','/F','/T','/PID','{parent_pid}'],
+                   capture_output=True, timeout=5)
+print('killed', {parent_pid}, 'rc=', r.returncode)
+""")
+                tf_name = tf.name
+
+            subprocess.Popen(
+                ['cmd', '/c', 'start', '/B', sys.executable, tf_name],
+                cwd=_PROJECT_ROOT,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+            logger.warning(f"[flask-restart] 已启动杀父进程脚本，parent_pid={parent_pid}")
+
+            return jsonify({"ok": True, "msg": "重启中...", "target_pid": parent_pid})
+        except Exception as e:
+            logger.error(f"[flask-restart] 重启失败: {e}")
             return jsonify({"ok": False, "error": str(e)})
 
     @app.route('/memory-count', methods=['GET'])

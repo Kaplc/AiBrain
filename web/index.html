@@ -242,9 +242,13 @@ body {
   box-shadow: 0 0 4px #ef4444;
 }
 .statusbar-dot.loading {
-  background: #eab308;
-  box-shadow: 0 0 5px #eab308;
-  animation: dot-pulse-loading 1s ease-in-out infinite;
+    box-sizing: border-box;
+    width: 6px;
+    height: 6px;
+    padding: 0;
+    background: #eab308;
+    box-shadow: 0 0 5px #eab308;
+    animation: dot-pulse-loading 1s ease-in-out infinite;
 }
 
 @keyframes dot-pulse-ok {

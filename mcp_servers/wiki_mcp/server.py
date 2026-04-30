@@ -146,4 +146,9 @@ def wiki_index() -> str:
 
 
 if __name__ == "__main__":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain WikiMCP")
+    except Exception:
+        pass
     mcp.run()

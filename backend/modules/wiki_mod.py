@@ -182,6 +182,12 @@ def register(app, stats_db=None):
                 from rag.lightrag_wiki.indexer import _set_progress
                 _set_progress(0, 0, "", "error")
                 logger.error(f"[wiki-index] 后台索引失败: {e}")
+            finally:
+                # 安全兜底：如果 sync_index() 正常返回但 status 仍为 running，强制设为 done
+                from rag.lightrag_wiki.indexer import _index_progress, _set_progress as _sp
+                if _index_progress["status"] == "running":
+                    _sp(_index_progress["done"], _index_progress["total"], "", "done")
+                    logger.warning("[wiki-index] sync_index() 返回但状态仍为 running，已自动修正为 done")
 
         threading.Thread(target=_run, daemon=True).start()
         return jsonify({"status": "started", "started_at": _time.time() - t0})
@@ -190,6 +196,17 @@ def register(app, stats_db=None):
     def wiki_index_progress():
         from rag.lightrag_wiki.indexer import get_index_progress
         return jsonify(get_index_progress())
+
+    @app.route('/wiki/index-log', methods=['GET'])
+    def wiki_index_log():
+        """返回索引过程中的实时日志（内存缓冲区）"""
+        try:
+            lines_param = request.args.get('lines', 20, type=int)
+            from rag.lightrag_wiki.indexer import get_index_log
+            return jsonify(get_index_log(lines=lines_param))
+        except Exception as e:
+            logger.error(f"[API✗] /wiki/index-log 失败: {e}")
+            return jsonify({"lines": [], "total": 0})
 
     @app.route('/wiki/log', methods=['GET'])
     def wiki_log():

@@ -58,11 +58,14 @@
               </button>
             </div>
             <div id="indexResult"></div>
-            <div id="indexProgressWrap" style="display:none;margin-top:10px">
+            <div id="indexProgressWrap" style="display:none;flex-direction:column;flex:1;min-height:0;margin-top:8px">
               <div class="progress-label" id="indexProgressLabel">准备中...</div>
               <div class="progress-bar-bg">
-                <div class="progress-bar-fill" id="indexProgressFill"></div>
+                <div class="progress-bar-fill" id="indexProgressFill">
+                  <span class="progress-pct" id="indexProgressPct">0%</span>
+                </div>
               </div>
+              <div id="indexLogWrap" style="margin-top:8px"></div>
             </div>
           </div>
         </div>
@@ -92,30 +95,6 @@
             <div class="form-group">
               <label class="form-label">搜索超时 (秒)</label>
               <input class="form-input" id="wsTimeout" type="number" placeholder="30" min="5" max="300">
-            </div>
-            <div class="settings-divider">
-              <div class="form-label" style="margin-bottom:8px;">LLM 配置</div>
-              <div class="form-group">
-                <label class="form-label">Provider</label>
-                <select class="form-select" id="wsLlmProvider">
-                  <option value="">未配置</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="minimax">MiniMax</option>
-                  <option value="zhipu">智谱</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Model</label>
-                <input class="form-input" id="wsLlmModel" type="text" placeholder="如: gpt-4o-mini">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Base URL</label>
-                <input class="form-input" id="wsLlmBaseUrl" type="text" placeholder="如: https://api.openai.com/v1">
-              </div>
-              <div class="form-group">
-                <label class="form-label">API Key</label>
-                <input class="form-input" id="wsLlmApiKey" type="password" placeholder="留空则不修改">
-              </div>
             </div>
             <button class="btn-save" onclick="saveWikiSettings()">保存设置</button>
           </div>
@@ -244,6 +223,27 @@
 @keyframes fadeInOut { 0%{opacity:0;transform:translateX(-50%) translateY(-12px)} 15%{opacity:1;transform:translateX(-50%)} 85%{opacity:1;transform:translateX(-50%)} 100%{opacity:0;transform:translateX(-50%) translateY(12px)} }
 
 .progress-label { font-size: 11px; color: #94a3b8; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.progress-bar-bg { background: #1a1d27; border-radius: 4px; height: 6px; overflow: hidden; }
-.progress-bar-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #a78bfa); border-radius: 4px; transition: width 0.3s ease; width: 0%; }
+.progress-bar-bg { background: #0f1117; border: 1px solid #2d3149; border-radius: 4px; height: 20px; overflow: hidden; position: relative; }
+.progress-bar-fill { height: 100%; background-color: #7c3aed; background-image: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.2) 50%, rgba(255,255,255,0) 100%); border-radius: 4px; transition: width 0.4s ease; width: 0%; position: relative;
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.progress-pct {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  white-space: nowrap;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+#indexLogWrap { flex: 1; min-height: 0; overflow-y: auto; background: #0f1117; border: 1px solid #2d3149; border-radius: 4px; padding: 6px 8px; font-family: monospace; font-size: 10px; color: #94a3b8; line-height: 1.5; word-break: break-all; }
+#indexLogWrap .log-line { opacity: .7; }
+#indexLogWrap .log-line:last-child { opacity: 1; color: #e2e8f0; }
 </style>
