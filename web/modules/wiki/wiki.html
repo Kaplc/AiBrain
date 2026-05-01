@@ -1,4 +1,4 @@
-<div class="wiki-wrap">
+<div class="wiki-wrap" data-deps="wiki_file,wiki_stats.html,wiki_ops.html,wiki_settings.html">
   <div class="wiki-header">
     <div class="wiki-title">Wiki 知识库</div>
   </div>
@@ -30,73 +30,18 @@
       <div class="side-content">
         <!-- Stats panel -->
         <div class="side-panel active" id="sidePanelStats">
-          <div class="wscard-col">
-            <div class="wscard">
-              <div class="wsc-label">文件数</div>
-              <div class="wsc-value" id="wikiFileCount">-</div>
-            </div>
-            <div class="wscard">
-              <div class="wsc-label">总大小</div>
-              <div class="wsc-value" id="wikiTotalSize">-</div>
-              <div class="wsc-sub" id="wikiSizeSub"></div>
-            </div>
-            <div class="wscard">
-              <div class="wsc-label">索引状态</div>
-              <div class="wsc-value" id="wikiStatus" style="font-size:15px;color:#64748b">检测中</div>
-            </div>
-          </div>
+          <div id="slot-stats"></div>
         </div>
 
         <!-- Ops panel -->
         <div class="side-panel" id="sidePanelOps">
-          <div class="ops-section">
-            <div class="ops-title">快捷操作</div>
-            <div class="ops-list">
-              <button class="ops-btn" id="btnReindex" onclick="rebuildIndex()">
-                <span class="ops-icon">&#x21bb;</span>
-                <span class="ops-text">重建索引</span>
-              </button>
-            </div>
-            <div id="indexResult"></div>
-            <div id="indexProgressWrap" style="display:none;flex-direction:column;flex:1;min-height:0;margin-top:8px">
-              <div class="progress-label" id="indexProgressLabel">准备中...</div>
-              <div class="progress-bar-bg">
-                <div class="progress-bar-fill" id="indexProgressFill"></div>
-              </div>
-              <div class="progress-pct" id="indexProgressPct">0%</div>
-              <div id="indexLogWrap" style="margin-top:8px"></div>
-            </div>
-          </div>
+          <div id="slot-ops"></div>
         </div>
 
         <!-- Settings panel -->
         <div class="side-panel" id="sidePanelSettings">
-          <div class="settings-section">
-            <div class="form-group">
-              <label class="form-label">Wiki 目录</label>
-              <input class="form-input" id="wsWikiDir" type="text" placeholder="如: wiki">
-            </div>
-            <div class="form-group">
-              <label class="form-label">LightRAG 数据目录</label>
-              <input class="form-input" id="wsLightragDir" type="text" placeholder="如: rag/lightrag_data">
-            </div>
-            <div class="form-group">
-              <label class="form-label">语言</label>
-              <select class="form-select" id="wsLanguage">
-                <option value="Chinese">Chinese</option>
-                <option value="English">English</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">分块大小 (token)</label>
-              <input class="form-input" id="wsChunkSize" type="number" placeholder="1200" min="200" max="8000">
-            </div>
-            <div class="form-group">
-              <label class="form-label">搜索超时 (秒)</label>
-              <input class="form-input" id="wsTimeout" type="number" placeholder="30" min="5" max="300">
-            </div>
-            <button class="btn-save" onclick="saveWikiSettings()">保存设置</button>
-          </div>
+          <div id="slot-settings"></div>
+        </div>
         </div>
       </div>
     </div>

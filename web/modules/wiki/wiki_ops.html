@@ -1,0 +1,18 @@
+<div class="ops-section">
+  <div class="ops-title">快捷操作</div>
+  <div class="ops-list">
+    <button class="ops-btn" id="btnReindex" onclick="rebuildIndex()">
+      <span class="ops-icon">&#x21bb;</span>
+      <span class="ops-text">重建索引</span>
+    </button>
+  </div>
+  <div id="indexResult"></div>
+  <div id="indexProgressWrap" style="display:none;flex-direction:column;flex:1;min-height:0;margin-top:8px">
+    <div class="progress-label" id="indexProgressLabel">准备中...</div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="indexProgressFill"></div>
+    </div>
+    <div class="progress-pct" id="indexProgressPct">0%</div>
+    <div id="indexLogWrap" style="margin-top:8px"></div>
+  </div>
+</div>

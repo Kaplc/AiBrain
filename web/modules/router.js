@@ -63,25 +63,59 @@ async function loadPage(page, force = false) {
   console.log('[router] rendering page:', page);
   content.innerHTML = pageCache[page];
 
-  if (_currentScript) { _currentScript.remove(); _currentScript = null; }
-
   // 递增版本号，使旧脚本的 onload 回调失效
   const thisVersion = ++_loadVersion;
 
-  const script = document.createElement('script');
-  script.src = `modules/${page}/${page}.js?_t=${Date.now()}`;
-  script.onload = () => {
-    // 检查页面是否已切换（版本号变化说明已不是当前页面）
-    if (thisVersion !== _loadVersion) {
-      console.log('[router] onload skipped (stale version)', thisVersion, _loadVersion);
+  // 解析 HTML 片段依赖（data-deps="header.html,stats.html"）
+  // 每个片段会被 fetch 后塞入 <div id="slot-{name}"> 占位符
+  const depMeta = content.querySelector('[data-deps]');
+  const allFragments = depMeta ? depMeta.getAttribute('data-deps').split(',').filter(Boolean) : [];
+  const htmlFrags = allFragments.filter(f => f.endsWith('.html'));
+  const jsFrags = allFragments.filter(f => !f.endsWith('.html'));
+
+  // 清理旧脚本
+  if (_currentScript) { _currentScript.remove(); _currentScript = null; }
+
+  // 加载所有 HTML 片段，并行 fetch，串行塞入 slot
+  async function loadHtmlFragments() {
+    // 并行 fetch 所有片段
+    const results = await Promise.all(htmlFrags.map(f =>
+      fetch(`modules/${page}/${f}`).then(r => r.text()).catch(() => '')
+    ));
+    // 串行塞入 slot
+    // wiki_stats.html → slot-stats, wiki_ops.html → slot-ops, wiki_settings.html → slot-settings
+    const slotMap = {
+      'wiki_stats': 'stats',
+      'wiki_ops': 'ops',
+      'wiki_settings': 'settings',
+    };
+    for (let i = 0; i < htmlFrags.length; i++) {
+      const slotKey = htmlFrags[i].replace('.html', '');
+      const slotId = 'slot-' + (slotMap[slotKey] || slotKey);
+      const slot = document.getElementById(slotId);
+      if (slot) slot.innerHTML = results[i];
+    }
+    // HTML 片段加载完毕，开始加载 JS
+    loadScripts(0);
+  }
+
+  const allScripts = [`${page}.js`].concat(jsFrags.map(d => d.endsWith('.js') ? d : d + '.js'));
+  function loadScripts(index) {
+    if (index >= allScripts.length) {
+      if (thisVersion !== _loadVersion) {
+        return;
+      }
+      setTimeout(() => { if (typeof onPageLoad === 'function') onPageLoad(); }, 0);
       return;
     }
-    // 延迟一下，等 DOM 完全替换完毕再执行 init
-    console.log('[router] onload executing, calling onPageLoad');
-    setTimeout(() => { if (typeof onPageLoad === 'function') onPageLoad(); }, 0);
-  };
-  document.body.appendChild(script);
-  _currentScript = script;
+    const script = document.createElement('script');
+    script.src = `modules/${page}/${allScripts[index]}?_t=${Date.now()}`;
+    script.onload = () => loadScripts(index + 1);
+    document.body.appendChild(script);
+    if (index === 0) _currentScript = script;
+  }
+
+  loadHtmlFragments();
 
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.querySelector(`.nav-item[data-page="${page}"]`).classList.add('active');

@@ -1,0 +1,26 @@
+<div class="settings-section">
+  <div class="form-group">
+    <label class="form-label">Wiki 目录</label>
+    <input class="form-input" id="wsWikiDir" type="text" placeholder="如: wiki">
+  </div>
+  <div class="form-group">
+    <label class="form-label">LightRAG 数据目录</label>
+    <input class="form-input" id="wsLightragDir" type="text" placeholder="如: rag/lightrag_data">
+  </div>
+  <div class="form-group">
+    <label class="form-label">语言</label>
+    <select class="form-select" id="wsLanguage">
+      <option value="Chinese">Chinese</option>
+      <option value="English">English</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label class="form-label">分块大小 (token)</label>
+    <input class="form-input" id="wsChunkSize" type="number" placeholder="1200" min="200" max="8000">
+  </div>
+  <div class="form-group">
+    <label class="form-label">搜索超时 (秒)</label>
+    <input class="form-input" id="wsTimeout" type="number" placeholder="30" min="5" max="300">
+  </div>
+  <button class="btn-save" onclick="saveWikiSettings()">保存设置</button>
+</div>

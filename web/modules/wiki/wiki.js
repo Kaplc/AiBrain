@@ -7,6 +7,8 @@ var _wikiConfig = null;
 var _indexPollTimer = null;  // 索引进度轮询定时器
 var _lastIndexDone = -1;     // 上次已完成的文件数，用于判断是否需要刷新列表
 
+/* WikiFile 类在 wiki_file.js 中定义 */
+
 /* ==================== 工具函数 ==================== */
 
 function escAttr(s) {
@@ -157,14 +159,14 @@ async function loadWikiData() {
 
   try {
     var data = await fetchJson(API + '/wiki/list');
-    _wikiFiles = Array.isArray(data.files) ? data.files : [];
+    _wikiFiles = _createWikiFiles(Array.isArray(data.files) ? data.files : []);
 
     // 更新统计面板
     var el;
     el = document.getElementById('wikiFileCount');
     if (el) el.textContent = _wikiFiles.length;
     var totalBytes = 0;
-    _wikiFiles.forEach(function(f) { totalBytes += f.size_bytes || 0; });
+    _wikiFiles.forEach(function(f) { totalBytes += f.sizeBytes || 0; });
     el = document.getElementById('wikiTotalSize');
     if (el) el.textContent = formatSize(totalBytes);
     el = document.getElementById('wikiSizeSub');
@@ -174,7 +176,7 @@ async function loadWikiData() {
     var statusEl = document.getElementById('wikiStatus');
     if (statusEl) {
       if (data.indexed) {
-        var outOfSync = _wikiFiles.filter(function(f) { return f.index_status !== 'synced'; }).length;
+        var outOfSync = _wikiFiles.filter(function(f) { return f.indexStatus !== 'synced'; }).length;
         if (outOfSync > 0) {
           statusEl.textContent = '需重建 ' + outOfSync + ' 个文件';
           statusEl.style.color = '#f97316';
@@ -208,8 +210,10 @@ async function loadWikiData() {
 
 function sortFiles(key) {
   if (_sortKey === key) { _sortAsc = !_sortAsc; } else { _sortKey = key; _sortAsc = true; }
+  var keyMap = { filename: 'filename', size_bytes: 'sizeBytes', modified: 'modified' };
+  var prop = keyMap[key] || key;
   _wikiFiles.sort(function(a, b) {
-    var va = a[key], vb = b[key];
+    var va = a[prop], vb = b[prop];
     if (typeof va === 'string') va = va.toLowerCase();
     if (typeof vb === 'string') vb = vb.toLowerCase();
     if (va < vb) return _sortAsc ? -1 : 1;
@@ -228,12 +232,6 @@ function renderTable(files) {
     return _sortAsc ? ' \u25B2' : ' \u25BC';
   };
 
-  var indexIcon = function(status) {
-    if (status === 'synced') return '<span style="color:#22c55e" title="已同步">✓</span>';
-    if (status === 'out_of_sync') return '<span style="color:#f97316" title="文件已修改，需重建索引">⚠</span>';
-    return '<span style="color:#94a3b8" title="未索引">○</span>';
-  };
-
   var html = '<table class="file-table"><thead><tr>'
            + '<th style="width:40px"></th>'
            + '<th onclick="sortFiles(\'filename\')">文件名' + arrow('filename') + '</th>'
@@ -242,13 +240,7 @@ function renderTable(files) {
            + '<th>预览</th></tr></thead><tbody>';
 
   files.forEach(function(f) {
-    html += '<tr onclick="copyPath(\'' + escAttr(f.abs_path || f.filename) + '\', this)" style="cursor:pointer">'
-         + '<td style="text-align:center">' + indexIcon(f.index_status) + '</td>'
-         + '<td class="ft-name">' + escHtml(f.filename) + '</td>'
-         + '<td class="ft-meta">' + formatSize(f.size_bytes) + '</td>'
-         + '<td class="ft-meta">' + formatDate(f.modified) + '</td>'
-         + '<td class="ft-preview" title="' + escAttr(f.preview) + '">' + escHtml(f.preview || '') + '</td>'
-         + '</tr>';
+    html += f.toRowHtml();
   });
 
   html += '</tbody></table>';
@@ -352,11 +344,12 @@ async function loadWikiSettingsData() {
 
 function fillSettingsForm(data) {
   if (data.error) return;
-  document.getElementById('wsWikiDir').value = data.wiki_dir || 'wiki';
-  document.getElementById('wsLightragDir').value = data.lightrag_dir || 'rag/lightrag_data';
-  document.getElementById('wsLanguage').value = data.language || 'Chinese';
-  document.getElementById('wsChunkSize').value = data.chunk_token_size || 1200;
-  document.getElementById('wsTimeout').value = data.search_timeout || 30;
+  var el;
+  el = document.getElementById('wsWikiDir');       if (el) el.value = data.wiki_dir || 'wiki';
+  el = document.getElementById('wsLightragDir');   if (el) el.value = data.lightrag_dir || 'rag/lightrag_data';
+  el = document.getElementById('wsLanguage');      if (el) el.value = data.language || 'Chinese';
+  el = document.getElementById('wsChunkSize');     if (el) el.value = data.chunk_token_size || 1200;
+  el = document.getElementById('wsTimeout');       if (el) el.value = data.search_timeout || 30;
 }
 
 async function saveWikiSettings() {

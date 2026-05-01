@@ -242,8 +242,8 @@ function cleanup() {
   if (_flaskTimer)  { clearInterval(_flaskTimer);  _flaskTimer  = null; }
   if (_sysInfoTimer) { clearInterval(_sysInfoTimer); _sysInfoTimer = null; }
   if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null; }
-  if (_chartInstance) { _chartInstance.dispose(); _chartInstance = null; }
-  if (_addedChartInstance) { _addedChartInstance.dispose(); _addedChartInstance = null; }
+  if (_chartInstance && _chartInstance.getDom()) { _chartInstance.dispose(); _chartInstance = null; }
+  if (_addedChartInstance && _addedChartInstance.getDom()) { _addedChartInstance.dispose(); _addedChartInstance = null; }
 }
 
 function updateDeviceCard(sysInfo) {
