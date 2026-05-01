@@ -120,7 +120,7 @@ restartFlask()
 | 函数 | 说明 |
 |------|------|
 | `onPageLoad()` | 入口：加载图表+总数+页面数据，启动各轮询 |
-| `cleanup()` | 清除所有定时器，销毁图表实例 |
+| `cleanup()` | 清除所有定时器，销毁图表实例（`getDom()` 空保护） |
 | `loadOverviewPage()` | 并行加载 settings/status/system-info，更新四张卡片 |
 | `startModelPoll()` | 2秒轮询 /status，模型就绪后停止 |
 | `startFlaskPoll(waitRestart, onBack)` | 1秒轮询等待 Flask 重启恢复 |
@@ -172,4 +172,4 @@ var _flaskRestarting    = false; // 重启中标志
 
 ---
 
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

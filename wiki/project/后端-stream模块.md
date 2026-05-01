@@ -50,4 +50,4 @@ backend/modules/stream.py
 - **Memory MCP**：每次 store/search 调用自动记录
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

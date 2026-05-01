@@ -118,4 +118,4 @@ backend/modules/memory.py
 - **brain/organizer.py**：组织整理（organize_memories）
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

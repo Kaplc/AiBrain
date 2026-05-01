@@ -169,4 +169,4 @@ def _get_rag_engine():
 - **记忆流前端**：通过 Wiki MCP 工具调用 wiki_search/wiki_list
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

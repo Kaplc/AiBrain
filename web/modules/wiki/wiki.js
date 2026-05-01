@@ -109,6 +109,12 @@ function startIndexPoll() {
         // 后端非索引状态 → 隐藏进度 UI（仅在之前是 running 时才刷新）
         if (_lastIndexDone !== -1) {
           _lastIndexDone = -1;
+          // 先显示100%再隐藏（最后一个文件完成时done=total）
+          if (pdata.total > 0) {
+            var finalPct = Math.round((pdata.done / pdata.total) * 100);
+            if (progFill) progFill.style.width = '100%';
+            if (progPct) progPct.textContent = '100%';
+          }
           if (progWrap) progWrap.style.display = 'none';
           if (btn) { btn.disabled = false; btn.textContent = '重建索引'; }
           if (indexLogWrap) indexLogWrap.innerHTML = '';

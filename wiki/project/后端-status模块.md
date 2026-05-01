@@ -126,4 +126,4 @@ def register(app, ready_state, logger, stats_db):
 - **Settings 前端**：消费 `gpu_hardware` 显示 GPU 安装警告
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

@@ -1,7 +1,7 @@
 # 前端 - Router 模块（路由 + 状态栏）
 
 ## 模块概述
-Router 模块是前端核心，负责页面路由（无刷新切换）、页面版本控制（防旧回调）、console 日志捕获上报、以及顶部状态栏的 3 秒轮询。
+Router 模块是前端核心，负责页面路由（无刷新切换）、页面版本控制（防旧回调）、console 日志捕获上报、以及顶部状态栏的 3 秒轮询。内置 HTML 片段并行加载机制，支持将页面 HTML 拆分为多个片段按需加载。
 
 ## 文件位置
 ```
@@ -45,13 +45,48 @@ loadPage('overview')   ← 初始化时默认加载 overview
   ├── 检查 pageCache 中是否已有 HTML
   │     ├── 无 → fetch modules/{page}/{page}.html，缓存到 pageCache
   │     └── 有 → 直接使用
-  ├── 移除旧 script（_currentScript.remove()）
   ├── 递增 _loadVersion（版本号，用于防旧回调）
-  ├── 创建新 script，src = modules/{page}/{page}.js?_t=时间戳
-  ├── script.onload:
-  │     → 检查 thisVersion !== _loadVersion → 跳过（页面已切换）
-  │     → setTimeout 0 后调用 onPageLoad()
+  ├── [NEW] 解析 data-deps 属性，获取 HTML 片段和 JS 依赖列表
+  ├── [NEW] 清理旧 script（_currentScript.remove()）
+  ├── [NEW] loadHtmlFragments():
+  │     ├── 并行 fetch 所有 HTML 片段（modules/{page}/{frag}.html）
+  │     ├── 串行塞入对应 slot：<div id="slot-{映射名}">
+  │     └── 片段加载完毕后，loadScripts(0)
+  ├── loadScripts(0): 串行加载所有 JS（主脚本 + 依赖）
+  │     └── 全部加载完毕 → setTimeout(onPageLoad, 0)
   └── 更新 nav 激活状态，currentPage = page
+```
+
+### HTML 片段加载机制（data-deps）
+
+**声明方式**：在页面根 div 上使用 `data-deps` 属性：
+```html
+<div class="wiki-wrap" data-deps="wiki_file,wiki_stats.html,wiki_ops.html,wiki_settings.html">
+```
+
+**格式规范**：
+- `.html` 后缀 → HTML 片段，并行 fetch 后塞入 `<div id="slot-{映射名}">`
+- 无后缀 → JS 依赖，主脚本加载完后按顺序串行加载
+- 自动补 `.js` 后缀（如 `wiki_file` → `wiki_file.js`）
+
+**slot 映射规则**（`slotMap`）：
+| 片段文件名 | slot ID |
+|-----------|---------|
+| `wiki_stats.html` | `slot-stats` |
+| `wiki_ops.html` | `slot-ops` |
+| `wiki_settings.html` | `slot-settings` |
+| 其他 `xxx.html` | `slot-xxx` |
+
+**路由 slot 查找**使用 `document.getElementById()`，必须在 `innerHTML` 设置后执行（因 slot 在页面 HTML 内）。
+
+### JS 依赖加载顺序
+
+所有 JS 按声明顺序**串行**执行（上一个 `onload` 后才加载下一个）：
+```
+data-deps="wiki_file,wiki_stats.html,wiki_ops.html,wiki_settings.html"
+                          ↓
+allScripts = ['wiki.js', 'wiki_file.js']  // wiki_stats/ops/settings 是 HTML，不加入
+// loadScripts: wiki.js → wiki_file.js → onPageLoad()
 ```
 
 ### 页面版本控制（防旧回调）
@@ -101,19 +136,6 @@ let _loadVersion = 0;        // 页面版本号（防旧回调）
 let _lastModelLoaded = false; // 上次模型就绪状态
 ```
 
-## 页面切换流程
-```
-用户点击[记忆]
-  → loadPage('memory')
-  → currentPage !== 'memory' → 继续
-  → fetch modules/memory/memory.html（首次）或从 pageCache 读取
-  → 移除旧 overview.js script
-  → 创建 memory/memory.js script
-  → script.onload → checkVersion → onPageLoad()
-  → nav-item.memory 添加 active
-  → currentPage = 'memory'
-```
-
 ## 前端日志上报
 ```
 POST /log
@@ -127,4 +149,4 @@ Body: { level: "info"|"warn"|"error", message: "...", source: "frontend" }
 - **Overview 模块**：页面加载时默认展示页
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

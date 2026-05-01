@@ -65,4 +65,4 @@ backend/modules/stats.py
 - **ECharts**：累计曲线（total 字段）、新增曲线（added 字段）
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*

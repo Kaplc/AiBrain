@@ -114,4 +114,4 @@ backend/modules/settings_mod.py
 - **Overview 前端**：消费 `/reload-model`
 
 ---
-*最后更新: 2026-04-30*
+*最后更新: 2026-05-01*
