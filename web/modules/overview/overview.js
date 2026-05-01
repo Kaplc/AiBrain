@@ -497,7 +497,7 @@ async function fetchAndDrawChart(range) {
 }
 
 /* ==================== 数字递增动画 ==================== */
-const _animatingEls = {};  // { elementId: intervalId }
+var _animatingEls = {};  // { elementId: intervalId }
 
 function animateCount(el, target) {
   const id = el.id;
