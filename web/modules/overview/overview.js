@@ -225,6 +225,9 @@ function onPageLoad() {
         if (chartHeaderRight) chartHeaderRight.style.display = '';
         // 切换legend只显示新增
         if (chartLegend) chartLegend.innerHTML = '<span><i class="ldot green"></i>新增</span>';
+        // addedView 只有一个 stat，永远居中
+        var addedStats = addedView ? addedView.querySelector('.chart-stats') : null;
+        if (addedStats) addedStats.classList.add('single');
         fetchAddedChart();
       }
       // 累计曲线时legend只显示累计
@@ -411,6 +414,8 @@ function drawEChart(data, range) {
       axisLabel: { color: '#64748b', fontSize: 10 },
       axisLine: { show: false },
       axisTick: { show: false },
+      min: function(value) { return Math.floor(value.min / 10) * 10 || 0; },
+      max: function(value) { return Math.ceil(value.max / 10) * 10 || 10; },
     },
     tooltip: {
       trigger: 'axis',
@@ -492,17 +497,22 @@ async function fetchAndDrawChart(range) {
 }
 
 /* ==================== 数字递增动画 ==================== */
+const _animatingEls = {};  // { elementId: intervalId }
+
 function animateCount(el, target) {
+  const id = el.id;
+  if (_animatingEls[id]) { clearInterval(_animatingEls[id]); delete _animatingEls[id]; }
   const current = parseInt(el.textContent) || 0;
   if (current === target) return;
   const diff = target - current;
   const step = Math.max(1, Math.ceil(Math.abs(diff) / 10));
-  const interval = setInterval(() => {
+  _animatingEls[id] = setInterval(() => {
     const now = parseInt(el.textContent) || 0;
     const delta = target > now ? Math.min(step, target - now) : Math.max(-step, target - now);
     if (now === target || (delta > 0 ? now >= target : now <= target)) {
       el.textContent = target;
-      clearInterval(interval);
+      clearInterval(_animatingEls[id]);
+      delete _animatingEls[id];
     } else {
       el.textContent = now + delta;
     }
@@ -562,6 +572,15 @@ function drawAddedChart(data, range) {
       axisLabel: { color: '#64748b', fontSize: 10 },
       axisLine: { show: false },
       axisTick: { show: false },
+      min: 0,
+      max: function(value) {
+        const maxVal = value.max;
+        if (maxVal <= 5) return 5;
+        if (maxVal <= 20) return Math.ceil(maxVal / 5) * 5;
+        if (maxVal <= 100) return Math.ceil(maxVal / 10) * 10;
+        if (maxVal <= 500) return Math.ceil(maxVal / 50) * 50;
+        return Math.ceil(maxVal / 100) * 100;
+      },
     },
     tooltip: {
       trigger: 'axis',
