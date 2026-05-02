@@ -58,7 +58,11 @@ from core.model import ModelManager
 _ready = {"model": False, "qdrant": False, "device": "unknown"}
 model_mgr = ModelManager(_ready, settings_mgr, logger)
 
-app = Flask(__name__, static_folder=os.path.join(_PROJECT_ROOT, 'web'), static_url_path='')
+_dist = os.path.join(_PROJECT_ROOT, 'web', 'dist')
+_web = os.path.join(_PROJECT_ROOT, 'web')
+# 优先使用构建产物（dist/），不存在时回退到源码目录（开发模式）
+_static = _dist if os.path.isdir(_dist) else _web
+app = Flask(__name__, static_folder=_static, static_url_path='')
 CORS(app)
 
 
@@ -92,6 +96,37 @@ def health():
 @app.route('/')
 def index():
     return app.send_static_file('index.html')
+
+
+logger.info(f'[spa_fallback] static_folder={app.static_folder}')
+# ── SPA fallback: 所有非 API 路由回退到 index.html ──
+@app.route('/<path:path>/')
+def spa_fallback_slash(path):
+    return spa_fallback(path)
+
+@app.route('/<path:path>')
+def spa_fallback(path):
+    logger.info(f'[spa_fallback] path={path}')
+    # 检查是否为静态文件
+    static_file = os.path.join(app.static_folder or '', path)
+    if os.path.isfile(static_file):
+        logger.info(f'[spa_fallback] serving static file: {static_file}')
+        return app.send_static_file(path)
+    # 返回 index.html
+    index_path = os.path.join(app.static_folder or '', 'index.html')
+    logger.info(f'[spa_fallback] serving index.html, exists={os.path.isfile(index_path)}')
+    with open(index_path, 'rb') as f:
+        return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+# 前端路由快捷方式
+@app.route('/overview')
+@app.route('/settings')
+@app.route('/wiki')
+@app.route('/console')
+@app.route('/memory')
+def spa_shortcut():
+    from flask import request
+    return spa_fallback(request.path.lstrip('/'))
 
 
 @app.route('/log', methods=['POST'])
