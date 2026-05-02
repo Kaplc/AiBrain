@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useApi } from '@/composables/useApi'
 
 interface LogData {
@@ -23,6 +23,7 @@ const meta = ref('')
 const loading = ref(false)
 const error = ref('')
 const copyToastVisible = ref(false)
+const logWrapEl = ref<HTMLElement | null>(null)
 
 function escHtml(s: string): string {
   return String(s || '')
@@ -64,15 +65,18 @@ function parseLine(line: string): ParsedLine {
 }
 
 async function loadLog() {
+  console.log('[logs] loadLog start')
   loading.value = true
   error.value = ''
   logLines.value = []
 
   try {
     const data = await fetchJson<LogData>('/wiki/log?lines=300', 5)
+    console.log('[logs] log data received:', data.lines ? data.lines.length + ' lines' : 'no lines')
 
     if (!data.lines) {
       error.value = data.error || '无日志'
+      console.log('[logs] loadLog done, rendered empty')
       return
     }
 
@@ -87,8 +91,14 @@ async function loadLog() {
     }
 
     logLines.value = data.lines.map(parseLine)
+    console.log('[logs] loadLog done, rendered content')
+    await nextTick()
+    if (logWrapEl.value) {
+      logWrapEl.value.scrollTop = logWrapEl.value.scrollHeight
+    }
   } catch (e: any) {
     error.value = '日志加载失败: ' + (e.message || e)
+    console.error('[log] loadLog error:', e)
   } finally {
     loading.value = false
   }
@@ -114,8 +124,9 @@ async function copyLine(raw: string) {
 }
 
 onMounted(() => {
-  console.log('[LogsView] mounted')
+  console.log('[logs] onPageLoad start')
   loadLog()
+  console.log('[logs] onPageLoad done')
 })
 </script>
 
