@@ -13,7 +13,7 @@ try {
   const content = readFileSync(portConfigPath, 'utf-8').trim()
   const ports = content.split(',').map((p: string) => parseInt(p, 10))
   if (ports.length >= 1 && !isNaN(ports[0])) {
-    apiPort = String(ports[0])
+    apiPort = String(ports[0])  // 19398
   }
 } catch {}
 

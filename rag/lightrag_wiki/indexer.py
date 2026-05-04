@@ -55,6 +55,7 @@ def _set_progress(done, total, current_file, status="running"):
     _index_progress["total"] = total
     _index_progress["current_file"] = current_file
     _index_progress["status"] = status
+    logger.info(f"[indexer→progress] done={done} total={total} current={current_file} status={status}")
 
 
 def get_index_progress():
@@ -153,12 +154,14 @@ def sync_index() -> dict:
     total = len(to_process)
     if total == 0:
         _set_progress(0, 0, "无需处理", "done")
+        _index_progress["result"] = result
         logger.info("索引同步完成: 全部已是最新")
         return result
 
     done = 0
     # 第二遍：仅遍历需要处理的文件，实时更新进度
     for i, (rel_path, abs_path, md5, action) in enumerate(to_process):
+        logger.info(f"[indexer→sync] 开始处理文件 {i+1}/{total}: {rel_path} (action={action})")
         _set_progress(done, total, rel_path)
         try:
             # 重定向 stdout 捕获 LightRAG 的 print 输出
@@ -196,6 +199,7 @@ def sync_index() -> dict:
         # 无论成功或失败，都推进进度
         done += 1
         _set_progress(done, total, rel_path)
+        logger.info(f"[indexer→sync] 文件 {i+1}/{total} 处理完毕: {rel_path}")
 
     # 检测已删除的文件
     for rel_path in list(indexed_files.keys()):
@@ -255,11 +259,14 @@ def index_single_file(filename: str) -> str:
 
 
 def _index_file(abs_path: str, rel_path: str) -> bool:
-    """将单个 MD 文件内容插入 LightRAG，验证向量是否真正写入
+    """将单个 MD 文件内容插入 LightRAG，并通过 aget_docs_by_track_id 验证处理完成
+
+    insert_document() 为异步接口，将任务入队后立即返回。
+    本函数轮询 doc_status 直到 status=processed 或超时。
 
     Returns:
-        True: 向量验证通过
-        False: 向量验证失败（LightRAG 处理异常）
+        True: 插入并验证成功
+        False: 插入失败或验证超时
     """
     from .rag_engine import insert_document, _verify_vector_inserted
 
@@ -269,17 +276,17 @@ def _index_file(abs_path: str, rel_path: str) -> bool:
 
     if not content.strip():
         logger.warning(f"[indexer] 跳过空文件: {rel_path}")
-        return True  # 空文件不报错
+        return True
 
     track_id = insert_document(content, file_path=rel_path)
-    logger.info(f"[indexer] insert 返回 track_id={track_id}")
+    logger.info(f"[indexer] insert 入队 | rel_path={rel_path} track_id={track_id}")
 
-    # 验证向量是否真正写入存储
-    if not _verify_vector_inserted(rel_path, content):
+    # 验证文档处理完成（轮询 aget_docs_by_track_id 直到 status=processed）
+    if not _verify_vector_inserted(rel_path, track_id, timeout=30):
         logger.error(f"[indexer✗] 向量验证失败 | rel_path={rel_path}")
         return False
 
-    logger.info(f"[indexer←] _index_file 完成 | rel_path={rel_path} content_len={len(content)}")
+    logger.info(f"[indexer←] _index_file 完成 | rel_path={rel_path}")
     return True
 
 

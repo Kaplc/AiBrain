@@ -3,7 +3,7 @@
 import os
 import time
 import torch
-from flask import jsonify
+from flask import jsonify, request
 from modules.SystemInfo.system_info_mod import SystemInfoManager
 
 _sys_mgr = SystemInfoManager.get_instance()
@@ -103,29 +103,50 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/overview/frontend/build', methods=['POST'])
     def frontend_build():
-        """触发前端构建"""
+        """触发前端构建（后台执行，立即返回 build_id）"""
         import subprocess
+        import uuid
+        from concurrent.futures import ThreadPoolExecutor
+
         web_dir = os.path.join(project_root, 'web')
-        logger.info(f"[build] 开始构建前端，cwd={web_dir}")
+        build_id = str(uuid.uuid4())[:8]
+
+        def _do_build():
+            """后台执行构建"""
+            logger.info(f"[build:{build_id}] 开始构建前端，cwd={web_dir}")
+            try:
+                result = subprocess.run(
+                    ['npm.cmd', 'run', 'build'],
+                    cwd=web_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    stats_db.update_build_status(build_id, 'done', '构建成功')
+                    logger.info(f"[build:{build_id}] 前端构建成功")
+                else:
+                    err = (result.stderr or result.stdout or '构建失败')[:500]
+                    stats_db.update_build_status(build_id, 'failed', err)
+                    logger.error(f"[build:{build_id}] 前端构建失败: {err}")
+            except Exception as e:
+                import traceback
+                stats_db.update_build_status(build_id, 'failed', str(e))
+                logger.error(f"[build:{build_id}] 前端构建异常: {e}\n{traceback.format_exc()}")
+
+        # 后台线程执行，不阻塞
+        stats_db.update_build_status(build_id, 'building', '构建中...')
+        ThreadPoolExecutor(max_workers=1).submit(_do_build)
+        return jsonify({"build_id": build_id, "status": "building"})
+
+    @app.route('/overview/frontend/build/status', methods=['GET'])
+    def frontend_build_status():
+        """轮询构建状态"""
+        build_id = request.args.get('build_id', '')
+        if not build_id:
+            return jsonify({"error": "缺少 build_id"})
         try:
-            result = subprocess.run(
-                ['npm.cmd', 'run', 'build'],
-                cwd=web_dir,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            logger.info(f"[build] returncode={result.returncode}")
-            if result.returncode == 0:
-                logger.info("[build] 前端构建成功")
-                return jsonify({"ok": True, "msg": "构建成功"})
-            else:
-                stdout_msg = (result.stdout or '')[:500]
-                stderr_msg = (result.stderr or '')[:500]
-                logger.error(f"[build] 前端构建失败 stdout: {stdout_msg}")
-                logger.error(f"[build] 前端构建失败 stderr: {stderr_msg}")
-                return jsonify({"ok": False, "error": stderr_msg or stdout_msg or "构建失败"})
+            status, msg = stats_db.get_build_status(build_id)
+            return jsonify({"build_id": build_id, "status": status, "msg": msg})
         except Exception as e:
-            import traceback
-            logger.error(f"[build] 前端构建异常: {e}\n{traceback.format_exc()}")
-            return jsonify({"ok": False, "error": str(e)})
+            return jsonify({"error": str(e)})

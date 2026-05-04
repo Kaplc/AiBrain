@@ -42,15 +42,20 @@ def register(app, ready_state, logger, stats_db):
     @app.route('/wiki/index', methods=['POST'])
     def wiki_index():
         """后台启动 Wiki 索引重建"""
+        logger.info("[API→] /wiki/index: 收到重建索引请求")
         ok, msg = _wiki_mgr.start_wiki_index_background(logger)
         if not ok:
+            logger.warning(f"[API⚠] /wiki/index: {msg}")
             return jsonify({"error": msg}), 409
+        logger.info("[API✓] /wiki/index: 已启动后台索引")
         return jsonify({"status": "started", "started_at": 0})
 
     @app.route('/wiki/index-progress', methods=['GET'])
     def wiki_index_progress():
         """获取 Wiki 索引进度"""
-        return jsonify(_wiki_mgr.get_wiki_index_progress())
+        progress = _wiki_mgr.get_wiki_index_progress()
+        logger.debug(f"[API→] /wiki/index-progress: {progress}")
+        return jsonify(progress)
 
     @app.route('/wiki/index-log', methods=['GET'])
     def wiki_index_log():

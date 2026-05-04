@@ -332,47 +332,58 @@ def query_wiki_context(question: str, mode: str = "hybrid") -> str:
     return result
 
 
-def _verify_vector_inserted(rel_path: str, content: str) -> bool:
-    """验证文件内容是否已真正写入向量存储
+def _verify_vector_inserted(rel_path: str, track_id: str, timeout: int = 30) -> bool:
+    """验证文件是否已处理完成（异步轮询直到 status=processed 或超时）
 
-    验证逻辑：直接读取 vdb_chunks.json，检查 chunk content 是否包含文件内容的特征片段。
-    比通过 rag.query 验证更可靠（不走 LLM，不依赖查询 API）。
+    insert_document() 是异步入队接口，LightRAG 后台线程处理完成后
+    会更新 doc_status 存储。本函数通过 aget_docs_by_track_id() 轮询
+    文档状态，等待其变为 'processed'。
 
     Args:
-        rel_path: 文件相对路径（如 "project/xxx.md"）
-        content: 文件原始内容
+        rel_path: 文件相对路径（如 "project/xxx.md"），用于日志
+        track_id: insert_document() 返回的追踪 ID
+        timeout: 超时秒数，默认 30 秒
 
     Returns:
-        True: 向量已写入，False: 向量未写入
+        True: 文档已处理完成，False: 超时或失败
     """
     import time as _time
     rag = get_rag()
-    _time.sleep(0.5)  # 等待 LightRAG 后台处理完成
+
+    async def _wait_for_processed(tid: str, tout: int) -> bool:
+        deadline = _time.time() + tout
+        while _time.time() < deadline:
+            try:
+                result = await rag.aget_docs_by_track_id(tid)
+                for doc_id, doc_status in result.items():
+                    status = doc_status.status if hasattr(doc_status, 'status') else str(doc_status.status)
+                    if status == 'processed':
+                        logger.info(f"[verify✓] 文档处理完成 | track_id={tid} doc_id={doc_id}")
+                        return True
+                    elif status == 'failed':
+                        em = getattr(doc_status, 'error_msg', 'unknown')
+                        # "Content already exists" 意味着文档之前已成功处理，不算真正失败
+                        if 'Content already exists' in em:
+                            logger.info(f"[verify✓] 文档已存在（之前已索引）| track_id={tid} doc_id={doc_id}")
+                            return True
+                        logger.error(f"[verify✗] 文档处理失败 | track_id={tid} error={em}")
+                        return False
+                    else:
+                        logger.info(f"[verify] 等待处理中 | track_id={tid} status={status}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"[verify] 轮询异常: {e}，重试")
+                await asyncio.sleep(1)
+        logger.warning(f"[verify✗] 验证超时 | track_id={tid}")
+        return False
 
     try:
-        # 用内容的前80字符作为特征片段
-        search_text = content[:80].strip()
-        if not search_text:
-            return True
-
-        # 直接读取 vdb_chunks.json 验证
-        import json as _json
-        from .config import get_lightrag_dir
-        vdb_path = os.path.join(get_lightrag_dir(), "vdb_chunks.json")
-        with open(vdb_path, "r", encoding="utf-8") as f:
-            data = _json.load(f)
-
-        chunks = data.get("data", [])
-        for chunk in chunks:
-            chunk_content = chunk.get("content", "")
-            chunk_file = chunk.get("file_path", "") or ""
-            # 匹配：chunk 内容包含搜索文本，或 chunk 的 file_path 包含 rel_path
-            if (search_text[:30] in chunk_content[:60]) or (rel_path in chunk_file and search_text[:20] in chunk_content[:40]):
-                logger.info(f"[verify✓] 找到匹配 chunk | file={chunk_file} | snippet={chunk_content[:60]}")
-                return True
-
-        logger.warning(f"[verify✗] 未找到匹配 chunk | rel_path={rel_path}")
-        return False
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(_wait_for_processed(track_id, timeout))
+        finally:
+            loop.close()
     except Exception as e:
         logger.error(f"[verify] 验证异常: {e}")
         return False

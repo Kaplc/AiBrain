@@ -65,6 +65,14 @@ class StatsDB:
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             )
         ''')
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS build_status (
+                build_id TEXT PRIMARY KEY,
+                status TEXT DEFAULT 'building',
+                msg TEXT DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
         db.commit()
         db.close()
 
@@ -158,6 +166,25 @@ class StatsDB:
         db.execute('UPDATE stream SET content=? WHERE id=?', (content, rowid))
         db.commit()
         db.close()
+
+    def update_build_status(self, build_id, status, msg=''):
+        """更新构建状态（building/done/failed）"""
+        db = self._get_conn()
+        db.execute(
+            'INSERT OR REPLACE INTO build_status (build_id, status, msg, updated_at) VALUES (?, ?, ?, datetime("now","localtime"))',
+            (build_id, status, msg)
+        )
+        db.commit()
+        db.close()
+
+    def get_build_status(self, build_id):
+        """获取构建状态和消息"""
+        db = self._get_conn()
+        row = db.execute('SELECT status, msg FROM build_status WHERE build_id=?', (build_id,)).fetchone()
+        db.close()
+        if row:
+            return row['status'], row['msg']
+        return 'unknown', ''
 
     def query_stream(self, action=None, limit=50):
         """查询最近的操作流记录，最新的在前面"""

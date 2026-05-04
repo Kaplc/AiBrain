@@ -1,19 +1,11 @@
 /* Wiki视图模型 - 面向对象设计 */
 
-import { ref, computed, nextTick } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useWikiStore } from '@/stores/wiki'
 import { useApi } from '@/composables/useApi'
 import { useToast } from '@/composables/useToast'
-
-/* ==================== Types ==================== */
-export interface ApiWikiFile {
-  filename: string
-  abs_path: string
-  size_bytes: number
-  modified: number
-  preview: string
-  index_status: 'synced' | 'out_of_sync' | 'not_indexed'
-}
+import { WikiFileItem } from './WikiFileItem'
+import type { ApiWikiFile } from './WikiFileItem'
 
 type SortKey = 'filename' | 'sizeBytes' | 'modified'
 type TabType = 'stats' | 'ops' | 'settings'
@@ -52,7 +44,7 @@ export class WikiViewModel {
   readonly copyToastVisible = ref(false)
 
   // File data
-  readonly rawFiles = ref<ApiWikiFile[]>([])
+  readonly rawFiles = ref<WikiFileItem[]>([])
 
   // Private
   private _store = useWikiStore()
@@ -60,10 +52,11 @@ export class WikiViewModel {
   private _toast = useToast()
   private _pollTimer: ReturnType<typeof setInterval> | null = null
   private _lastDone = -1
+  private _pendingRelPath: string | null = null
 
   /* ==================== Computed ==================== */
-  get sortedFiles(): ApiWikiFile[] {
-    const arr = [...this.rawFiles.value]
+  get sortedFiles(): WikiFileItem[] {
+    const arr = this.rawFiles.value.slice()
     const key = this.sortKey.value
     const asc = this.sortAsc.value
     arr.sort((a, b) => {
@@ -130,13 +123,40 @@ export class WikiViewModel {
     this.loadError.value = false
     try {
       const data = await this._api.fetchJson<{ files: ApiWikiFile[]; indexed: boolean }>('/wiki/list')
-      this.rawFiles.value = Array.isArray(data.files) ? data.files : []
+      const files: ApiWikiFile[] = Array.isArray(data.files) ? data.files : []
+      this.rawFiles.value = files.map(f => new WikiFileItem(f))
       this._store.indexed = data.indexed ?? false
     } catch (e) {
       console.error('[WikiView] loadFiles error:', e)
       this.loadError.value = true
     } finally {
       this.loading.value = false
+    }
+  }
+
+  /** 根据 rel_path 找到对应文件项，标记为已同步 */
+  private _markFileSynced(relPath: string): void {
+    const item = this.rawFiles.value.find(f => f.rel_path === relPath)
+    if (item) {
+      console.log(`[WikiView] _markFileSynced: ${relPath} → synced`)
+      item.markSynced()
+    } else {
+      console.warn(`[WikiView] _markFileSynced: 未找到文件项 rel_path=${relPath}（共 ${this.rawFiles.value.length} 个）`)
+    }
+  }
+
+  /** 推进度时把当前文件从 out_of_sync/not_indexed 改成 synced */
+  private _advanceProgress(done: number, total: number, currentRelPath: string): void {
+    console.log(`[WikiView] _advanceProgress: done=${done}/${total} current=${currentRelPath}`)
+    this.rawFiles.value.forEach(f => f.isCurrent = false)
+    this._pendingRelPath = currentRelPath
+    const item = this.rawFiles.value.find(f => f.rel_path === currentRelPath)
+    if (item) {
+      item.markCurrent()
+      item.markSynced()
+      console.log(`[WikiView] _advanceProgress: 已标记 ${currentRelPath} 为 synced（done=${done}/${total}）`)
+    } else {
+      console.warn(`[WikiView] _advanceProgress: 未找到 currentRelPath=${currentRelPath}（共 ${this.rawFiles.value.length} 个文件）`)
     }
   }
 
@@ -221,7 +241,7 @@ export class WikiViewModel {
     this._lastDone = pdata.done
   }
 
-  applyDone(pdata: { status: string; done: number; total: number }): void {
+  applyDone(pdata: { status: string; done: number; total: number; result?: { added: string[]; updated: string[]; deleted: string[]; unchanged: number; errors: string[] } }): void {
     if (pdata.total > 0) {
       const pct = Math.round((pdata.done / pdata.total) * 100)
       this.progressPctNum.value = pct
@@ -231,15 +251,28 @@ export class WikiViewModel {
       this.progressPct.value = '100%'
     }
     this.showProgress.value = false
-    this.indexResultMsg.value = pdata.status === 'done'
-      ? { type: 'ok', text: '索引完成' }
-      : pdata.status === 'error'
-        ? { type: 'err', text: '索引出错' }
-        : null
+    if (pdata.status === 'done' && pdata.result) {
+      const r = pdata.result
+      const parts: string[] = []
+      if (r.added?.length) parts.push(`+${r.added.length}`)
+      if (r.updated?.length) parts.push(`≈${r.updated.length}`)
+      if (r.deleted?.length) parts.push(`-${r.deleted.length}`)
+      if (r.errors?.length) parts.push(`!${r.errors.length}`)
+      if (r.unchanged !== undefined) parts.push(`○${r.unchanged}`)
+      const detail = parts.length > 0 ? ` (${parts.join(', ')})` : ''
+      this.indexResultMsg.value = { type: 'ok', text: '索引完成' + detail }
+    } else if (pdata.status === 'done') {
+      this.indexResultMsg.value = { type: 'ok', text: '索引完成' }
+    } else if (pdata.status === 'error') {
+      this.indexResultMsg.value = { type: 'err', text: '索引出错' }
+    } else {
+      this.indexResultMsg.value = null
+    }
   }
 
   startPoll(): void {
     if (this._pollTimer !== null) return
+    console.log('[WikiView] startPoll: 开始轮询进度')
     this._pollTimer = setInterval(async () => {
       try {
         const pdata = await this._api.fetchJson<{ status: string; done: number; total: number; current_file: string }>('/wiki/index-progress')
@@ -248,20 +281,23 @@ export class WikiViewModel {
           await this.refreshLog()
           if (pdata.done !== this._lastDone) {
             this._lastDone = pdata.done
-            await this.loadFiles(true)
+            // 直接更新文件状态，不重新拉整个列表
+            const relPath = pdata.current_file || this._pendingRelPath || ''
+            console.log(`[WikiView] startPoll: done=${pdata.done}/${pdata.total} current_file=${pdata.current_file} → 调用 _advanceProgress`)
+            this._advanceProgress(pdata.done, pdata.total, relPath)
           }
         } else {
+          console.log('[WikiView] startPoll: status != running，停止轮询')
           this._lastDone = -1
           this.stopPoll()
           this.applyDone(pdata)
-          await this.loadFiles(true)
           await nextTick()
           this.scrollLogBottom()
         }
       } catch (e) {
         console.error('[WikiView] poll error:', e)
       }
-    }, 500)
+    }, 200)
   }
 
   stopPoll(): void {
@@ -292,6 +328,7 @@ export class WikiViewModel {
 
   /* ==================== Rebuild index ==================== */
   async rebuildIndex(): Promise<void> {
+    console.log('[WikiView] rebuildIndex: 开始')
     this.indexResultMsg.value = null
     this.showProgress.value = true
     this.progressPctNum.value = 0
@@ -300,14 +337,17 @@ export class WikiViewModel {
     this._lastDone = 0
 
     try {
-      const resp = await this._api.fetchJson<any>('/wiki/index')
+      const resp = await this._api.postJson<any>('/wiki/index', {})
       if (resp.error) {
+        console.error('[WikiView] rebuildIndex: 后端返回错误', resp.error)
         this.showProgress.value = false
         this.indexResultMsg.value = { type: 'err', text: '索引失败: ' + resp.error }
         return
       }
+      console.log('[WikiView] rebuildIndex: 后端已启动索引，开始轮询')
       this.startPoll()
     } catch (e: any) {
+      console.error('[WikiView] rebuildIndex: 请求异常', e)
       this.showProgress.value = false
       this.indexResultMsg.value = { type: 'err', text: '请求失败: ' + (e.message || String(e)) }
     }

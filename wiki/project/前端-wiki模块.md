@@ -129,10 +129,12 @@ rebuildIndex()
   → 按钮禁用，文字='索引中...'
   → 显示进度条，填充归零
   → 重置 _lastIndexDone = 0
-  → POST /wiki/index
+  → POST /wiki/index (旧版 fetchJson → 现改为 POST /wiki/index {})
   ├── 返回 error → 隐藏进度条，显示错误提示，恢复按钮
   └── 返回成功 → startIndexPoll() 启动轮询（共享定时器）
 ```
+
+**注意**：`POST /wiki/index` 需要传入空 JSON body `{}`，响应为 `{"status":"started"}`
 
 ### 右侧面板切换（switchSideTab）
 ```

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { wikiViewModel } from './WikiViewModel'
+import FileList from './FileList/FileList.vue'
+import SideStats from './SideStats/SideStats.vue'
+import SideOps from './SideOps/SideOps.vue'
+import SideSettings from './SideSettings/SideSettings.vue'
 
 onMounted(() => wikiViewModel.onMounted())
 onUnmounted(() => wikiViewModel.onUnmounted())
@@ -8,7 +12,6 @@ onUnmounted(() => wikiViewModel.onUnmounted())
 
 <template>
   <div class="wiki-wrap">
-    <!-- Copy toast -->
     <Transition name="toast-fade">
       <div v-if="wikiViewModel.copyToastVisible.value" class="copy-toast">路径已复制</div>
     </Transition>
@@ -17,59 +20,12 @@ onUnmounted(() => wikiViewModel.onUnmounted())
       <div class="wiki-title">Wiki 知识库</div>
     </div>
 
-    <!-- Two-column layout -->
     <div class="wiki-body">
-      <!-- Left: Main content -->
       <div class="wiki-main">
-        <div class="file-section">
-          <div class="fs-header">
-            <div class="fs-title">文件列表</div>
-            <span class="ft-meta">{{ wikiViewModel.rawFiles.value.length }} 个文件</span>
-          </div>
-          <div class="table-wrap">
-            <!-- Loading -->
-            <div v-if="wikiViewModel.loading.value && wikiViewModel.rawFiles.value.length === 0" class="mini-loading"></div>
-            <!-- Error -->
-            <div v-else-if="wikiViewModel.loadError.value" class="empty-state">加载失败，请检查后端连接</div>
-            <!-- Empty -->
-            <div v-else-if="wikiViewModel.rawFiles.value.length === 0" class="empty-state">Wiki 目录为空</div>
-            <!-- File table -->
-            <table v-else class="file-table">
-              <thead>
-                <tr>
-                  <th style="width:40px"></th>
-                  <th @click="wikiViewModel.doSort('filename')">文件名{{ wikiViewModel.sortArrow('filename') }}</th>
-                  <th @click="wikiViewModel.doSort('sizeBytes')">大小{{ wikiViewModel.sortArrow('sizeBytes') }}</th>
-                  <th @click="wikiViewModel.doSort('modified')">修改时间{{ wikiViewModel.sortArrow('modified') }}</th>
-                  <th>预览</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="f in wikiViewModel.sortedFiles"
-                  :key="f.abs_path"
-                  style="cursor:pointer"
-                  @click="wikiViewModel.copyPath(f.abs_path || f.filename)"
-                >
-                  <td style="text-align:center">
-                    <span v-if="f.index_status === 'synced'" style="color:#22c55e" title="已同步">&#10003;</span>
-                    <span v-else-if="f.index_status === 'out_of_sync'" style="color:#f97316" title="文件已修改，需重建索引">&#9888;</span>
-                    <span v-else style="color:#94a3b8" title="未索引">&#9675;</span>
-                  </td>
-                  <td class="ft-name">{{ f.filename }}</td>
-                  <td class="ft-meta">{{ wikiViewModel.formatSize(f.size_bytes) }}</td>
-                  <td class="ft-meta">{{ wikiViewModel.formatDate(f.modified) }}</td>
-                  <td class="ft-preview" :title="f.preview">{{ f.preview || '' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <FileList />
       </div>
 
-      <!-- Right: Info sidebar -->
       <div class="wiki-sidebar">
-        <!-- Sidebar nav tabs -->
         <div class="side-tab-bar">
           <button
             class="side-tab-btn"
@@ -89,88 +45,9 @@ onUnmounted(() => wikiViewModel.onUnmounted())
         </div>
 
         <div class="side-content">
-          <!-- Stats panel -->
-          <div v-show="wikiViewModel.activeTab.value === 'stats'" class="side-panel active">
-            <div class="wscard-col">
-              <div class="wscard">
-                <div class="wsc-label">文件数</div>
-                <div class="wsc-value">{{ wikiViewModel.rawFiles.value.length || '-' }}</div>
-              </div>
-              <div class="wscard">
-                <div class="wsc-label">总大小</div>
-                <div class="wsc-value">{{ wikiViewModel.rawFiles.value.length ? wikiViewModel.formatSize(wikiViewModel.totalSize) : '-' }}</div>
-                <div class="wsc-sub">{{ wikiViewModel.rawFiles.value.length }} 个 .md 文件</div>
-              </div>
-              <div class="wscard">
-                <div class="wsc-label">索引状态</div>
-                <div class="wsc-value" :style="{ fontSize: '15px', color: wikiViewModel.indexStatusText.color }">
-                  {{ wikiViewModel.indexStatusText.text }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Ops panel -->
-          <div v-show="wikiViewModel.activeTab.value === 'ops'" class="side-panel active">
-            <div class="ops-section">
-              <div class="ops-title">快捷操作</div>
-              <div class="ops-list">
-                <button class="ops-btn" :disabled="wikiViewModel.showProgress.value" @click="wikiViewModel.rebuildIndex()">
-                  <span class="ops-icon">&#x21bb;</span>
-                  <span class="ops-text">{{ wikiViewModel.showProgress.value ? '索引中...' : '重建索引' }}</span>
-                </button>
-              </div>
-              <!-- Index result message -->
-              <div
-                v-if="wikiViewModel.indexResultMsg.value"
-                class="index-result"
-                :class="wikiViewModel.indexResultMsg.value.type"
-              >{{ wikiViewModel.indexResultMsg.value.text }}</div>
-              <!-- Progress -->
-              <div v-if="wikiViewModel.showProgress.value" style="display:flex;flex-direction:column;flex:1;min-height:0;margin-top:8px">
-                <div class="progress-label">{{ wikiViewModel.progressLabel.value }}</div>
-                <div class="progress-bar-bg">
-                  <div class="progress-bar-fill" :style="{ width: wikiViewModel.progressPct.value }"></div>
-                </div>
-                <div class="progress-pct">{{ wikiViewModel.progressPct.value }}</div>
-                <div ref="wikiViewModel.logWrapEl.value" class="index-log-wrap" style="margin-top:8px">
-                  <div v-for="(line, i) in wikiViewModel.logLines.value" :key="i" class="log-line">{{ line }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Settings panel -->
-          <div v-show="wikiViewModel.activeTab.value === 'settings'" class="side-panel active">
-            <div class="settings-section">
-              <div class="form-group">
-                <label class="form-label">Wiki 目录</label>
-                <input v-model="wikiViewModel.formWikiDir.value" class="form-input" type="text" placeholder="如: wiki">
-              </div>
-              <div class="form-group">
-                <label class="form-label">LightRAG 数据目录</label>
-                <input v-model="wikiViewModel.formLightragDir.value" class="form-input" type="text" placeholder="如: rag/lightrag_data">
-              </div>
-              <div class="form-group">
-                <label class="form-label">语言</label>
-                <select v-model="wikiViewModel.formLanguage.value" class="form-select">
-                  <option value="Chinese">Chinese</option>
-                  <option value="English">English</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">分块大小 (token)</label>
-                <input v-model.number="wikiViewModel.formChunkSize.value" class="form-input" type="number" placeholder="1200" min="200" max="8000">
-              </div>
-              <div class="form-group">
-                <label class="form-label">搜索超时 (秒)</label>
-                <input v-model.number="wikiViewModel.formTimeout.value" class="form-input" type="number" placeholder="30" min="5" max="300">
-              </div>
-              <button class="btn-save" :disabled="wikiViewModel.saving.value" @click="wikiViewModel.saveSettings()">
-                {{ wikiViewModel.saving.value ? '保存中...' : '保存设置' }}
-              </button>
-            </div>
-          </div>
+          <SideStats v-show="wikiViewModel.activeTab.value === 'stats'" />
+          <SideOps v-show="wikiViewModel.activeTab.value === 'ops'" />
+          <SideSettings v-show="wikiViewModel.activeTab.value === 'settings'" />
         </div>
       </div>
     </div>
