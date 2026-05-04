@@ -11,6 +11,7 @@ export class SearchTab {
   readonly history = ref<string[]>([])
   readonly showHistory = ref(false)
   readonly loading = ref(false)
+  readonly isSearching = ref(false)
 
   private _api = useApi()
   private _toast = useToast()
@@ -18,13 +19,15 @@ export class SearchTab {
 
   debounceSearch(): void {
     if (this._searchTimer) clearTimeout(this._searchTimer)
+    if (this.isSearching.value) return
     this._searchTimer = setTimeout(() => this.search(), 500)
   }
 
   async search(): Promise<void> {
     const query = this.input.value.trim()
     if (!query) return
-    if (this.loading.value) return
+    if (this.isSearching.value) return
+    this.isSearching.value = true
     this.loading.value = true
     this.activeQuery.value = query
     try {
@@ -35,6 +38,7 @@ export class SearchTab {
       this._toast.show('搜索失败', 'error')
     } finally {
       this.loading.value = false
+      this.isSearching.value = false
     }
   }
 

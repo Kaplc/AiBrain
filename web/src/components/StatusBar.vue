@@ -7,36 +7,68 @@ const statusStore = useStatusStore()
 const building = ref(false)
 const buildMsg = ref('')
 const buildFailed = ref(false)
-console.log('[StatusBar] mounted, starting polling...')
+const buildId = ref('')
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
 const { start } = usePolling(() => statusStore.fetchStatus(), 3000)
 
 statusStore.fetchStatus()
 start()
+
+async function pollBuildStatus(id: string) {
+  if (!id) return
+  try {
+    const res = await fetch(`/overview/frontend/build/status?build_id=${id}`)
+    const data = await res.json()
+    if (data.status === 'done') {
+      buildMsg.value = '构建成功'
+      buildFailed.value = false
+      building.value = false
+      clearTimeout(pollTimer)
+      setTimeout(() => {
+        buildMsg.value = ''
+        setTimeout(() => window.location.reload(), 300)
+      }, 2000)
+    } else if (data.status === 'failed') {
+      buildMsg.value = '构建失败'
+      buildFailed.value = true
+      building.value = false
+      clearTimeout(pollTimer)
+      setTimeout(() => { buildMsg.value = '' }, 2000)
+    } else {
+      // 继续轮询
+      pollTimer = setTimeout(() => pollBuildStatus(id), 500)
+    }
+  } catch (e) {
+    buildMsg.value = '构建失败'
+    buildFailed.value = true
+    building.value = false
+    clearTimeout(pollTimer)
+  }
+}
 
 async function triggerBuild() {
   if (building.value) return
   building.value = true
   buildMsg.value = '构建中...'
   buildFailed.value = false
+  buildId.value = ''
   try {
     const res = await fetch('/overview/frontend/build', { method: 'POST' })
     const data = await res.json()
-    console.log('[StatusBar] build result:', data)
-    if (data.ok) {
-      buildMsg.value = '构建成功'
-      buildFailed.value = false
+    if (data.build_id) {
+      buildId.value = data.build_id
+      pollBuildStatus(data.build_id)
     } else {
       buildMsg.value = '构建失败'
       buildFailed.value = true
-      console.error('[StatusBar] build failed:', data.error)
+      building.value = false
     }
   } catch (e) {
     buildMsg.value = '构建失败'
     buildFailed.value = true
-    console.error('[StatusBar] build error:', e)
+    building.value = false
   }
-  building.value = false
-  setTimeout(() => { buildMsg.value = ''; buildFailed.value = false }, 3000)
 }
 </script>
 
@@ -66,7 +98,7 @@ async function triggerBuild() {
       <span>{{ statusStore.device === 'cuda' ? 'GPU' : 'CPU' }}</span>
     </div>
     <div class="statusbar-right">
-      <span v-if="buildMsg" class="build-msg" :class="{ fail: buildFailed }">{{ buildMsg }}</span>
+      <span v-if="buildMsg" class="build-msg" :class="{ fail: buildFailed, building: building }">{{ buildMsg }}</span>
       <button v-else class="build-btn" @click="triggerBuild" title="构建前端">构建</button>
     </div>
   </div>
@@ -112,4 +144,9 @@ async function triggerBuild() {
 .build-btn:hover { background: #7c3aed44; color: #c4b5fd; }
 .build-msg { font-size: 10px; color: #86efac; }
 .build-msg.fail { color: #ef4444; }
+.build-msg.building { color: #eab308; animation: build-pulse 2.5s ease-in-out infinite; }
+@keyframes build-pulse {
+  0%, 100% { opacity: 1; text-shadow: 0 0 4px #eab30888; }
+  50% { opacity: 0.6; text-shadow: none; }
+}
 </style>

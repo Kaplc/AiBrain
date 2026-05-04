@@ -21,7 +21,7 @@ def warmup_memory_count():
     global _memory_count_cache
     try:
         client = get_mem0_client()
-        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=1)
+        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
         _memory_count_cache = len(result.get("results", []))
         logger.info(f"[memory] 记忆数量缓存已预热: {_memory_count_cache} 条")
     except Exception as e:
@@ -34,6 +34,20 @@ def get_client():
     return get_mem0_client()
 
 
+def get_memory_count() -> int:
+    """从 mem0 获取真实记忆数量"""
+    global _memory_count_cache
+    if _memory_count_cache is not None:
+        return _memory_count_cache
+    # 缓存未初始化时直接查询
+    try:
+        client = get_mem0_client()
+        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
+        return len(result.get("results", []))
+    except Exception:
+        return 0
+
+
 def _get_search_options():
     """根据数据量自适应返回最优搜索参数（使用缓存，避免每次 get_all）"""
     global _memory_count_cache
@@ -41,7 +55,7 @@ def _get_search_options():
         # 缓存未预热时临时查询一次
         try:
             client = get_mem0_client()
-            result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=1)
+            result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
             _memory_count_cache = len(result.get("results", []))
         except Exception:
             _memory_count_cache = 0
@@ -207,6 +221,9 @@ def delete_memory(memory_id: str) -> str:
     """删除记忆（前端 UI 用）"""
     client = get_mem0_client()
     client.delete(memory_id)
+    global _memory_count_cache
+    if _memory_count_cache is not None:
+        _memory_count_cache = max(0, _memory_count_cache - 1)
     return f"已删除记忆: {memory_id}"
 
 

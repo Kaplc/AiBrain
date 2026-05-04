@@ -1,12 +1,13 @@
 """Memory 模块 - 记忆 CRUD /memory"""
 import logging
 import threading
-from flask import request, jsonify
+from flask import request, jsonify, Response, stream_with_context
 from modules.brain.memory import (
     store_memory, search_memory, list_memories,
     delete_memory, update_memory, organize_memories,
     dedup_memories, refine_memories, apply_organize
 )
+from modules.brain.dedup import dedup_memories_iter, _dedup_pause_flag, _dedup_stop_flag
 
 logger = logging.getLogger('memory')
 
@@ -148,7 +149,8 @@ def register(app, ready_state, logger, stats_db):
     @app.route('/memory/count', methods=['GET'])
     def memory_count():
         try:
-            count = stats_db.get_memory_count()
+            from modules.brain.memory import get_memory_count
+            count = get_memory_count()
             return jsonify({"count": count})
         except Exception as e:
             logger.error(f"[memory/count] error: {e}")
@@ -193,6 +195,59 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.error(f"[memory/organize/dedup] 失败: {e}")
             return jsonify({"error": str(e), "groups": []})
+
+    @app.route('/memory/organize/dedup/stream', methods=['POST'])
+    def organize_dedup_stream():
+        """SSE 流式去重分析，实时推送发现进度"""
+        data = request.get_json() or {}
+        threshold = data.get('similarity_threshold', 0.85)
+        batch_size = data.get('batch_size', 30)
+
+        # 重置停止/暂停标志
+        _dedup_stop_flag.clear()
+        _dedup_pause_flag.clear()
+
+        def generate():
+            import json
+            try:
+                for msg in dedup_memories_iter(threshold=threshold, batch_size=batch_size,
+                                               pause_flag=_dedup_pause_flag, stop_flag=_dedup_stop_flag):
+                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.error(f"[dedup:stream] 生成器异常: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
+            }
+        )
+
+    @app.route('/memory/organize/dedup/pause', methods=['POST'])
+    def organize_dedup_pause():
+        """暂停去重分析（可恢复）"""
+        _dedup_pause_flag.set()
+        logger.info("[dedup:pause] 暂停去重分析")
+        return jsonify({"ok": True, "paused": True})
+
+    @app.route('/memory/organize/dedup/resume', methods=['POST'])
+    def organize_dedup_resume():
+        """恢复去重分析"""
+        _dedup_pause_flag.clear()
+        logger.info("[dedup:resume] 恢复去重分析")
+        return jsonify({"ok": True, "resumed": True})
+
+    @app.route('/memory/organize/dedup/stop', methods=['POST'])
+    def organize_dedup_stop():
+        """停止去重分析（不可恢复，重新开始）"""
+        _dedup_stop_flag.set()
+        _dedup_pause_flag.clear()
+        logger.info("[dedup:stop] 停止去重分析")
+        return jsonify({"ok": True, "stopped": True})
 
     @app.route('/memory/organize/refine', methods=['POST'])
     def organize_refine():
