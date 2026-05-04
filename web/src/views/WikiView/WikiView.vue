@@ -1,0 +1,632 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
+import { wikiViewModel } from './WikiViewModel'
+
+onMounted(() => wikiViewModel.onMounted())
+onUnmounted(() => wikiViewModel.onUnmounted())
+</script>
+
+<template>
+  <div class="wiki-wrap">
+    <!-- Copy toast -->
+    <Transition name="toast-fade">
+      <div v-if="wikiViewModel.copyToastVisible.value" class="copy-toast">路径已复制</div>
+    </Transition>
+
+    <div class="wiki-header">
+      <div class="wiki-title">Wiki 知识库</div>
+    </div>
+
+    <!-- Two-column layout -->
+    <div class="wiki-body">
+      <!-- Left: Main content -->
+      <div class="wiki-main">
+        <div class="file-section">
+          <div class="fs-header">
+            <div class="fs-title">文件列表</div>
+            <span class="ft-meta">{{ wikiViewModel.rawFiles.value.length }} 个文件</span>
+          </div>
+          <div class="table-wrap">
+            <!-- Loading -->
+            <div v-if="wikiViewModel.loading.value && wikiViewModel.rawFiles.value.length === 0" class="mini-loading"></div>
+            <!-- Error -->
+            <div v-else-if="wikiViewModel.loadError.value" class="empty-state">加载失败，请检查后端连接</div>
+            <!-- Empty -->
+            <div v-else-if="wikiViewModel.rawFiles.value.length === 0" class="empty-state">Wiki 目录为空</div>
+            <!-- File table -->
+            <table v-else class="file-table">
+              <thead>
+                <tr>
+                  <th style="width:40px"></th>
+                  <th @click="wikiViewModel.doSort('filename')">文件名{{ wikiViewModel.sortArrow('filename') }}</th>
+                  <th @click="wikiViewModel.doSort('sizeBytes')">大小{{ wikiViewModel.sortArrow('sizeBytes') }}</th>
+                  <th @click="wikiViewModel.doSort('modified')">修改时间{{ wikiViewModel.sortArrow('modified') }}</th>
+                  <th>预览</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="f in wikiViewModel.sortedFiles"
+                  :key="f.abs_path"
+                  style="cursor:pointer"
+                  @click="wikiViewModel.copyPath(f.abs_path || f.filename)"
+                >
+                  <td style="text-align:center">
+                    <span v-if="f.index_status === 'synced'" style="color:#22c55e" title="已同步">&#10003;</span>
+                    <span v-else-if="f.index_status === 'out_of_sync'" style="color:#f97316" title="文件已修改，需重建索引">&#9888;</span>
+                    <span v-else style="color:#94a3b8" title="未索引">&#9675;</span>
+                  </td>
+                  <td class="ft-name">{{ f.filename }}</td>
+                  <td class="ft-meta">{{ wikiViewModel.formatSize(f.size_bytes) }}</td>
+                  <td class="ft-meta">{{ wikiViewModel.formatDate(f.modified) }}</td>
+                  <td class="ft-preview" :title="f.preview">{{ f.preview || '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Info sidebar -->
+      <div class="wiki-sidebar">
+        <!-- Sidebar nav tabs -->
+        <div class="side-tab-bar">
+          <button
+            class="side-tab-btn"
+            :class="{ active: wikiViewModel.activeTab.value === 'stats' }"
+            @click="wikiViewModel.switchTab('stats')"
+          >统计</button>
+          <button
+            class="side-tab-btn"
+            :class="{ active: wikiViewModel.activeTab.value === 'ops' }"
+            @click="wikiViewModel.switchTab('ops')"
+          >操作</button>
+          <button
+            class="side-tab-btn"
+            :class="{ active: wikiViewModel.activeTab.value === 'settings' }"
+            @click="wikiViewModel.switchTab('settings')"
+          >设置</button>
+        </div>
+
+        <div class="side-content">
+          <!-- Stats panel -->
+          <div v-show="wikiViewModel.activeTab.value === 'stats'" class="side-panel active">
+            <div class="wscard-col">
+              <div class="wscard">
+                <div class="wsc-label">文件数</div>
+                <div class="wsc-value">{{ wikiViewModel.rawFiles.value.length || '-' }}</div>
+              </div>
+              <div class="wscard">
+                <div class="wsc-label">总大小</div>
+                <div class="wsc-value">{{ wikiViewModel.rawFiles.value.length ? wikiViewModel.formatSize(wikiViewModel.totalSize) : '-' }}</div>
+                <div class="wsc-sub">{{ wikiViewModel.rawFiles.value.length }} 个 .md 文件</div>
+              </div>
+              <div class="wscard">
+                <div class="wsc-label">索引状态</div>
+                <div class="wsc-value" :style="{ fontSize: '15px', color: wikiViewModel.indexStatusText.color }">
+                  {{ wikiViewModel.indexStatusText.text }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ops panel -->
+          <div v-show="wikiViewModel.activeTab.value === 'ops'" class="side-panel active">
+            <div class="ops-section">
+              <div class="ops-title">快捷操作</div>
+              <div class="ops-list">
+                <button class="ops-btn" :disabled="wikiViewModel.showProgress.value" @click="wikiViewModel.rebuildIndex()">
+                  <span class="ops-icon">&#x21bb;</span>
+                  <span class="ops-text">{{ wikiViewModel.showProgress.value ? '索引中...' : '重建索引' }}</span>
+                </button>
+              </div>
+              <!-- Index result message -->
+              <div
+                v-if="wikiViewModel.indexResultMsg.value"
+                class="index-result"
+                :class="wikiViewModel.indexResultMsg.value.type"
+              >{{ wikiViewModel.indexResultMsg.value.text }}</div>
+              <!-- Progress -->
+              <div v-if="wikiViewModel.showProgress.value" style="display:flex;flex-direction:column;flex:1;min-height:0;margin-top:8px">
+                <div class="progress-label">{{ wikiViewModel.progressLabel.value }}</div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" :style="{ width: wikiViewModel.progressPct.value }"></div>
+                </div>
+                <div class="progress-pct">{{ wikiViewModel.progressPct.value }}</div>
+                <div ref="wikiViewModel.logWrapEl.value" class="index-log-wrap" style="margin-top:8px">
+                  <div v-for="(line, i) in wikiViewModel.logLines.value" :key="i" class="log-line">{{ line }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Settings panel -->
+          <div v-show="wikiViewModel.activeTab.value === 'settings'" class="side-panel active">
+            <div class="settings-section">
+              <div class="form-group">
+                <label class="form-label">Wiki 目录</label>
+                <input v-model="wikiViewModel.formWikiDir.value" class="form-input" type="text" placeholder="如: wiki">
+              </div>
+              <div class="form-group">
+                <label class="form-label">LightRAG 数据目录</label>
+                <input v-model="wikiViewModel.formLightragDir.value" class="form-input" type="text" placeholder="如: rag/lightrag_data">
+              </div>
+              <div class="form-group">
+                <label class="form-label">语言</label>
+                <select v-model="wikiViewModel.formLanguage.value" class="form-select">
+                  <option value="Chinese">Chinese</option>
+                  <option value="English">English</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">分块大小 (token)</label>
+                <input v-model.number="wikiViewModel.formChunkSize.value" class="form-input" type="number" placeholder="1200" min="200" max="8000">
+              </div>
+              <div class="form-group">
+                <label class="form-label">搜索超时 (秒)</label>
+                <input v-model.number="wikiViewModel.formTimeout.value" class="form-input" type="number" placeholder="30" min="5" max="300">
+              </div>
+              <button class="btn-save" :disabled="wikiViewModel.saving.value" @click="wikiViewModel.saveSettings()">
+                {{ wikiViewModel.saving.value ? '保存中...' : '保存设置' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* === Layout === */
+.wiki-wrap {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-sizing: border-box;
+  height: 100%;
+  overflow: hidden;
+}
+.wiki-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.wiki-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Two-column body */
+.wiki-body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.wiki-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* === Right Sidebar === */
+.wiki-sidebar {
+  width: 300px;
+  min-width: 260px;
+  flex-shrink: 0;
+  background: #1a1d27;
+  border: 1px solid #2d3149;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.side-tab-bar {
+  display: flex;
+  background: #12141c;
+  border-bottom: 1px solid #2d3149;
+  padding: 4px;
+  flex-shrink: 0;
+}
+.side-tab-btn {
+  flex: 1;
+  padding: 7px 0;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+  user-select: none;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  text-align: center;
+}
+.side-tab-btn:hover {
+  color: #94a3b8;
+}
+.side-tab-btn.active {
+  background: #7c3aed33;
+  color: #a78bfa;
+}
+
+.side-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
+}
+.side-panel.active {
+  display: flex;
+}
+
+/* === Stats Cards === */
+.wscard-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wscard {
+  background: #12141c;
+  border: 1px solid #2d3149;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wsc-label {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 600;
+}
+.wsc-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.wsc-sub {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* === Ops Panel === */
+.ops-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ops-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.ops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ops-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #12141c;
+  border: 1px solid #2d3149;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+  user-select: none;
+}
+.ops-btn:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #7c3aed44;
+}
+.ops-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ops-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ops-text {
+  white-space: nowrap;
+}
+
+/* === Index Result === */
+.index-result {
+  font-size: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  line-height: 1.6;
+}
+.index-result.ok {
+  background: #22c55e11;
+  color: #86efac;
+  border: 1px solid #22c55e22;
+}
+.index-result.err {
+  background: #ef444411;
+  color: #fca5a5;
+  border: 1px solid #ef444422;
+}
+
+/* === File Table === */
+.file-section {
+  background: #1a1d27;
+  border: 1px solid #2d3149;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.fs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.fs-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.file-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #12141c;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #2d3149;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.file-table th:hover {
+  color: #94a3b8;
+}
+.file-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #1a1d27;
+  vertical-align: top;
+}
+.file-table tbody tr:hover {
+  background: #12141c;
+}
+.ft-name {
+  color: #a78bfa;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ft-meta {
+  color: #64748b;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.ft-preview {
+  color: #94a3b8;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* === Settings Panel === */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* === Form Elements === */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.form-input,
+.form-select {
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #2d3149;
+  background: #12141c;
+  color: #e2e8f0;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .2s;
+}
+.form-input:focus,
+.form-select:focus {
+  border-color: #7c3aed;
+}
+
+/* === Buttons === */
+.btn-save {
+  padding: 8px 24px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s;
+  border: none;
+  user-select: none;
+  background: #7c3aed33;
+  color: #a78bfa;
+  border: 1px solid #7c3aed44;
+}
+.btn-save:hover {
+  background: #7c3aed55;
+}
+.btn-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* === Misc === */
+.mini-loading {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #eab30844;
+  border-top-color: #fde047;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 24px auto;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  text-align: center;
+  color: #64748b;
+  padding: 40px 20px;
+  font-size: 13px;
+}
+
+.copy-toast {
+  position: fixed;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #22c55e22;
+  color: #86efac;
+  border: 1px solid #22c55e44;
+  font-size: 11px;
+  padding: 4px 16px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.toast-fade-enter-active {
+  animation: toastIn 0.2s ease;
+}
+.toast-fade-leave-active {
+  animation: toastOut 1s ease forwards;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+  to   { opacity: 1; transform: translateX(-50%); }
+}
+@keyframes toastOut {
+  0%   { opacity: 1; transform: translateX(-50%); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(12px); }
+}
+
+.progress-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.progress-bar-bg {
+  background: #0f1117;
+  border: 1px solid #2d3149;
+  border-radius: 4px;
+  height: 20px;
+  overflow: hidden;
+  position: relative;
+}
+.progress-bar-fill {
+  height: 100%;
+  background-color: #7c3aed;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,.2) 50%,
+    rgba(255,255,255,0) 100%
+  );
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  position: relative;
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.progress-pct {
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-align: right;
+  margin-top: 4px;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.index-log-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: #0f1117;
+  border: 1px solid #2d3149;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.index-log-wrap .log-line {
+  opacity: .7;
+}
+.index-log-wrap .log-line:last-child {
+  opacity: 1;
+  color: #e2e8f0;
+}
+</style>

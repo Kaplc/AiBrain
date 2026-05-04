@@ -7,7 +7,7 @@ const router = useRouter()
 const navItems = [
   { name: 'overview', label: '总览' },
   { name: 'memory', label: '记忆' },
-  { name: 'steam', label: '流' },
+  { name: 'stream', label: '流' },
   { name: 'wiki', label: 'Wiki' },
   { name: 'logs', label: '日志' },
   { name: 'settings', label: '设置' },

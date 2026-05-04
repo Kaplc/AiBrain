@@ -34,7 +34,7 @@ def _call(path: str, data: dict) -> dict:
 
 def store_memory(text: str) -> str:
     """存储记忆（异步后台执行），返回确认文本"""
-    result = _call("/mcp/store", {"text": text})
+    result = _call("/memory/mcp/store", {"text": text})
     if "error" in result:
         raise RuntimeError(result["error"])
     # 异步模式：立即返回，实际存储在后台
@@ -64,7 +64,7 @@ def _preview_text(text: str, max_len: int = 120) -> str:
 
 def search_memory(query: str) -> list[dict]:
     """搜索记忆（后端自动根据数据量选择最优策略），返回匹配的文本和分数"""
-    result = _call("/mcp/search", {"query": query})
+    result = _call("/memory/mcp/search", {"query": query})
     if "error" in result:
         raise RuntimeError(result["error"])
     return [{"text": r["text"], "score": r.get("score", 0)} for r in result.get("results", [])]

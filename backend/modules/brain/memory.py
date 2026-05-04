@@ -55,27 +55,32 @@ def _get_search_options():
         return {"top_k": 50, "threshold": 0.55, "rerank": True}
 
 
-def store_memory(text: str) -> dict:
+def store_memory(text: str, memory_meta: dict = None) -> dict:
     """存储记忆，LLM 自动从文本中拆分多条事实。
+
+    Args:
+        text: 要存储的记忆文本
+        memory_meta: 可选元数据，如 {"source": "user"} 或 {"source": "mcp"}
 
     Returns:
         dict: 包含 result 消息和实际存入的原始文本列表
             {"result": "已记住: 新增 N 条记忆", "stored_texts": [...]}
     """
     client = get_mem0_client()
+    # 构建 add 参数，支持 memory_meta 元数据
+    add_kwargs = {
+        "user_id": DEFAULT_USER_ID,
+        "infer": True,
+    }
+    if memory_meta:
+        add_kwargs["metadata"] = memory_meta
+
     try:
-        result = client.add(
-            text,
-            user_id=DEFAULT_USER_ID,
-            infer=True,
-        )
+        result = client.add(text, **add_kwargs)
     except Exception as e:
         logger.warning(f"store_memory failed (infer=True): {e}, fallback infer=False")
-        result = client.add(
-            text,
-            user_id=DEFAULT_USER_ID,
-            infer=False,
-        )
+        add_kwargs["infer"] = False
+        result = client.add(text, **add_kwargs)
 
     # 完整日志：记录 mem0 返回的原始结果
     logger.info(f"[store_memory] mem0 raw result: {result}")
@@ -162,17 +167,32 @@ def search_memory(query: str) -> list[dict]:
     return memories
 
 
-def list_memories(offset: int = 0, limit: int = 200) -> list[dict]:
-    """列出所有记忆（前端 UI 用），按最新时间倒序排列"""
+def list_memories(offset: int = 0, limit: int = 200, source: str = None) -> list[dict]:
+    """列出记忆（前端 UI 用），按最新时间倒序排列
+
+    Args:
+        offset: 分页偏移
+        limit: 每页数量限制（默认200）
+        source: 可选过滤来源，如 "user"（用户保存）或 "mcp"（MCP工具保存）
+    """
     client = get_mem0_client()
+    # mem0 过滤 metadata 字段时需要用 "metadata.source" 前缀
+    filters = {"user_id": DEFAULT_USER_ID}
+    if source:
+        filters["metadata.source"] = source
+
     result = client.get_all(
-        filters={"user_id": DEFAULT_USER_ID},
+        filters=filters,
         top_k=10000,
     )
     all_memories = result.get("results", [])
     # 按创建时间倒序（最新的在前面）
     all_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-    paged = all_memories[offset:offset + limit]
+    # 用户请求只显示最后20条时，直接截取前20条（忽略 offset/limit）
+    if source == "user":
+        paged = all_memories[:20]
+    else:
+        paged = all_memories[offset:offset + limit]
     return [
         {
             "id": m["id"],

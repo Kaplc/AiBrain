@@ -1,1 +1,0 @@
-import{r as t}from"./index-CUfwoiLA.js";const s=t(!1),u=t(""),o=t("success");let e=null;function c(a,l="success"){u.value=a,o.value=l,s.value=!0,e&&clearTimeout(e),e=setTimeout(()=>{s.value=!1},2800)}function i(){return{visible:s,message:u,type:o,show:c}}export{i as u};

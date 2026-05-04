@@ -85,6 +85,20 @@ class ProcessManager:
 
     def start_flask(self):
         """启动 Flask 服务"""
+        # 构建前端 dist
+        print(f"  [flask] Building frontend...")
+        web_dir = os.path.join(_PROJECT_ROOT, 'web')
+        build_result = subprocess.run(
+            'npm run build',
+            cwd=web_dir,
+            capture_output=True, timeout=120,
+            shell=True,
+        )
+        if build_result.returncode != 0:
+            print(f"  [flask] Build failed: {build_result.stderr.decode('utf-8', errors='replace')[:200]}")
+        else:
+            print(f"  [flask] Build done")
+
         env = {
             **os.environ,
             'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',

@@ -24,7 +24,7 @@ export const useStatusStore = defineStore('status', () => {
 
   async function fetchStatus() {
     try {
-      const d = await fetchJson<any>('/status')
+      const d = await fetchJson<any>('/statusbar/api')
       modelLoaded.value = d.model_loaded ?? false
       qdrantReady.value = d.qdrant_ready ?? false
       device.value = d.device ?? 'cpu'

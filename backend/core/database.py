@@ -1,4 +1,4 @@
-"""SQLite 统计数据库"""
+"""SQLite 统计数据库（单例）：存储每日统计、操作流、搜索历史"""
 import os
 import sqlite3
 import datetime as _dt
@@ -9,20 +9,31 @@ _db_logger = logging.getLogger('memory')
 
 
 class StatsDB:
+    _instance = None
+
     def __init__(self, db_path):
         self._path = db_path
         self._init_db()
 
+    @classmethod
+    def get_instance(cls, db_path):
+        if cls._instance is None:
+            cls._instance = cls(db_path)
+        return cls._instance
+
     @property
     def path(self):
+        """返回数据库文件路径"""
         return self._path
 
     def _get_conn(self):
+        """获取 SQLite 连接（每次操作新建，关闭释放）"""
         conn = sqlite3.connect(self._path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self):
+        """初始化数据库表结构：daily_stats、stream、search_history"""
         db = self._get_conn()
         db.execute('''
             CREATE TABLE IF NOT EXISTS daily_stats (
@@ -58,7 +69,7 @@ class StatsDB:
         db.close()
 
     def update(self, date_str, added_delta=0, deleted_delta=0):
-        """原子 upsert 更新日期统计"""
+        """原子 upsert 更新指定日期的统计（added/deleted 增量）"""
         db = self._get_conn()
         row = db.execute('SELECT * FROM daily_stats WHERE date = ?', (date_str,)).fetchone()
         if row:
@@ -77,12 +88,12 @@ class StatsDB:
         db.close()
 
     def record_action(self, added=0, deleted=0):
-        """记录今天的操作（快捷方法）"""
+        """快捷方法：记录今天的 added/deleted 操作增量"""
         self.update(_dt.date.today().isoformat(), added_delta=added, deleted_delta=deleted)
         self.prune_old_stats(keep_days=30)
 
     def prune_old_stats(self, keep_days=30):
-        """删除 keep_days 天之前的旧数据（保留最近的数据）"""
+        """删除 keep_days 天之前的 daily_stats 旧数据"""
         db = self._get_conn()
         cutoff = (_dt.date.today() - _dt.timedelta(days=keep_days)).isoformat()
         db.execute('DELETE FROM daily_stats WHERE date < ?', (cutoff,))
@@ -90,7 +101,7 @@ class StatsDB:
         db.close()
 
     def query_range(self, start_date=None):
-        """查询范围内的数据，按 date 排序"""
+        """查询指定日期范围内的每日统计数据（按日期升序）"""
         db = self._get_conn()
         if start_date:
             rows = db.execute(
@@ -119,7 +130,7 @@ class StatsDB:
     # ── Stream（操作流）─────────────────────────────────────
 
     def append_stream(self, action, content='', memory_id='', status='done'):
-        """写入一条操作记录"""
+        """写入一条操作流记录（如 store/update/delete），自动裁剪旧记录"""
         db = self._get_conn()
         db.execute(
             'INSERT INTO stream (action, content, memory_id, status) VALUES (?, ?, ?, ?)',
@@ -135,7 +146,7 @@ class StatsDB:
         return rowid
 
     def update_stream_status(self, rowid, status):
-        """更新流记录的状态"""
+        """更新流记录的状态（如 pending -> done）"""
         db = self._get_conn()
         db.execute('UPDATE stream SET status=? WHERE id=?', (status, rowid))
         db.commit()
@@ -149,7 +160,7 @@ class StatsDB:
         db.close()
 
     def query_stream(self, action=None, limit=50):
-        """查询最近的操作流，最新的在前面"""
+        """查询最近的操作流记录，最新的在前面"""
         db = self._get_conn()
         if action:
             rows = db.execute(
@@ -165,7 +176,7 @@ class StatsDB:
         return [dict(r) for r in rows]
 
     def query_stream_days(self, action=None, days=3):
-        """查询最近 N 天内的所有操作流"""
+        """查询最近 N 天内的所有操作流记录"""
         db = self._get_conn()
         cutoff = f"{-days} days"
         if action:
@@ -186,7 +197,7 @@ class StatsDB:
         return [dict(r) for r in rows]
 
     def stream_count(self, action=None):
-        """流记录总数"""
+        """获取流记录总数"""
         db = self._get_conn()
         if action:
             cnt = db.execute('SELECT COUNT(*) as c FROM stream WHERE action=?', (action,)).fetchone()[0]
@@ -196,7 +207,7 @@ class StatsDB:
         return cnt
 
     def trim_stream(self, action, keep=30):
-        """每个 action 只保留最近 keep 条记录"""
+        """每个 action 类型只保留最近 keep 条记录"""
         db = self._get_conn()
         # 先查该 action 的总条数
         total = db.execute('SELECT COUNT(*) as c FROM stream WHERE action=?', (action,)).fetchone()[0]
@@ -211,7 +222,7 @@ class StatsDB:
         db.close()
 
     def get_memory_count(self):
-        """获取记忆总数（所有日期的 added - deleted 总和）"""
+        """获取记忆总数（所有日期 added - deleted 的累计值）"""
         db = self._get_conn()
         result = db.execute('SELECT SUM(added - deleted) as total FROM daily_stats').fetchone()
         db.close()

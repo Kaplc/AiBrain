@@ -10,32 +10,32 @@ const router = createRouter({
     {
       path: '/overview',
       name: 'overview',
-      component: () => import('@/views/OverviewView.vue'),
+      component: () => import('@/views/OverviewView/OverviewView.vue'),
     },
     {
       path: '/memory',
       name: 'memory',
-      component: () => import('@/views/MemoryView.vue'),
+      component: () => import('@/views/MemoryView/MemoryView.vue'),
     },
     {
-      path: '/steam',
-      name: 'steam',
-      component: () => import('@/views/SteamView.vue'),
+      path: '/stream',
+      name: 'stream',
+      component: () => import('@/views/StreamView/StreamView.vue'),
     },
     {
       path: '/wiki',
       name: 'wiki',
-      component: () => import('@/views/WikiView.vue'),
+      component: () => import('@/views/WikiView/WikiView.vue'),
     },
     {
       path: '/logs',
       name: 'logs',
-      component: () => import('@/views/LogsView.vue'),
+      component: () => import('@/views/LogsView/LogsView.vue'),
     },
     {
       path: '/settings',
       name: 'settings',
-      component: () => import('@/views/SettingsView.vue'),
+      component: () => import('@/views/SettingsView/SettingsView.vue'),
     },
   ],
 })

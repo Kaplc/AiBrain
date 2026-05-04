@@ -5,10 +5,18 @@ from .settings import resolve_device
 
 
 class ModelManager:
+    _instance = None
+
     def __init__(self, ready_state, settings_manager, logger):
         self._ready = ready_state
         self._settings = settings_manager
         self._logger = logger
+
+    @classmethod
+    def get_instance(cls, ready_state=None, settings_manager=None, logger=None):
+        if cls._instance is None:
+            cls._instance = cls(ready_state, settings_manager, logger)
+        return cls._instance
 
     def load(self, device_setting=None):
         from brain_mcp import embedding as emb

@@ -127,7 +127,7 @@ export class ConsoleEngine {
       const pages = [
         { name: 'overview', desc: '总览' },
         { name: 'memory', desc: '记忆' },
-        { name: 'steam', desc: '流' },
+        { name: 'stream', desc: '流' },
         { name: 'wiki', desc: 'Wiki' },
         { name: 'logs', desc: '日志' },
         { name: 'settings', desc: '设置' },
@@ -154,7 +154,7 @@ export class ConsoleEngine {
         self.log('使用 pages 命令查看可用页面', 'info')
         return
       }
-      const validPages = ['overview', 'memory', 'steam', 'wiki', 'logs', 'settings']
+      const validPages = ['overview', 'memory', 'stream', 'wiki', 'logs', 'settings']
       if (!validPages.includes(page)) {
         self.log(`未知页面: ${page}`, 'error')
         self.log('使用 pages 命令查看可用页面', 'info')

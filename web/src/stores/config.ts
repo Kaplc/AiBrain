@@ -24,9 +24,9 @@ export const useConfigStore = defineStore('config', () => {
   async function loadConfig() {
     try {
       const [cfg, st, aibrain] = await Promise.all([
-        fetchJson<any>('/settings'),
-        fetchJson<any>('/status'),
-        fetchJson<any>('/aibrain-config'),
+        fetchJson<any>('/settings/api'),
+        fetchJson<any>('/statusbar/api'),
+        fetchJson<any>('/settings/aibrain-config'),
       ])
       savedDevice.value = cfg.device ?? 'cpu'
       device.value = savedDevice.value
@@ -41,7 +41,7 @@ export const useConfigStore = defineStore('config', () => {
   async function applyDeviceChange() {
     if (device.value === savedDevice.value) return false
     try {
-      await postJson('/reload-model', { device: device.value })
+      await postJson('/settings/reload-model', { device: device.value })
       savedDevice.value = device.value
       return true
     } catch (e) {
@@ -52,7 +52,7 @@ export const useConfigStore = defineStore('config', () => {
 
   async function saveAibrainConfig(section: string, data: Record<string, any>) {
     try {
-      const r = await postJson<any>('/save-aibrain-config', { [section]: data })
+      const r = await postJson<any>('/settings/save-aibrain-config', { [section]: data })
       return r.error ? false : true
     } catch {
       return false

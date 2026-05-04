@@ -49,14 +49,20 @@ elif '--webview-only' in sys.argv:
 logger = setup_logger(_PROJECT_ROOT, role=_log_role)
 
 from core.database import StatsDB
-stats_db = StatsDB(os.path.join(_BASE, 'stats.db'))
+stats_db = StatsDB.get_instance(os.path.join(_BASE, 'stats.db'))
 
 from core.settings import SettingsManager
-settings_mgr = SettingsManager(os.path.join(_BASE, 'settings.json'))
+settings_mgr = SettingsManager.get_instance(os.path.join(_BASE, 'settings.json'))
 
 from core.model import ModelManager
 _ready = {"model": False, "qdrant": False, "device": "unknown"}
-model_mgr = ModelManager(_ready, settings_mgr, logger)
+model_mgr = ModelManager.get_instance(_ready, settings_mgr, logger)
+
+import mimetypes
+# 添加 Vue 和 TypeScript 文件的 MIME 类型
+mimetypes.add_type('application/javascript', '.ts')
+mimetypes.add_type('application/javascript', '.mts')
+mimetypes.add_type('application/wasm', '.wasm')
 
 _dist = os.path.join(_PROJECT_ROOT, 'web', 'dist')
 _web = os.path.join(_PROJECT_ROOT, 'web')
@@ -64,74 +70,81 @@ _web = os.path.join(_PROJECT_ROOT, 'web')
 _static = _dist if os.path.isdir(_dist) else _web
 app = Flask(__name__, static_folder=_static, static_url_path='')
 CORS(app)
+app.config['_PROJECT_ROOT'] = _PROJECT_ROOT
 
 
-# ── 注册路由模块 ───────────────────────────────────────────
-from modules.status import register as reg_status
-reg_status(app, _ready, logger, stats_db)
+# ── 注册视图路由 ────────────────────────────────────────────
+from routes.overview_routes import register as reg_overview
+from routes.memory_routes import register as reg_memory
+from routes.stream_routes import register as reg_stream
+from routes.statusbar_routes import register as reg_statusbar
+from routes.logs_routes import register as reg_logs
+from routes.settings_routes import register as reg_settings
+from routes.wiki_routes import register as reg_wiki
+from routes.stats_routes import register as reg_stats
 
-from modules.memory import register as reg_memory
-reg_memory(app, stats_db)
-
-from modules.settings_mod import register as reg_settings
-reg_settings(app, settings_mgr, model_mgr)
-
-from modules.stats import register as reg_stats
-reg_stats(app, stats_db)
-
-from modules.stream import register as reg_stream
-reg_stream(app, stats_db)
-
-from modules.wiki_mod import register as reg_wiki
-reg_wiki(app, stats_db)
+reg_overview(app, _ready, logger, stats_db)
+reg_memory(app, _ready, logger, stats_db)
+reg_stream(app, _ready, logger, stats_db)
+reg_statusbar(app, _ready, logger, stats_db)
+reg_logs(app, _ready, logger, stats_db)
+reg_settings(app, _ready, logger, stats_db, settings_mgr, model_mgr)
+reg_wiki(app, _ready, logger, stats_db)
+reg_stats(app, _ready, logger, stats_db)
 
 
 # ── 其他路由 ───────────────────────────────────────────────
 
 @app.route('/health')
 def health():
+    """健康检查接口，Flask/Qdrant 连接状态监控"""
     return jsonify({"status": "ok"})
 
 
 @app.route('/')
 def index():
+    """返回 Vue SPA 入口 index.html"""
     return app.send_static_file('index.html')
+
+
+# 前端路由快捷方式（必须在 spa_fallback 之前注册，避免被通配符捕获）
+@app.route('/overview')
+@app.route('/stream')
+@app.route('/logs')
+@app.route('/wiki')
+@app.route('/console')
+@app.route('/memory')
+@app.route('/settings')
+def spa_shortcut():
+    """前端路由快捷方式：无 / 前缀时转发到 SPA"""
+    from flask import request
+    return spa_fallback(request.path.lstrip('/'))
 
 
 logger.info(f'[spa_fallback] static_folder={app.static_folder}')
 # ── SPA fallback: 所有非 API 路由回退到 index.html ──
 @app.route('/<path:path>/')
 def spa_fallback_slash(path):
+    """SPA 路由回退（带斜杠路径）"""
     return spa_fallback(path)
 
 @app.route('/<path:path>')
 def spa_fallback(path):
+    """SPA 路由回退：所有未匹配路由返回 index.html，支持静态文件"""
     logger.info(f'[spa_fallback] path={path}')
-    # 检查是否为静态文件
     static_file = os.path.join(app.static_folder or '', path)
     if os.path.isfile(static_file):
         logger.info(f'[spa_fallback] serving static file: {static_file}')
         return app.send_static_file(path)
-    # 返回 index.html
     index_path = os.path.join(app.static_folder or '', 'index.html')
     logger.info(f'[spa_fallback] serving index.html, exists={os.path.isfile(index_path)}')
     with open(index_path, 'rb') as f:
         return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
 
-# 前端路由快捷方式
-@app.route('/overview')
-@app.route('/settings')
-@app.route('/wiki')
-@app.route('/console')
-@app.route('/memory')
-def spa_shortcut():
-    from flask import request
-    return spa_fallback(request.path.lstrip('/'))
-
 
 @app.route('/log', methods=['POST'])
 def log():
-    """接收前端日志"""
+    """接收前端日志并写入后端日志文件"""
     data = request.get_json() or {}
     level = data.get('level', 'info')
     message = data.get('message', '')
@@ -143,46 +156,17 @@ def log():
     return jsonify({"ok": True})
 
 
-@app.route('/logs', methods=['GET'])
-def get_logs():
-    """读取后端日志文件的最后 N 行"""
-    import glob
-    try:
-        log_dir = os.path.join(_PROJECT_ROOT, 'logs')
-        files = []
-        for pat in ('app_*.log', 'flask_*.log', 'ui_*.log'):
-            files.extend(glob.glob(os.path.join(log_dir, pat)))
-        if not files:
-            return jsonify({"lines": [], "file": None})
-
-        log_file = max(files, key=os.path.getmtime)
-        lines_param = request.args.get('lines', '300', type=int)
-        lines_param = min(max(lines_param, 10), 1000)
-
-        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-            all_lines = f.readlines()
-
-        tail = all_lines[-lines_param:] if len(all_lines) > lines_param else all_lines
-        return jsonify({
-            "lines": [l.rstrip() for l in tail],
-            "file": os.path.basename(log_file),
-            "total": len(all_lines),
-            "returned": len(tail),
-        })
-    except Exception as e:
-        logger.error(f"[API✗] /logs 失败: {e}")
-        return jsonify({"error": str(e), "lines": []})
 
 
 def _get_ui_settings_path():
-    """用户目录下的 UI 偏好配置"""
+    """获取用户目录下的 UI 偏好配置路径"""
     cfg_dir = os.path.join(os.path.expanduser("~"), ".aibrain", "config")
     os.makedirs(cfg_dir, exist_ok=True)
     return os.path.join(cfg_dir, "ui_settings.json")
 
 
 def _load_ui_settings() -> dict:
-    """加载 UI 设置（不存在则返回默认）"""
+    """从配置文件加载 UI 偏好设置，不存在则返回默认值"""
     path = _get_ui_settings_path()
     if os.path.exists(path):
         try:
@@ -190,7 +174,6 @@ def _load_ui_settings() -> dict:
                 return json.load(f)
         except Exception:
             pass
-    # 默认值
     return {
         "log_auto_refresh": True,
         "log_interval": 3,
@@ -199,7 +182,7 @@ def _load_ui_settings() -> dict:
 
 @app.route('/ui-settings', methods=['GET', 'POST'])
 def ui_settings():
-    """读取/保存 UI 偏好设置"""
+    """读取/保存 UI 偏好设置（日志自动刷新、刷新间隔）"""
     if request.method == 'GET':
         return jsonify(_load_ui_settings())
 
@@ -226,13 +209,12 @@ def ui_settings():
 
 @app.route('/console/commands')
 def get_console_commands():
-    """扫描 web/console 目录，返回所有 cmd_*.js 文件列表"""
+    """扫描 web/console 目录，返回所有可用的控制台命令列表"""
     import glob
     try:
         console_dir = os.path.join(_PROJECT_ROOT, 'web', 'console')
         pattern = os.path.join(console_dir, 'cmd_*.js')
         files = glob.glob(pattern)
-        # 只返回文件名，按字母排序
         commands = sorted([os.path.basename(f) for f in files])
         return jsonify({"commands": commands})
     except Exception as e:
@@ -242,7 +224,7 @@ def get_console_commands():
 
 @app.route('/console/poll', methods=['GET'])
 def poll_console_queue():
-    """MCP服务器写入的命令队列，供前端轮询"""
+    """轮询控制台命令队列，MCP 服务器写入命令，前端获取执行"""
     try:
         queue_file = os.path.join(os.path.expanduser("~"), ".aibrain", "console_queue.json")
         if os.path.exists(queue_file):
@@ -251,7 +233,6 @@ def poll_console_queue():
                     data = json.load(f)
                 return jsonify({"commands": data.get("commands", [])})
             except (json.JSONDecodeError, ValueError):
-                # 文件损坏/为空，重置
                 with open(queue_file, 'w', encoding='utf-8') as f:
                     json.dump({"commands": []}, f)
         return jsonify({"commands": []})
@@ -262,7 +243,7 @@ def poll_console_queue():
 
 @app.route('/console/poll', methods=['POST'])
 def clear_console_queue():
-    """清空命令队列（前端执行完成后调用）"""
+    """清空控制台命令队列，前端执行完命令后调用"""
     try:
         queue_file = os.path.join(os.path.expanduser("~"), ".aibrain", "console_queue.json")
         import tempfile
@@ -281,11 +262,12 @@ def clear_console_queue():
 # ── 预加载（模型 + Qdrant）────────────────────────────────
 
 def _preload():
+    """后台预加载：Qdrant 连接、mem0 初始化、模型加载、LightRAG 预热"""
     import time, urllib.request
 
     # ── 初始化用户配置目录 ─────────────────────────────────
-    from modules.settings_mod import AibrainConfigManager
-    AibrainConfigManager.get_instance().init_default_configs()
+    from core.settings import SettingsManager, ConfigManager
+    ConfigManager.get_instance().init_default_configs()
 
     # 重试连接 Qdrant（最多 20 秒）
     for attempt in range(10):
@@ -355,11 +337,25 @@ threading.Thread(target=_preload, daemon=True).start()
 # ── 启动 ───────────────────────────────────────────────────
 
 def start_flask():
-    """Flask 服务
-
-    FLASK_RELOAD=1: use_reloader=True（仅独立使用 start_flask.py 时）
-    FLASK_RELOAD=0(默认): use_reloader=False（由 ProcessManager 管理重启）
-    """
+    """启动 Flask HTTP 服务，监听 _FLASK_PORT 端口"""
+    _reload = os.environ.get('FLASK_RELOAD', '0') == '1'
+    if _reload:
+        logger.info("[Flask] Hot-reload: ON (use_reloader=True)")
+        app.run(
+            host='127.0.0.1',
+            port=_FLASK_PORT,
+            debug=False,
+            use_reloader=True,
+            reloader_interval=1,
+        )
+    else:
+        logger.info("[Flask] use_reloader=False (managed by ProcessManager)")
+        app.run(
+            host='127.0.0.1',
+            port=_FLASK_PORT,
+            debug=False,
+            use_reloader=False,
+        )
     _reload = os.environ.get('FLASK_RELOAD', '0') == '1'
     if _reload:
         logger.info("[Flask] Hot-reload: ON (use_reloader=True)")
@@ -381,10 +377,10 @@ def start_flask():
 
 
 def _wait_and_start_ui():
-    """Bootstrap：等 Flask+Qdrant 就绪后启动 PyWebView 窗口（主线程）"""
+    """等待 Flask 和 Qdrant 就绪后，在主线程启动 PyWebView 窗口"""
     import urllib.request, time as _time
 
-    # 等 Flask 就绪
+    # 等待 Flask HTTP 服务就绪
     logger.info('[bootstrap] Waiting for Flask...')
     for _ in range(60):
         try:
@@ -397,7 +393,7 @@ def _wait_and_start_ui():
         logger.error('[bootstrap] Flask failed to start')
         os._exit(1)
 
-    # 等 Qdrant 就绪
+    # 等待 Qdrant 向量数据库就绪
     logger.info('[bootstrap] Waiting for Qdrant...')
     for _ in range(30):
         if _ready.get("qdrant"):
@@ -407,10 +403,8 @@ def _wait_and_start_ui():
     else:
         logger.warning('[bootstrap] Qdrant not ready after 30s, continuing')
 
-    # 启动 PyWebView（必须在主线程！）
+    # 创建 PyWebView 窗口
     import webbrowser
-
-    ui_path = os.path.join(os.path.dirname(__file__), '..', 'web', 'index.html')
     project_name = os.path.basename(_PROJECT_ROOT)
 
     window = webview.create_window(
@@ -423,11 +417,13 @@ def _wait_and_start_ui():
     )
 
     def open_in_browser():
+        """在系统浏览器中打开当前页面"""
         webbrowser.open(f'http://127.0.0.1:{_FLASK_PORT}')
 
     window.expose(open_in_browser)
 
     def on_window_close():
+        """PyWebView 窗口关闭时：清理端口文件、停止 Qdrant 进程"""
         logger.info('Window closed, shutting down...')
         try:
             _pf = os.path.join(_PROJECT_ROOT, '.port')
@@ -450,7 +446,7 @@ def _wait_and_start_ui():
 
     window.events.closed += on_window_close
 
-    # ── 设置进程标题（任务管理器可识别）───────────────
+    # 设置控制台窗口标题（任务管理器可识别）
     try:
         import ctypes
         ctypes.windll.kernel32.SetConsoleTitleW(
@@ -459,11 +455,12 @@ def _wait_and_start_ui():
     except Exception:
         pass
 
-    # 阻塞主线程 — PyWebView 必须在主线程
+    # 阻塞主线程启动 PyWebView
     webview.start(debug=os.environ.get('WEBVIEW_DEBUG', '0') == '1')
 
 
 if __name__ == '__main__':
+    """程序入口：根据命令行参数选择启动模式"""
     import argparse
     try:
         import ctypes
@@ -480,15 +477,16 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.flask_only:
+        # 纯 Flask 模式（双进程模式下由 ProcessManager 管理）
         logger.info(f"[Flask-Only] Starting on port {_FLASK_PORT}")
         start_flask()
 
     elif args.webview_only:
-        # ── WebView-only 模式：主线程跑 PyWebView ─────────
+        # 纯 WebView 模式（等待独立 Flask 进程）
         _wait_and_start_ui()
 
     else:
-        # ── 兼容旧的单进程模式：Flask子线程 + WebView主线程 ─
+        # 单进程兼容模式：Flask 子线程 + WebView 主线程
         _port_file = os.path.join(_PROJECT_ROOT, '.port')
         try:
             with open(_port_file, 'w') as pf:
