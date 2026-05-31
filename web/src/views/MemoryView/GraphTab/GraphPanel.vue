@@ -2,14 +2,43 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { memoryViewModel } from '../index'
 import ForceGraph from 'force-graph'
+import { useApi } from '@/composables/useApi'
 
 const vm = memoryViewModel
+const api = useApi()
 const containerRef = ref<HTMLDivElement | null>(null)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let graph: any = null
 let resizeObserver: ResizeObserver | null = null
 
-// ── 星空背景 ──────────────────────────────────────────────
+// 状态管理
+const showLabels = ref(true)
+const showParticles = ref<boolean | null>(null) // null = 未加载，onMounted 从后端读取
+
+async function loadAnimationState() {
+  try {
+    const res = await api.fetchJson<{ showGraphAnimation: boolean }>('/memory/settings')
+    showParticles.value = res.showGraphAnimation
+  } catch {
+    showParticles.value = true // 读取失败默认开启
+  }
+}
+
+async function handleAnimationToggle() {
+  if (showParticles.value === null) return
+  const newValue = !showParticles.value
+  showParticles.value = newValue
+  // 重建图谱应用粒子数量变化
+  if (graph) buildGraph()
+  // 持久化到后端
+  try {
+    await api.postJson('/memory/settings', { showGraphAnimation: newValue })
+  } catch {
+    // 静默失败，用户已经看到效果
+  }
+}
+
+// 星空背景
 type Star = { x: number; y: number; r: number; base: number; phase: number; speed: number }
 let stars: Star[] = []
 
@@ -24,22 +53,22 @@ function generateStars(w: number, h: number) {
   }))
 }
 
-// ── 节点颜色 ──────────────────────────────────────────────
+// 节点颜色
 // 固定类型颜色（锚点节点）
 const typeColors: Record<string, string> = {
   user: '#5B8FF9',  // 蓝
   self: '#F6BD16',  // 金黄
-  rule: '#E86452',  // 珊瑚红
+  rule: '#E86452',  // 珊瑚
   exp:  '#6DC8EC',  // 天蓝
 }
 
 // concept 节点：按连接数冷→暖渐变（热力色温）
-// 0% 冷蓝 → 33% 青绿 → 66% 琥珀 → 100% 玫瑰红
+// 0% 冷蓝 33% 青绿 66% 琥珀 100% 玫瑰
 const heatStops: Array<[number, number, number]> = [
-  [100, 140, 255],  // 冷蓝   ← 连接少
-  [ 56, 211, 159],  // 翡翠绿
-  [251, 191,  36],  // 琥珀黄
-  [249, 115, 148],  // 玫瑰红 ← 连接多
+  [100, 140, 255],  // 冷蓝  低连接
+  [ 56, 211, 159],  // 青绿
+  [251, 191,  36],  // 琥珀
+  [249, 115, 148],  // 玫瑰 高连接
 ]
 
 function lerpHeat(t: number): string {
@@ -55,14 +84,14 @@ function lerpHeat(t: number): string {
   return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`
 }
 
-// hex → [r,g,b]
+// hex 转 [r,g,b]
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
   return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)]
 }
 
-// ── 构建图谱 ───────────────────────────────────────────────
+// 构建图谱
 function buildGraph() {
   if (!containerRef.value) return
   const data = vm.graphTab.graphData.value
@@ -112,7 +141,7 @@ function buildGraph() {
     .nodeColor('color')
     .nodeRelSize(1)
 
-    // ── 背景星空 ──
+    // 背景星空
     .onRenderFramePre((ctx: CanvasRenderingContext2D) => {
       const canvas = ctx.canvas
       const dpr = window.devicePixelRatio || 1
@@ -137,7 +166,7 @@ function buildGraph() {
         ctx.fillStyle = `rgba(200,220,255,${opacity})`
         ctx.fill()
       }
-      // 星云晕染（左上 + 右下两团）
+      // 星云晕染（左侧 + 右下两团）
       const nebula1 = ctx.createRadialGradient(w * 0.2, h * 0.25, 0, w * 0.2, h * 0.25, w * 0.28)
       nebula1.addColorStop(0, 'rgba(80,60,160,0.06)')
       nebula1.addColorStop(1, 'transparent')
@@ -150,10 +179,10 @@ function buildGraph() {
       ctx.restore()
     })
 
-    // ── 连线 ──
+    // 连线
     .linkColor(() => 'rgba(100,160,255,0.18)')
     .linkWidth(0.7)
-    .linkDirectionalParticles(2)
+    .linkDirectionalParticles(showParticles.value !== false ? 2 : 0)
     .linkDirectionalParticleWidth(1.8)
     .linkDirectionalParticleSpeed((link: any) => link.speed)
     .linkDirectionalParticleCanvasObject((x: number, y: number, link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -215,7 +244,7 @@ function buildGraph() {
       ctx.restore()
     })
 
-    // ── 节点：多层光晕 ──
+    // 节点：多层光晕
     .nodeCanvasObject((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (node.x == null || node.y == null) return
       const size  = Math.sqrt(Math.max(1, node.val)) * 0.4 + 4
@@ -223,42 +252,44 @@ function buildGraph() {
       const [nr, ng, nb] = hexToRgb(color)
       const rgb = `${nr},${ng},${nb}`
 
-      // 层 1：超大弥散晕
+      // 圈1：超大弥散晕
       const g1 = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, size * 5)
       g1.addColorStop(0, `rgba(${rgb},0.08)`)
       g1.addColorStop(1, 'transparent')
       ctx.beginPath(); ctx.arc(node.x, node.y, size * 5, 0, Math.PI * 2)
       ctx.fillStyle = g1; ctx.fill()
 
-      // 层 2：中光晕
+      // 圈2：中光晕
       const g2 = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, size * 2.5)
       g2.addColorStop(0, `rgba(${rgb},0.25)`)
       g2.addColorStop(1, 'transparent')
       ctx.beginPath(); ctx.arc(node.x, node.y, size * 2.5, 0, Math.PI * 2)
       ctx.fillStyle = g2; ctx.fill()
 
-      // 层 3：冠环
+      // 圈3：冠冕
       ctx.beginPath(); ctx.arc(node.x, node.y, size * 1.45, 0, Math.PI * 2)
       ctx.fillStyle = `rgba(${rgb},0.35)`; ctx.fill()
 
-      // 层 4：实体核心（径向渐变，中心亮）
+      // 圈4：实体核心（径向渐变，中心亮）
       const g4 = ctx.createRadialGradient(node.x - size * 0.2, node.y - size * 0.2, 0, node.x, node.y, size)
       g4.addColorStop(0, `rgba(${Math.min(255, nr + 60)},${Math.min(255, ng + 60)},${Math.min(255, nb + 60)},1)`)
       g4.addColorStop(1, `rgba(${nr},${ng},${nb},1)`)
       ctx.beginPath(); ctx.arc(node.x, node.y, size, 0, Math.PI * 2)
       ctx.fillStyle = g4; ctx.fill()
 
-      // 标签（带发光）
-      const label    = String(node.label || node.id || '')
-      const fontSize = Math.min(13, Math.max(7, 11 / globalScale))
-      ctx.font         = `${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
-      ctx.textAlign    = 'center'
-      ctx.textBaseline = 'top'
-      ctx.shadowColor  = color
-      ctx.shadowBlur   = 6
-      ctx.fillStyle    = 'rgba(220,235,255,0.92)'
-      ctx.fillText(label, node.x, node.y + size * 1.5 + 1)
-      ctx.shadowBlur = 0
+      // Label (toggleable)
+      if (showLabels.value) {
+        const label    = String(node.label || node.id || '')
+        const fontSize = Math.min(13, Math.max(7, 11 / globalScale))
+        ctx.font         = `${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
+        ctx.textAlign    = 'center'
+        ctx.textBaseline = 'top'
+        ctx.shadowColor  = color
+        ctx.shadowBlur   = 6
+        ctx.fillStyle    = 'rgba(220,235,255,0.92)'
+        ctx.fillText(label, node.x, node.y + size * 1.5 + 1)
+        ctx.shadowBlur = 0
+      }
     })
     .nodeCanvasObjectMode(() => 'replace')
     .nodePointerAreaPaint((node: any, color: string, ctx: CanvasRenderingContext2D) => {
@@ -287,7 +318,7 @@ function buildGraph() {
   setupRightClickPan()
 }
 
-// ── 右键平移 ───────────────────────────────────────────────
+// 右键平移
 function setupRightClickPan() {
   const container = containerRef.value
   if (!container) return
@@ -316,7 +347,7 @@ function setupRightClickPan() {
   })
 }
 
-// ── 侦听 ───────────────────────────────────────────────────
+// 侦听
 watch(() => vm.graphTab.graphData.value, () => {
   if (vm.currentTab.value === 'graph') setTimeout(buildGraph, 150)
 })
@@ -327,6 +358,7 @@ watch(() => vm.currentTab.value, tab => {
 })
 
 onMounted(() => {
+  loadAnimationState() // 从后端加载动画开关状态
   if (vm.currentTab.value === 'graph') {
     if (!vm.graphTab.graphData.value.nodes.length) vm.graphTab.loadGraph()
     else setTimeout(buildGraph, 150)
@@ -356,6 +388,8 @@ function handleRefresh() { vm.graphTab.loadGraph() }
         节点: {{ vm.graphTab.graphData.value.nodes.length }} |
         关系: {{ vm.graphTab.graphData.value.edges.length }}
       </span>
+      <button class="btn-toggle" :class="{ active: showLabels }" @click="showLabels = !showLabels" title="Show/Hide Labels">标</button>
+      <button class="btn-toggle" :class="{ active: showParticles }" @click="handleAnimationToggle" title="Show/Hide Animation">动</button>
       <button class="btn-refresh" @click="handleRefresh" :disabled="vm.graphTab.loading.value">
         {{ vm.graphTab.loading.value ? '加载中...' : '刷新' }}
       </button>
@@ -408,6 +442,26 @@ function handleRefresh() { vm.graphTab.loadGraph() }
   box-shadow: 0 0 10px rgba(80, 130, 255, 0.2);
 }
 .btn-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-toggle {
+  padding: 4px 10px;
+  border: 1px solid rgba(100, 140, 220, 0.25);
+  border-radius: 6px;
+  background: rgba(30, 50, 100, 0.3);
+  color: rgba(140, 170, 220, 0.8);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.btn-toggle:hover {
+  background: rgba(60, 90, 180, 0.35);
+  color: #c8d8f0;
+}
+.btn-toggle.active {
+  background: rgba(80, 140, 255, 0.25);
+  border-color: rgba(100, 160, 255, 0.5);
+  color: #fff;
+}
 .graph-container {
   flex: 1;
   min-height: 400px;

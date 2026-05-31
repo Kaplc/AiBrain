@@ -21,6 +21,7 @@ _SETTINGS_PATH = os.path.join(
 
 _DEFAULT_MEMORY_SETTINGS: dict = {
     "infer": True,
+    "showGraphAnimation": True,
 }
 
 
@@ -34,6 +35,8 @@ def _load_settings_from_disk() -> dict:
             result = dict(_DEFAULT_MEMORY_SETTINGS)
             if "infer" in data:
                 result["infer"] = bool(data["infer"])
+            if "showGraphAnimation" in data:
+                result["showGraphAnimation"] = bool(data["showGraphAnimation"])
             logger.info(f"[memory_settings] loaded from disk: {result}")
             return result
     except Exception as e:
@@ -65,6 +68,8 @@ def update_memory_settings(data: dict) -> dict:
     """更新记忆设置（仅覆盖已知字段），持久化到磁盘，返回更新后的设置"""
     if "infer" in data:
         _memory_settings["infer"] = bool(data["infer"])
+    if "showGraphAnimation" in data:
+        _memory_settings["showGraphAnimation"] = bool(data["showGraphAnimation"])
     _save_settings_to_disk(_memory_settings)
     logger.info(f"[memory_settings] updated: {_memory_settings}")
     return get_memory_settings()
@@ -195,26 +200,46 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
     stored_texts = added + updated
     msg = f"已记住: {', '.join(parts)}" if parts else "已处理"
 
-    # ── 图层：链接新记忆到实体 ──
-    try:
-        from modules.brain.graph import get_graph
-        graph = get_graph()
-        if graph:
-            link_entities = None
-            if memory_meta and isinstance(memory_meta, dict):
-                link_entities = memory_meta.get("link_entities")
-            for ev in events:
-                if ev.get("event") == "ADD" and ev.get("id"):
-                    graph.link_memory(ev["id"], ev["memory"], link_entities=link_entities)
-                    logger.info(f"[memory:graph] link_memory 调用完成 | mem0_id={ev['id'][:8]} | link_entities={link_entities}")
-    except Exception as e:
-        logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
+    # ── 图层：LLM 提取实体，链接新记忆到实体网络（仅 LLM 模式） ──
+    if use_infer:
+        all_entity_names = []
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if graph:
+                for ev in events:
+                    if ev.get("event") == "ADD" and ev.get("id"):
+                        mem_text = ev.get("memory", "")
+                        auto_entity_names = []
+                        root_entity = '用户'
+                        try:
+                            from modules.brain.llm import extract_entities_llm
+                            result = extract_entities_llm(mem_text)
+                            auto_entity_names = result.get("entities", [])
+                            root_entity = result.get("root", "用户")
+                        except Exception:
+                            pass
+                        if not auto_entity_names:
+                            logger.info(f"[store_memory] 实体提取为空，跳过图节点 | mem0_id={ev['id'][:8]}")
+                            continue
+                        logger.info(f"[store_memory] 实体提取(llm) | mem0_id={ev['id'][:8]} | entities={auto_entity_names} | root={root_entity}")
+                        graph.link_memory(ev["id"], mem_text, link_entities=auto_entity_names, root_entity=root_entity)
+                        all_entity_names.extend(auto_entity_names)
+                        # 增量更新实体计数
+                        graph.increment_entity_counts(auto_entity_names)
+                        logger.info(f"[store_memory] link_memory 完成 | mem0_id={ev['id'][:8]} | 实体数={len(auto_entity_names)} | root={root_entity}")
+        except Exception as e:
+            logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
+    else:
+        all_entity_names = []
+        logger.info("[store_memory] LLM模式关闭，跳过实体提取和图层链接")
 
     return {
         "result": msg,
         "stored_texts": stored_texts,
         "added_count": len(added),
         "deleted_count": len(deleted),
+        "entities": list(dict.fromkeys(all_entity_names)),
     }
 
 
@@ -254,6 +279,7 @@ def search_memory(query: str) -> list[dict]:
             "id": r.get("id"),
             "text": r["memory"],
             "score": round(r.get("score", 0), 4),
+            "source": "semantic",
         })
     memories.sort(key=lambda x: x["score"], reverse=True)
 
@@ -274,52 +300,64 @@ def search_memory(query: str) -> list[dict]:
                     "id": r.get("id"),
                     "text": r["memory"],
                     "score": round(r.get("score", 0), 4),
+                    "source": "semantic",
                 })
                 seen_ids.add(r.get("id"))
         memories.sort(key=lambda x: x["score"], reverse=True)
         memories = memories[:MIN_COUNT]
 
-    # ── 图层：实体信息 + 关联记忆扩展 ──
-    try:
-        from modules.brain.graph import get_graph
-        graph = get_graph()
-        if graph:
-            mem_ids = [m["id"] for m in memories if m.get("id")]
-            logger.info(f"[memory:graph] 开始关联记忆扩展 | 向量命中 {len(mem_ids)} 条 | query={query[:50]!r}")
-            # 附上每条记忆的关联实体
-            entity_map = graph.get_entities_for_memories(mem_ids)
-            for m in memories:
-                m["entities"] = entity_map.get(m["id"], [])
-                # 无实体记忆自动关联到根实体"用户"做兜底
-                if not m["entities"]:
-                    graph.link_if_no_entities(m["id"], m["text"])
-            logger.info(f"[memory:graph] 实体映射完成 | {len(entity_map)} 条记忆有实体关联")
-            # 图扩展找关联记忆
-            related = graph.search_related(mem_ids, max_hops=2)
-            if related:
-                seen = {m["id"] for m in memories}
-                new_related = [r for r in related if r["id"] not in seen]
-                logger.info(f"[memory:graph] 图扩展发现 {len(related)} 条关联记忆 | 其中 {len(new_related)} 条新增（非向量命中）")
-                if new_related:
-                    # 用扩展搜索获取图结果的真实语义分数
-                    expanded = client.search(
-                        query=query, filters=filters, top_k=100, threshold=0.0,
-                    )
-                    score_map = {
-                        r.get("id"): round(r.get("score", 0), 4)
-                        for r in expanded.get("results", [])
-                    }
-                    for r in new_related:
-                        r["score"] = score_map.get(r["id"], 0.1)
-                        r["source"] = "graph"
-                        r["entities"] = entity_map.get(r["id"], [])
-                        memories.append(r)
-                    logger.info(f"[memory:graph] 关联记忆追加完成 | 新增 {len(new_related)} 条 | 内容: {[(r['id'][:8], r['text'][:30]) for r in new_related]}")
-                    memories.sort(key=lambda x: x["score"], reverse=True)
-            else:
-                logger.info(f"[memory:graph] 图扩展无关联记忆 | 向量命中 {len(memories)} 条直接返回")
-    except Exception as e:
-        logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
+    # ── 图层：实体信息 + mentions 共现召回 + LLM 过滤（仅 LLM 模式） ──
+    use_infer = _memory_settings.get("infer", True)
+    if use_infer:
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if graph:
+                mem_ids = [m["id"] for m in memories if m.get("id")]
+                logger.info(f"[memory:graph] 开始关联记忆扩展 | 向量命中 {len(mem_ids)} 条 | query={query[:50]!r}")
+                # 附上每条记忆的关联实体
+                entity_map = graph.get_entities_for_memories(mem_ids)
+                all_entities = []
+                for m in memories:
+                    m["entities"] = entity_map.get(m["id"], [])
+                    all_entities.extend(m["entities"])
+                all_entities = list(dict.fromkeys(all_entities))
+                logger.info(f"[memory:graph] 实体映射完成 | {len(entity_map)} 条记忆有实体关联 | 总实体={len(all_entities)}")
+
+                # mentions 共现召回
+                candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=50)
+                if candidates:
+                    logger.info(f"[memory:graph] 共现召回 {len(candidates)} 条候选记忆 | 调用 LLM 过滤")
+                    for i, c in enumerate(candidates):
+                        logger.info(f"[memory:graph] 候选[{i}] co_count={c.get('co_count',0)} | {c['id'][:8]} | {c['text'][:80]}")
+                    # LLM 批量过滤
+                    from modules.brain.llm import filter_related_memories
+                    related_ids = filter_related_memories(query, candidates)
+                    if related_ids:
+                        related_map = {c["id"]: c for c in candidates}
+                        semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
+                        min_semantic = min(semantic_scores) if semantic_scores else 0.5
+                        graph_base_score = min_semantic * 0.8
+                        added = []
+                        for i, rid in enumerate(related_ids[:10]):
+                            c = related_map.get(rid)
+                            if c:
+                                c["score"] = round(graph_base_score - i * 0.001, 4)
+                                c["source"] = "graph"
+                                c["entities"] = entity_map.get(c["id"], [])
+                                added.append(c)
+                                memories.append(c)
+                        logger.info(f"[memory:graph] LLM 过滤后保留 {len(added)} 条 | 内容: {[(r['id'][:8], r['text'][:30]) for r in added]}")
+                    else:
+                        logger.info(f"[memory:graph] LLM 过滤后无相关记忆")
+                else:
+                    logger.info(f"[memory:graph] 共现召回无候选记忆")
+        except Exception as e:
+            logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
+    else:
+        logger.info("[memory:search] LLM模式关闭，跳过图增强搜索（纯向量结果）")
+        for m in memories:
+            m["entities"] = []
 
     return memories
 
@@ -424,6 +462,21 @@ def dedup_memories(threshold: float = 0.85) -> dict:
 
 def refine_memories(groups: list[dict]) -> dict:
     """LLM 精炼合并相似记忆组（两步法第二步）"""
+    use_infer = _memory_settings.get("infer", True)
+    if not use_infer:
+        # 纯向量模式：返回空结果 + hint，前端手动处理
+        return {
+            "refined": [
+                {
+                    "group_id": group.get("group_id", 0),
+                    "refined_text": "",
+                    "category": "reference",
+                    "refined": False,
+                    "hint": "LLM模式已关闭，请手动编辑合并文本",
+                }
+                for group in groups
+            ]
+        }
     from .llm import refine_group
 
     refined = []
