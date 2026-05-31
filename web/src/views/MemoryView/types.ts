@@ -61,6 +61,7 @@ export class OrganizeGroupItem {
   /* refine：触发精炼（异步，结果写入 refinedText）
    * 流程：校验状态 → POST /memory/organize/refine → 解析返回的 refined_text 和 category → 更新状态
    * 错误处理：失败时写入 refineError，isRefining 复位
+   * 特殊：refined=false 且 refined_text 为空时，提示用户手动编辑
    */
   async refine(api: { postJson: Function }): Promise<void> {
     if (this.isRefining || this.isApplied) return
@@ -74,9 +75,23 @@ export class OrganizeGroupItem {
       if (r.error) throw new Error(r.error)
       const mapped = r.refined || []
       if (mapped.length && mapped[0]) {
-        this.refinedText = mapped[0].refined_text || this.originalText()
-        this.category = mapped[0].category || 'reference'
-        this.isRefined = true
+        const item = mapped[0]
+        // LLM模式关闭时，refined_text为空，提示手动编辑
+        if (!item.refined && !item.refined_text) {
+          // 取时间最新的原始记忆作为默认文本（最新记忆通常更完整准确）
+          const sorted = [...this.memories].sort((a, b) =>
+            (b.timestamp || '').localeCompare(a.timestamp || '')
+          )
+          const top = sorted[0]
+          this.refinedText = top ? top.text : ''
+          this.category = item.category || 'reference'
+          this.refineError = item.hint || 'LLM模式已关闭，请手动编辑合并文本'
+          this.isRefined = true
+        } else {
+          this.refinedText = item.refined_text || this.originalText()
+          this.category = item.category || 'reference'
+          this.isRefined = true
+        }
       }
     } catch (e: any) {
       console.error('[OrganizeGroupItem] refine failed', e)

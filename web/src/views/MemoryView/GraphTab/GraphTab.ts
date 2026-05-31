@@ -12,6 +12,8 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string
   target: string
+  relationType: string
+  weight: number
 }
 
 export interface GraphData {

@@ -9,16 +9,16 @@ const settingsTab = memoryViewModel.settingsTab
     <div v-if="settingsTab.loading.value" class="panel-loading">加载中...</div>
 
     <template v-else>
-      <!-- ── 实体提取开关 ── -->
+      <!-- ── LLM 模式开关 ── -->
       <div class="settings-section">
         <div class="section-title">记忆存储模式</div>
 
         <div class="setting-row">
           <div class="setting-info">
-            <span class="setting-label">大模型实体提取（infer）</span>
+            <span class="setting-label">LLM 模式</span>
             <span class="setting-desc">
-              开启后，保存记忆时会调用大模型自动拆分/提取关键事实。<br>
-              关闭后，原文直接存入，不消耗大模型额度。
+              开启后，保存时调用大模型拆分事实+提取实体，搜索时启用图增强，合并时支持AI精炼。<br>
+              关闭后，全部操作仅依赖向量相似度，不消耗大模型额度。
             </span>
           </div>
           <label class="toggle-switch">
@@ -31,10 +31,10 @@ const settingsTab = memoryViewModel.settingsTab
 
         <div class="infer-hint" :class="settingsTab.form.infer ? 'hint-on' : 'hint-off'">
           <template v-if="settingsTab.form.infer">
-            ✨ 当前：<b>智能模式</b> — mem0 调用大模型提取实体，自动合并重复记忆
+            ✨ 当前：<b>智能模式</b> — 大模型提取实体 + 图增强搜索 + AI精炼合并
           </template>
           <template v-else>
-            ⚡ 当前：<b>直存模式</b> — 原文直接写入，不调用大模型（节省 token）
+            ⚡ 当前：<b>纯向量模式</b> — 搜索/保存/精炼均不调用大模型
           </template>
         </div>
       </div>

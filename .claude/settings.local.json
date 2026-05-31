@@ -187,7 +187,20 @@
       "Bash(npx vite *)",
       "Bash(sed -i \"s/.linkColor\\(\\(\\) => 'rgba\\(120,180,255,0.4\\)'\\)/.linkColor\\('rgba\\(120,180,255,0.4\\)'\\)/\" src/views/MemoryView/GraphTab/GraphPanel.vue)",
       "Bash(sed -i \"s/.linkDirectionalParticleColor\\(\\(\\) => '#8ED6FF'\\)/.linkDirectionalParticleColor\\('#8ED6FF'\\)/\" src/views/MemoryView/GraphTab/GraphPanel.vue)",
-      "Bash(node tests/graph-screenshot.js)"
+      "Bash(node tests/graph-screenshot.js)",
+      "Bash(mkdir -p \"C:/Users/Kaplc/.claude/skills/skl-playwright-test-workspace/iteration-1/memory-search/with_skill/outputs\")",
+      "Bash(mkdir -p \"C:/Users/Kaplc/.claude/skills/skl-playwright-test-workspace/iteration-1/memory-search/without_skill/outputs\")",
+      "Bash(mkdir -p \"C:/Users/Kaplc/.claude/skills/skl-playwright-test-workspace/iteration-1/overview-screenshot/with_skill/outputs\")",
+      "Bash(mkdir -p \"C:/Users/Kaplc/.claude/skills/skl-playwright-test-workspace/iteration-1/overview-screenshot/without_skill/outputs\")",
+      "Bash(mkdir -p \"C:/Users/Kaplc/.claude/skills/skl-playwright-test-workspace/iteration-1/tab-switch/with_skill/outputs\")",
+      "Bash(mkdir -p \"E:/Project/AiBrain/.claude/skl-playwright-test\")",
+      "Bash(cp \"C:/Users/Kaplc/.claude/skills/skl-playwright-test/SKILL.md\" \"E:/Project/AiBrain/.claude/skl-playwright-test/SKILL.md\")",
+      "Bash(PYTHONUTF8=1 python *)",
+      "Bash(start *)",
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(echo \"EXIT_CODE: $?\")",
+      "Bash(findstr \"19399\\\\|19400\\\\|19401\")",
+      "Bash(sqlite3 *)"
     ]
   },
   "enableAllProjectMcpServers": true,

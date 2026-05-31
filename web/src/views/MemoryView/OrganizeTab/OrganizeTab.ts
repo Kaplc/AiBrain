@@ -114,7 +114,11 @@ export class OrganizeTab {
     g.refineError = ''
     await g.refine(this._api)
     if (g.isRefined) {
-      this._toast.show('组 ' + (groupId + 1) + ' 合并完成')
+      if (g.refineError) {
+        this._toast.show('组 ' + (groupId + 1) + ' 已填充默认内容，请手动编辑')
+      } else {
+        this._toast.show('组 ' + (groupId + 1) + ' 合并完成')
+      }
     }
   }
 

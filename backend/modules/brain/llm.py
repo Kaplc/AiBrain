@@ -26,6 +26,51 @@ SYSTEM_PROMPT = """你是一个记忆整理助手。你的任务是将多条语�
 {"refined_text": "合并后的精炼文本", "category": "类型"}"""
 
 
+RELATION_TYPES = ["causal", "similar", "partof", "temporal", "contradicts", "associated"]
+
+RELATION_INFER_PROMPT = """你是一个实体关系分析助手。根据给定的记忆文本和其中出现的实体，推断实体之间的关系类型。
+
+可选关系类型：
+- causal: A 导致/引起 B
+- similar: A 与 B 相似/同类
+- partof: A 是 B 的一部分/属于 B
+- temporal: A 与 B 有时间先后关系
+- contradicts: A 与 B 矛盾/对立
+- associated: A 与 B 有一般性关联（默认类型）
+
+规则：
+1. 只推断有明确依据的关系，不确定的用 "associated"
+2. confidence 为 0-1 之间的浮点数，表示推断的可信度
+3. 实体对顺序不重要（双向关系）
+
+输出格式（严格遵守JSON数组）：
+[{"from": "实体A", "to": "实体B", "relation_type": "关系类型", "confidence": 0.8}]"""
+
+ENTITY_EXTRACT_PROMPT = """从文本中提取核心实体（1-5个），并判断记忆归属。
+
+实体类型：
+- 参与者：人名、机构名、项目名
+- 动作/事件：做的事、发生的事件
+- 结果/影响：产生的变化、影响的事物
+- 概念：技术栈、工具、框架
+
+归属分类（必填，只选一个）：
+- 用户：用户个人的经历、偏好、计划、感受
+- 自己：AI自身的行为、经验总结、决策
+- 事实：客观知识、规则、定义、技术文档
+- 经验：经验教训、最佳实践、踩坑记录
+
+规则：
+1. 最多提取5个实体，少了更好，没有可返回空数组
+2. 只提取名词性实体，不提取形容词或状态描述
+3. 不提取泛化词（如：一致性、维度、状态、生命周期、属性、标签、计数、写入、渲染、解析、进展、方面、事情、东西）
+4. 不提取字段名/变量名（如：entities、stats、store、config）
+5. 每个实体2-8个字，不要拆分复合词
+
+输出格式（严格遵守JSON，不要其他内容）：
+{"entities": ["实体1", "实体2"], "root": "用户"}"""
+
+
 def _load_llm_config() -> dict:
     """从 mem0.json 读取 LLM 配置"""
     from modules.brain.mem0_adapter import load_mem0_config
@@ -144,3 +189,183 @@ def refine_group(memories: list[dict]) -> dict:
             "category": "reference",
             "refined": False,
         }
+
+
+def _parse_relation_response(raw: str) -> list[dict]:
+    """Parse LLM response for relation inference"""
+    # Try direct parse
+    try:
+        result = json.loads(raw)
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting JSON array from code block
+    m = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Try finding first [...] in text
+    m = re.search(r"\[.*?\]", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning(f"[llm] relation JSON parse failed: {raw[:100]}")
+    return []
+
+
+def infer_relations(entities: list[str], memory_text: str) -> list[dict]:
+    """Call LLM to infer relation types between entities
+
+    Args:
+        entities: list of entity names
+        memory_text: the memory text providing context
+
+    Returns:
+        list of {"from": str, "to": str, "relation_type": str, "confidence": float}
+    """
+    if len(entities) < 2:
+        return []
+
+    entity_list = "\n".join(f"- {e}" for e in entities)
+    user_prompt = f"""记忆文本：{memory_text}
+
+出现的实体：
+{entity_list}
+
+请推断这些实体之间的关系，输出JSON数组。"""
+
+    try:
+        raw = call_llm(RELATION_INFER_PROMPT, user_prompt, timeout=15)
+        relations = _parse_relation_response(raw)
+        # Validate and filter
+        valid = []
+        entity_set = set(entities)
+        for r in relations:
+            if not isinstance(r, dict):
+                continue
+            fr = r.get("from", "")
+            to = r.get("to", "")
+            rel_type = r.get("relation_type", "associated")
+            conf = r.get("confidence", 0.5)
+            if fr in entity_set and to in entity_set and fr != to:
+                valid.append({
+                    "from": fr,
+                    "to": to,
+                    "relation_type": rel_type if rel_type in RELATION_TYPES else "associated",
+                    "confidence": min(1.0, max(0.0, float(conf))),
+                })
+        return valid
+    except Exception as e:
+        logger.warning(f"[llm] infer_relations failed: {e}")
+        return []
+
+
+def _parse_extract_response(raw: str) -> dict | None:
+    """解析 LLM 实体提取响应，成功返回 dict，失败返回 None"""
+    # 解析 JSON 对象
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        result = json.loads(m.group(0))
+        if isinstance(result, dict):
+            entities = result.get("entities", [])
+            entities = list(dict.fromkeys(e for e in entities if isinstance(e, str) and 2 <= len(e) <= 10))
+            root = result.get("root", "用户")
+            if root not in ("用户", "自己", "事实", "经验"):
+                root = "用户"
+            return {"entities": entities, "root": root}
+    # fallback: 尝试解析纯数组
+    m = re.search(r"\[.*?\]", raw, re.DOTALL)
+    if m:
+        result = json.loads(m.group(0))
+        if isinstance(result, list):
+            return {"entities": list(dict.fromkeys(e for e in result if isinstance(e, str) and 2 <= len(e) <= 10)), "root": "用户"}
+    return None
+
+
+def extract_entities_llm(text: str, max_retries: int = 5) -> dict:
+    """调用 LLM 提取实体名，JSON 解析失败自动重试"""
+    if not text or not text.strip():
+        return {"entities": [], "root": "用户"}
+    for attempt in range(1, max_retries + 1):
+        try:
+            raw = call_llm(ENTITY_EXTRACT_PROMPT, f"文本：{text}", timeout=30)
+            result = _parse_extract_response(raw)
+            if result:
+                return result
+            logger.warning(f"[llm] extract_entities parse failed (attempt {attempt}/{max_retries}) | raw={raw[:100]}")
+        except Exception as e:
+            logger.warning(f"[llm] extract_entities call failed (attempt {attempt}/{max_retries}): {e}")
+    logger.warning(f"[llm] extract_entities all {max_retries} attempts failed")
+    return {"entities": [], "root": "用户"}
+
+
+FILTER_RELATED_PROMPT = """你是一个记忆相关性判断助手。给定一个搜索 query 和一组候选记忆，选出最多10条最相关的记忆。
+
+规则：
+1. 相关 = 记忆内容和 query 的主题/人物/事件有直接联系
+2. 按相关度从高到低排序，最相关的排在前面
+3. 最多返回10条，不足10条就只返回有的
+4. 宁可漏掉也不要误判不相关的记忆
+
+输出格式（严格遵守JSON，不要其他内容）：
+{"related": [3, 0, 7, 2, 5]}"""
+
+
+def _parse_filter_response(raw: str, candidate_count: int) -> list[int]:
+    """解析 LLM 过滤响应，返回相关记忆的编号列表"""
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            result = json.loads(m.group(0))
+            if isinstance(result, dict) and "related" in result:
+                indices = result["related"]
+                if isinstance(indices, list):
+                    return [i for i in indices if isinstance(i, int) and 0 <= i < candidate_count]
+        except json.JSONDecodeError:
+            pass
+    # fallback: 尝试从文本中提取数字
+    numbers = re.findall(r'\b(\d+)\b', raw)
+    return [int(n) for n in numbers if int(n) < candidate_count]
+
+
+def filter_related_memories(query: str, candidates: list[dict], max_retries: int = 5) -> list[str]:
+    """打包候选记忆，一次 LLM 调用返回相关记忆的 ID 列表。重试5次，失败降级返回空列表。
+
+    Args:
+        query: 搜索 query
+        candidates: [{"id": "...", "text": "...", ...}, ...]
+
+    Returns:
+        相关记忆的 ID 列表
+    """
+    if not candidates:
+        return []
+
+    candidate_lines = "\n".join(
+        f"{i}. {c['text'][:120]}"
+        for i, c in enumerate(candidates)
+    )
+    user_prompt = f"Query: {query}\n\n候选记忆:\n{candidate_lines}\n\n请判断哪些记忆和 query 意图相关，返回相关记忆的编号列表。"
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            raw = call_llm(FILTER_RELATED_PROMPT, user_prompt, timeout=15)
+            indices = _parse_filter_response(raw, len(candidates))
+            if indices is not None:
+                related_ids = [candidates[i]["id"] for i in indices if i < len(candidates)]
+                logger.info(f"[llm:filter] query={query[:30]!r} | candidates={len(candidates)} | related={len(related_ids)} | attempt={attempt}")
+                return related_ids
+            logger.warning(f"[llm:filter] parse failed (attempt {attempt}/{max_retries}) | raw={raw[:100]}")
+        except Exception as e:
+            logger.warning(f"[llm:filter] call failed (attempt {attempt}/{max_retries}): {e}")
+
+    logger.warning(f"[llm:filter] all {max_retries} attempts failed, returning empty")
+    return []

@@ -13,14 +13,27 @@ from modules.brain.dedup import dedup_memories_iter, _dedup_pause_flag, _dedup_s
 logger = logging.getLogger('memory')
 
 
-def _search_all_categories(query: str) -> list[dict]:
-    """搜索所有记忆，按 score 排序取前15条"""
+def _search_all_categories(query: str) -> dict:
+    """搜索所有记忆，按 score 排序取前15条，返回 results + stats"""
     try:
         results = search_memory(query)
-        return sorted(results, key=lambda x: x['score'], reverse=True)[:15]
+        # 语义结果最多15条，图结果最多10条，合计25条
+        semantic = [r for r in results if r.get('source') == 'semantic']
+        graph = [r for r in results if r.get('source') == 'graph']
+        semantic = sorted(semantic, key=lambda x: x['score'], reverse=True)[:15]
+        graph = sorted(graph, key=lambda x: x['score'], reverse=True)[:10]
+        sorted_results = semantic + graph
+        return {
+            "results": sorted_results,
+            "stats": {
+                "total": len(sorted_results),
+                "semantic": len(semantic),
+                "entity": len(graph),
+            }
+        }
     except Exception as e:
         logger.warning(f"search failed: {e}")
-        return []
+        return {"results": [], "stats": {"total": 0, "semantic": 0, "entity": 0}}
 
 
 def register(app, ready_state, logger, stats_db):
@@ -33,21 +46,14 @@ def register(app, ready_state, logger, stats_db):
         if not text:
             return jsonify({"error": "内容不能为空"})
         try:
-            link_entities = None
-            if memory_meta and isinstance(memory_meta, dict):
-                link_entities = memory_meta.get('link_entities')
-            if not link_entities or len(link_entities) == 0:
-                stats_db.append_stream('store', content=text[:500], status='error', entities='')
-                return jsonify({"error": "存入记忆必须关联至少一个实体，请传入 memory_meta.link_entities"})
-            entities_str = ','.join(link_entities)
-
             result = store_memory(text, memory_meta)
             logger.info(f"[memory/store] result={result}")
             stats_db.record_action(
                 added=result.get('added_count', 0),
                 deleted=result.get('deleted_count', 0),
             )
-            stats_db.append_stream('store', content=text[:500], status='done', entities=entities_str)
+            entities = result.get('entities', [])
+            stats_db.append_stream('store', content=text[:500], status='done', entities=','.join(entities))
             return jsonify(result)
         except Exception as e:
             logger.error(f"[memory/store] error: {e}")
@@ -63,10 +69,10 @@ def register(app, ready_state, logger, stats_db):
         if not query:
             return jsonify({"results": []})
         try:
-            results = _search_all_categories(query)
+            search_data = _search_all_categories(query)
             if not is_mcp:
                 stats_db.add_search_history(query)
-            return jsonify({"results": results})
+            return jsonify({"results": search_data["results"], "stats": search_data["stats"]})
         except Exception as e:
             return jsonify({"error": str(e), "results": []})
 
@@ -74,47 +80,23 @@ def register(app, ready_state, logger, stats_db):
     def mcp_store():
         data = request.get_json()
         text = (data or {}).get('text', '').strip()
-        link_entities = (data or {}).get('link_entities')
         if not text:
             return jsonify({"error": "内容不能为空"})
-        if not link_entities or len(link_entities) == 0:
-            stats_db.append_stream('store', content=text[:500], status='error', entities='')
-            return jsonify({"error": "存入记忆必须关联至少一个实体，请传入 link_entities 参数"})
-
-        # 同步验证：旧实体必须存在、新实体必须不存在
-        try:
-            from modules.brain.graph import get_graph
-            graph = get_graph()
-            if graph:
-                for item in link_entities:
-                    if '-' in item:
-                        old_e, new_e = item.split('-', 1)
-                        old_e = old_e.strip()
-                        new_e = new_e.strip()
-                    else:
-                        old_e = None
-                        new_e = item.strip()
-                    if old_e:
-                        if not graph._exec("SELECT 1 FROM entity_nodes WHERE name = ?", (old_e,)):
-                            return jsonify({"error": f"旧实体「{old_e}」不存在，必须先创建或使用已有实体"})
-                    if new_e:
-                        if graph._exec("SELECT 1 FROM entity_nodes WHERE name = ?", (new_e,)):
-                            return jsonify({"error": f"新实体「{new_e}」已存在，不能重复关联，请使用新的实体名"})
-        except Exception as e:
-            logger.warning(f"[memory/mcp/store] 实体验证异常: {e}")
 
         rowid = stats_db.append_stream('store', content=text, status='pending')
 
         def _bg_store():
             try:
-                meta = {"source": "mcp", "link_entities": link_entities}
+                meta = {"source": "mcp"}
                 result = store_memory(text, memory_meta=meta)
                 stored = result.get("stored_texts", [])
                 if stored:
                     new_content = "\n".join(f"• {t}" for t in stored)
                     stats_db.update_stream_content(rowid, new_content)
-                entities_str = ",".join(link_entities)
-                stats_db.update_stream_entities(rowid, entities_str)
+                # 写入关联实体到 stream
+                entities = result.get("entities", [])
+                if entities:
+                    stats_db.update_stream_entities(rowid, ','.join(entities))
                 stats_db.record_action(
                     added=result.get('added_count', 0),
                     deleted=result.get('deleted_count', 0),
@@ -133,11 +115,18 @@ def register(app, ready_state, logger, stats_db):
         query = (data or {}).get('query', '').strip()
         if not query:
             return jsonify({"error": "搜索关键词不能为空"})
+        rowid = stats_db.append_stream('search', content=query, status='pending')
         try:
-            results = _search_all_categories(query)
-            stats_db.append_stream('search', content=query)
-            return jsonify({"results": results})
+            search_data = _search_all_categories(query)
+            results = search_data["results"]
+            stats = search_data["stats"]
+            # 写入搜索统计到 stream entities 字段
+            entities_str = f"语义搜索:{stats['semantic']},实体网络:{stats['entity']}"
+            stats_db.update_stream_entities(rowid, entities_str)
+            stats_db.update_stream_status(rowid, 'done')
+            return jsonify({"results": results, "stats": stats})
         except Exception as e:
+            stats_db.update_stream_status(rowid, 'error')
             return jsonify({"error": str(e), "results": []})
 
     @app.route('/memory/list', methods=['POST'])
@@ -404,4 +393,159 @@ def register(app, ready_state, logger, stats_db):
             return jsonify(result)
         except Exception as e:
             logger.error(f"[memory/graph/link] error: {e}")
+            return jsonify({"error": str(e)})
+    @app.route('/memory/graph/merge', methods=['POST'])
+    def graph_merge_entities():
+        """合并两个实体，entity_b 的所有关联迁移到 entity_a"""
+        data = request.get_json() or {}
+        entity_a = (data.get('entity_a', '')).strip()
+        entity_b = (data.get('entity_b', '')).strip()
+        if not entity_a or not entity_b:
+            return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if not graph:
+                return jsonify({"error": "图数据库未初始化"})
+            graph.merge_entities(entity_a, entity_b)
+            return jsonify({"success": True, "message": f"已将实体「{entity_b}」合并到「{entity_a}」"})
+        except Exception as e:
+            logger.error(f"[memory/graph/merge] error: {e}")
+            return jsonify({"error": str(e)})
+
+    @app.route('/memory/entity/stats', methods=['GET'])
+    def entity_stats():
+        """返回实体相关数据库统计和 NetworkX 内存图状态"""
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if not graph:
+                return jsonify({
+                    "entity_nodes": 0, "mentions": 0,
+                    "memory_relations": 0, "typed_entity_relations": 0,
+                    "graph_loaded": False, "graph_nodes": 0, "graph_edges": 0,
+                })
+            entity_nodes = graph._exec("SELECT COUNT(*) FROM entity_nodes")[0][0]
+            mentions = graph._exec("SELECT COUNT(*) FROM mentions")[0][0]
+            memory_relations = graph._exec("SELECT COUNT(*) FROM memory_relations")[0][0]
+            typed_entity_relations = graph._exec("SELECT COUNT(*) FROM typed_entity_relations")[0][0]
+            entity_relations = graph._exec("SELECT COUNT(*) FROM entity_relations")[0][0]
+            g = graph._graph
+            graph_loaded = g is not None
+            graph_nodes = g.number_of_nodes() if graph_loaded else 0
+            graph_edges = g.number_of_edges() if graph_loaded else 0
+            return jsonify({
+                "entity_nodes": entity_nodes,
+                "mentions": mentions,
+                "memory_relations": memory_relations,
+                "typed_entity_relations": typed_entity_relations,
+                "entity_relations": entity_relations,
+                "graph_loaded": graph_loaded,
+                "graph_nodes": graph_nodes,
+                "graph_edges": graph_edges,
+            })
+        except Exception as e:
+            logger.error(f"[memory/entity/stats] error: {e}")
+            return jsonify({
+                "entity_nodes": 0, "mentions": 0,
+                "memory_relations": 0, "typed_entity_relations": 0,
+                "entity_relations": 0,
+                "graph_loaded": False, "graph_nodes": 0, "graph_edges": 0,
+            })
+
+    @app.route('/memory/graph/rebuild-entity-counts', methods=['POST'])
+    def rebuild_entity_counts():
+        """全量重建实体计数器（从 mentions 表聚合），用于初始化或修复统计"""
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if graph:
+                graph.rebuild_entity_counts()
+                return jsonify({"ok": True})
+            return jsonify({"ok": False, "error": "graph not available"})
+        except Exception as e:
+            logger.error(f"[memory/rebuild-entity-counts] error: {e}")
+            return jsonify({"ok": False, "error": str(e)})
+
+    @app.route('/memory/entity/entitymgr', methods=['GET'])
+    def entitymgr_list():
+        """分页获取所有实体链接"""
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 20, type=int)
+        search = request.args.get('search', '', type=str)
+        offset = (page - 1) * page_size
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if not graph:
+                return jsonify({"error": "图数据库未初始化", "links": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
+
+            # 搜索条件
+            if search:
+                like_pattern = f'%{search}%'
+                count_result = graph._exec(
+                    "SELECT COUNT(*) FROM entity_relations WHERE from_entity LIKE ? OR to_entity LIKE ?",
+                    (like_pattern, like_pattern)
+                )
+                total = count_result[0][0] if count_result else 0
+                rows = graph._exec(
+                    "SELECT from_entity, to_entity FROM entity_relations WHERE from_entity LIKE ? OR to_entity LIKE ? ORDER BY rowid DESC LIMIT ? OFFSET ?",
+                    (like_pattern, like_pattern, page_size, offset)
+                )
+            else:
+                count_result = graph._exec("SELECT COUNT(*) FROM entity_relations")
+                total = count_result[0][0] if count_result else 0
+                rows = graph._exec(
+                    "SELECT from_entity, to_entity FROM entity_relations ORDER BY rowid DESC LIMIT ? OFFSET ?",
+                    (page_size, offset)
+                )
+
+            links = [{"entity_a": r[0], "entity_b": r[1]} for r in rows]
+            pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+            return jsonify({"links": links, "total": total, "page": page, "page_size": page_size, "pages": pages})
+        except Exception as e:
+            logger.error(f"[memory/entity/entitymgr] GET error: {e}")
+            return jsonify({"error": str(e), "links": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
+
+    @app.route('/memory/entity/entitymgr', methods=['POST'])
+    def entitymgr_add():
+        """添加实体链接，内部调用 graph.link_entities()"""
+        data = request.get_json() or {}
+        entity_a = (data.get('entity_a', '')).strip()
+        entity_b = (data.get('entity_b', '')).strip()
+        if not entity_a or not entity_b:
+            return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if not graph:
+                return jsonify({"error": "图数据库未初始化"})
+            result = graph.link_entities(entity_a, entity_b)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"[memory/entity/entitymgr] POST error: {e}")
+            return jsonify({"error": str(e)})
+
+    @app.route('/memory/entity/entitymgr', methods=['DELETE'])
+    def entitymgr_delete():
+        """删除两个实体之间的链接"""
+        data = request.get_json() or {}
+        entity_a = (data.get('entity_a', '')).strip()
+        entity_b = (data.get('entity_b', '')).strip()
+        if not entity_a or not entity_b:
+            return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
+        try:
+            from modules.brain.graph import get_graph
+            graph = get_graph()
+            if not graph:
+                return jsonify({"error": "图数据库未初始化"})
+            # 删除 (entity_a, entity_b) 和 (entity_b, entity_a) 两条记录
+            graph._exec("DELETE FROM entity_relations WHERE entity_a = ? AND link_entity = ?", (entity_a, entity_b))
+            graph._exec("DELETE FROM entity_relations WHERE entity_a = ? AND link_entity = ?", (entity_b, entity_a))
+            # 同时从 typed_entity_relations 删除
+            graph._exec("DELETE FROM typed_entity_relations WHERE entity_a = ? AND entity_b = ?", (entity_a, entity_b))
+            graph._exec("DELETE FROM typed_entity_relations WHERE entity_a = ? AND entity_b = ?", (entity_b, entity_a))
+            return jsonify({"success": True, "message": f"已删除实体「{entity_a}」与「{entity_b}」之间的链接"})
+        except Exception as e:
+            logger.error(f"[memory/entity/entitymgr] DELETE error: {e}")
             return jsonify({"error": str(e)})

@@ -6,6 +6,7 @@ import StorePanel from './StoreTab/StorePanel.vue'
 import OrganizePanel from './OrganizeTab/OrganizePanel.vue'
 import MemorySettingsPanel from './SettingsTab/MemorySettingsPanel.vue'
 import GraphPanel from './GraphTab/GraphPanel.vue'
+import EntityPanel from './EntityTab/EntityPanel.vue'
 
 onMounted(() => memoryViewModel.onMounted())
 onUnmounted(() => memoryViewModel.onUnmounted())
@@ -20,6 +21,7 @@ onUnmounted(() => memoryViewModel.onUnmounted())
         <button class="nav-tab" :class="{ active: memoryViewModel.currentTab.value === 'organize' }" @click="memoryViewModel.switchTab('organize')">合并记忆</button>
         <button class="nav-tab nav-tab-settings" :class="{ active: memoryViewModel.currentTab.value === 'settings' }" @click="memoryViewModel.switchTab('settings')" title="记忆设置">⚙ 设置</button>
         <button class="nav-tab" :class="{ active: memoryViewModel.currentTab.value === 'graph' }" @click="memoryViewModel.switchTab('graph')">图谱</button>
+        <button class="nav-tab" :class="{ active: memoryViewModel.currentTab.value === 'entity' }" @click="memoryViewModel.switchTab('entity')">实体</button>
       </div>
       <div class="nav-stat">
         <span class="stat-value">{{ memoryViewModel.animatingCount.value }}</span>
@@ -33,6 +35,7 @@ onUnmounted(() => memoryViewModel.onUnmounted())
     <OrganizePanel v-show="memoryViewModel.currentTab.value === 'organize'" />
     <MemorySettingsPanel v-show="memoryViewModel.currentTab.value === 'settings'" />
     <GraphPanel v-show="memoryViewModel.currentTab.value === 'graph'" />
+    <EntityPanel v-show="memoryViewModel.currentTab.value === 'entity'" />
   </div>
 </template>
 
