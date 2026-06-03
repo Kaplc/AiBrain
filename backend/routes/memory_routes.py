@@ -612,3 +612,193 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.error(f"[memory/graph/rebuild:log] 失败: {e}")
             return jsonify({"lines": [], "error": str(e)}), 500
+
+    # ── 事件记忆召回 API ──────────────────────────────────
+
+    @app.route('/memory/events/timeline', methods=['POST'])
+    def event_timeline():
+        """事件时间线，支持分页和情感过滤"""
+        data = request.get_json() or {}
+        limit = data.get('limit', 50)
+        offset = data.get('offset', 0)
+        emotion = data.get('emotion')  # optional filter
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"events": [], "total": 0})
+            events = es.get_recent_events(limit=10000)
+            if emotion:
+                events = [e for e in events if e.get("emotion") == emotion]
+            total = len(events)
+            events = events[offset:offset + limit]
+            return jsonify({"events": events, "total": total})
+        except Exception as e:
+            logger.error(f"[events/timeline] error: {e}")
+            return jsonify({"error": str(e), "events": [], "total": 0}), 500
+
+    @app.route('/memory/events/detail', methods=['POST'])
+    def event_detail():
+        """查看单个事件详情，包含链式关系和关联记忆"""
+        data = request.get_json() or {}
+        event_id = data.get('event_id', '').strip()
+        if not event_id:
+            return jsonify({"error": "缺少 event_id"}), 400
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            event = es.get_event_by_id(event_id)
+            if not event:
+                return jsonify({"error": "事件不存在"}), 404
+            chain = es.get_chain_for_event(event_id, max_depth=3)
+            mem_ids = es.get_memories_for_events([event_id])
+            return jsonify({
+                "event": event,
+                "chain": chain,
+                "related_memory_ids": mem_ids,
+            })
+        except Exception as e:
+            logger.error(f"[events/detail] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/events/stats', methods=['GET'])
+    def event_stats():
+        """事件系统统计"""
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            return jsonify(es.get_event_stats())
+        except Exception as e:
+            logger.error(f"[events/stats] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    # ── 测试/调试 API ──────────────────────────────────
+
+    @app.route('/memory/events/test/extract', methods=['POST'])
+    def event_test_extract():
+        """手动触发事件提取（调试用）"""
+        data = request.get_json() or {}
+        memory_id = data.get('memory_id', '')
+        text = data.get('text', '')
+        if not text:
+            return jsonify({"error": "缺少 text"}), 400
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            new_ids = es.extract_events_from_memory(memory_id or "test_manual", text)
+            events = []
+            for eid in new_ids:
+                ev = es.get_event_by_id(eid)
+                if ev:
+                    events.append(ev)
+            return jsonify({"event_ids": new_ids, "events": events})
+        except Exception as e:
+            logger.error(f"[events/test/extract] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/events/test/chain', methods=['POST'])
+    def event_test_chain():
+        """手动触发链推断（调试用）"""
+        data = request.get_json() or {}
+        event_ids = data.get('event_ids', [])
+        if not event_ids:
+            return jsonify({"error": "缺少 event_ids"}), 400
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            es.infer_event_chains(event_ids)
+            # 返回更新后的链
+            chains = {}
+            for eid in event_ids:
+                chains[eid] = es.get_chain_for_event(eid, max_depth=2)
+            return jsonify({"chains": chains})
+        except Exception as e:
+            logger.error(f"[events/test/chain] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/events/test/decay', methods=['POST'])
+    def event_test_decay():
+        """测试衰减公式（调试用）"""
+        data = request.get_json() or {}
+        event_id = data.get('event_id', '')
+        raw_score = data.get('raw_score', 0.9)
+        hours_elapsed = data.get('hours_elapsed', 72)
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            if event_id:
+                event = es.get_event_by_id(event_id)
+                if not event:
+                    return jsonify({"error": "事件不存在"}), 404
+            else:
+                # 使用传入的参数构造临时事件
+                event = {
+                    "importance": data.get('importance', 0.5),
+                    "emotion_intensity": data.get('emotion_intensity', 0.5),
+                    "is_first_occurrence": data.get('is_first', False),
+                }
+            decayed = es.compute_decay_score(raw_score, event, hours_elapsed)
+            return jsonify({
+                "decayed_score": round(decayed, 6),
+                "raw_score": raw_score,
+                "hours_elapsed": hours_elapsed,
+                "event": event if event_id else None,
+            })
+        except Exception as e:
+            logger.error(f"[events/test/decay] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/events/test/search', methods=['POST'])
+    def event_test_search():
+        """测试事件搜索（调试用）"""
+        data = request.get_json() or {}
+        query = data.get('query', '')
+        if not query:
+            return jsonify({"error": "缺少 query"}), 400
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            matched = es.search_events_by_query(query, max_results=20)
+            # 同时获取每个匹配事件的链
+            results = []
+            for ev in matched:
+                chain = es.get_chain_for_event(ev["id"], max_depth=1)
+                mem_ids = es.get_memories_for_events([ev["id"]])
+                results.append({
+                    "event": ev,
+                    "chain": chain,
+                    "memory_ids": mem_ids,
+                })
+            return jsonify({"matched": len(matched), "results": results})
+        except Exception as e:
+            logger.error(f"[events/test/search] error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/events/test/reprocess', methods=['POST'])
+    def event_test_reprocess():
+        """回溯处理已有记忆（调试用，用于填充初始事件数据）"""
+        data = request.get_json() or {}
+        limit = data.get('limit', 100)
+        skip_existing = data.get('skip_existing', True)
+        try:
+            from modules.brain.memory.events import get_event_store
+            es = get_event_store()
+            if not es:
+                return jsonify({"error": "事件系统未初始化"}), 503
+            result = es.reprocess_memories(limit=limit, skip_existing=skip_existing)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"[events/test/reprocess] error: {e}")
+            return jsonify({"error": str(e)}), 500

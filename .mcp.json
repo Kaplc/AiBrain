@@ -10,7 +10,7 @@
       "env": {
         "PYTHONPATH": "."
       },
-      "disabled": false
+      "disabled": true
     },
     "wiki": {
       "type": "stdio",
@@ -22,7 +22,7 @@
       "env": {
         "PYTHONPATH": "."
       },
-      "disabled": false
+      "disabled": true
     }
   }
 }

@@ -78,6 +78,41 @@ CREATE TABLE IF NOT EXISTS typed_entity_relations (
     weight REAL DEFAULT 1.0,
     PRIMARY KEY (from_entity, to_entity, relation_type)
 );
+-- 事件记忆召回
+CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    action TEXT NOT NULL,
+    object TEXT,
+    context TEXT,
+    time_expr TEXT,
+    summary TEXT NOT NULL,
+    emotion TEXT,
+    emotion_intensity REAL DEFAULT 0.5,
+    importance REAL DEFAULT 0.5,
+    is_first_occurrence BOOLEAN DEFAULT 0,
+    memory_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS event_memories (
+    event_id TEXT NOT NULL,
+    memory_id TEXT NOT NULL,
+    PRIMARY KEY (event_id, memory_id),
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS event_relations (
+    source_event_id TEXT NOT NULL,
+    target_event_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    confidence REAL DEFAULT 0.5,
+    PRIMARY KEY (source_event_id, target_event_id, relation_type),
+    FOREIGN KEY (source_event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_event_memories_memory ON event_memories(memory_id);
+CREATE INDEX IF NOT EXISTS idx_event_memories_event ON event_memories(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_relations_source ON event_relations(source_event_id);
+CREATE INDEX IF NOT EXISTS idx_event_relations_target ON event_relations(target_event_id);
 """
 
 
@@ -982,10 +1017,16 @@ class GraphMemory:
             mem_count = self._exec("SELECT COUNT(*) FROM memory_nodes")[0][0]
             ent_count = self._exec("SELECT COUNT(*) FROM entity_nodes")[0][0]
             edge_count = self._exec("SELECT COUNT(*) FROM mentions")[0][0]
+            event_count = self._exec("SELECT COUNT(*) FROM events")[0][0]
+            event_mem_count = self._exec("SELECT COUNT(*) FROM event_memories")[0][0]
+            event_rel_count = self._exec("SELECT COUNT(*) FROM event_relations")[0][0]
             return {
                 "memory_count": mem_count,
                 "entity_count": ent_count,
                 "edge_count": edge_count,
+                "event_count": event_count,
+                "event_memory_count": event_mem_count,
+                "event_relation_count": event_rel_count,
             }
         except Exception as e:
             logger.warning(f"[graph] get_stats failed: {e}")

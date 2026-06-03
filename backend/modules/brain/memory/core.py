@@ -6,6 +6,7 @@ MCP 只暴露 store + search，其余给前端 UI 用。
 import json
 import logging
 import os
+import threading
 
 from modules.brain.mem0_adapter import get_mem0_client
 
@@ -151,6 +152,7 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
     client = get_mem0_client()
 
     use_infer = _memory_settings.get("infer", True)
+    logger.info(f"[store_memory] START | text={text[:60]!r} | infer={use_infer}")
     add_kwargs = {
         "user_id": "default",
         "infer": use_infer,
@@ -163,7 +165,9 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
     add_kwargs["metadata"] = metadata
 
     try:
+        logger.info("[store_memory] Step1: calling mem0 add...")
         result = client.add(text, **add_kwargs)
+        logger.info("[store_memory] Step1: mem0 add DONE")
     except Exception as e:
         if use_infer:
             logger.warning(f"store_memory failed (infer=True): {e}, fallback infer=False")
@@ -173,8 +177,8 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
             raise
 
     # 完整日志：记录 mem0 返回的原始结果
-    logger.info(f"[store_memory] mem0 raw result: {result}")
-    logger.info(f"[store_memory] input text: {text}")
+    logger.info(f"[store_memory] Step1: mem0 raw result: {result}")
+    logger.info(f"[store_memory] Step1: input text: {text}")
 
     events = result.get("results", [])
 
@@ -204,6 +208,7 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
     if use_infer:
         all_entity_names = []
         try:
+            logger.info(f"[store_memory] Step2: starting graph link | {len(events)} events from mem0")
             from modules.brain.graph import get_graph
             graph = get_graph()
             if graph:
@@ -213,27 +218,59 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
                         auto_entity_names = []
                         root_entity = '用户'
                         try:
+                            logger.info(f"[store_memory] Step2: extracting entities | mem0_id={ev['id'][:8]}")
                             from modules.brain.llm import extract_entities_llm
                             result = extract_entities_llm(mem_text)
                             auto_entity_names = result.get("entities", [])
                             root_entity = result.get("root", "用户")
+                            logger.info(f"[store_memory] Step2: entities extracted | {auto_entity_names}")
                         except Exception:
                             pass
                         if not auto_entity_names:
                             logger.info(f"[store_memory] 实体提取为空，跳过图节点 | mem0_id={ev['id'][:8]}")
                             continue
-                        logger.info(f"[store_memory] 实体提取(llm) | mem0_id={ev['id'][:8]} | entities={auto_entity_names} | root={root_entity}")
+                        logger.info(f"[store_memory] Step2: linking memory | mem0_id={ev['id'][:8]} | entities={auto_entity_names} | root={root_entity}")
                         graph.link_memory(ev["id"], mem_text, link_entities=auto_entity_names, root_entity=root_entity)
                         all_entity_names.extend(auto_entity_names)
                         # 增量更新实体计数
                         graph.increment_entity_counts(auto_entity_names)
-                        logger.info(f"[store_memory] link_memory 完成 | mem0_id={ev['id'][:8]} | 实体数={len(auto_entity_names)} | root={root_entity}")
+                        logger.info(f"[store_memory] Step2: link_memory 完成 | mem0_id={ev['id'][:8]} | 实体数={len(auto_entity_names)} | root={root_entity}")
         except Exception as e:
             logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
+
+    # ── 事件层：后台异步提取事件 ──
+    if use_infer and events:
+        try:
+            def _bg_event_extract(events_list, original_text):
+                logger.info(f"[store:event] Step3: background thread started | {len(events_list)} events")
+                from modules.brain.memory.events import get_event_store
+                es = get_event_store()
+                if not es:
+                    logger.warning("[store:event] Step3: EventStore not available, skip")
+                    return
+                for ev in events_list:
+                    if ev.get("event") == "ADD" and ev.get("id"):
+                        try:
+                            logger.info(f"[store:event] Step3: extracting events for {ev['id'][:8]}")
+                            new_ids = es.extract_events_from_memory(ev["id"], ev.get("memory", ""))
+                            if new_ids:
+                                logger.info(f"[store:event] Step3: extracted {len(new_ids)} events for {ev['id'][:8]}")
+                                es.infer_event_chains(new_ids)
+                            else:
+                                logger.info(f"[store:event] Step3: no events extracted for {ev['id'][:8]} (concept/fact)")
+                        except Exception as e:
+                            logger.warning(f"[store:event] Step3: failed for {ev['id'][:8]}: {e}")
+                logger.info("[store:event] Step3: background thread done")
+
+            threading.Thread(target=_bg_event_extract, args=(events, text), daemon=True).start()
+            logger.info("[store:event] Step3: background thread launched")
+        except Exception as e:
+            logger.warning(f"[store:event] async start failed (non-fatal): {e}")
     else:
         all_entity_names = []
         logger.info("[store_memory] LLM模式关闭，跳过实体提取和图层链接")
 
+    logger.info(f"[store_memory] DONE | added={len(added)} deleted={len(deleted)}")
     return {
         "result": msg,
         "stored_texts": stored_texts,
@@ -306,8 +343,73 @@ def search_memory(query: str) -> list[dict]:
         memories.sort(key=lambda x: x["score"], reverse=True)
         memories = memories[:MIN_COUNT]
 
-    # ── 图层：实体信息 + mentions 共现召回 + LLM 过滤（仅 LLM 模式） ──
     use_infer = _memory_settings.get("infer", True)
+    logger.info(f"[search] START | query={query[:60]!r} | Phase1 结果={len(memories)} 条 | infer={use_infer}")
+
+    # ── Phase 2: 事件反查 + 事件链扩展（新增） ──
+    if use_infer:
+        try:
+            logger.info("[search] Phase2: 事件召回开始...")
+            from modules.brain.memory.events import get_event_store
+            event_store = get_event_store()
+            if event_store:
+                matched_events = event_store.search_events_by_query(query, max_results=15)
+                logger.info(f"[search] Phase2: LLM事件匹配 → {len(matched_events)} 条事件")
+                if matched_events:
+                    for ev in matched_events:
+                        logger.info(f"[search] Phase2: matched event | {ev['subject']}→{ev['action']} | {ev['summary'][:50]}")
+                    # 链扩展：1 跳
+                    chain_event_ids = set()
+                    for ev in matched_events:
+                        chain_event_ids.add(ev["id"])
+                        for chain_ev in event_store.get_chain_for_event(ev["id"], max_depth=1):
+                            chain_event_ids.add(chain_ev["id"])
+                    logger.info(f"[search] Phase2: 链扩展后 → {len(chain_event_ids)} 条事件（含链）")
+                    # 反查关联的 memory_id
+                    chain_memory_ids = event_store.get_memories_for_events(list(chain_event_ids))
+                    logger.info(f"[search] Phase2: 关联memory_id → {len(chain_memory_ids)} 条")
+                    seen_ids = {m["id"] for m in memories}
+                    new_mem_ids = [mid for mid in chain_memory_ids if mid not in seen_ids]
+                    logger.info(f"[search] Phase2: 去重后新记忆 → {len(new_mem_ids)} 条（已有{len(seen_ids)}条）")
+                    if new_mem_ids:
+                        # 从 graph 的 memory_nodes 表获取记忆文本（比 mem0.get 更可靠）
+                        event_results = []
+                        try:
+                            from modules.brain.graph import get_graph
+                            _g = get_graph()
+                            if _g:
+                                for mid in new_mem_ids[:10]:
+                                    rows = _g._exec("SELECT mem0_id, text FROM memory_nodes WHERE mem0_id = ?", (mid,))
+                                    if rows:
+                                        event_results.append({
+                                            "id": mid,
+                                            "text": rows[0][1],
+                                            "score": 0.5,
+                                            "source": "event",
+                                        })
+                                        logger.info(f"[search] Phase2: fetched mem {mid[:8]} | {rows[0][1][:50]}")
+                                    else:
+                                        logger.info(f"[search] Phase2: mem {mid[:8]} not in memory_nodes, skip")
+                        except Exception as e:
+                            logger.warning(f"[search] Phase2: graph lookup failed: {e}")
+                        if event_results:
+                            # 给事件召回的记忆打分（基于语义最低分 × 0.85）
+                            semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
+                            base = min(semantic_scores) * 0.85 if semantic_scores else 0.5
+                            for i, er in enumerate(event_results):
+                                er["score"] = round(base - i * 0.001, 4)
+                            memories.extend(event_results)
+                            logger.info(f"[search] Phase2: 事件链召回 {len(event_results)} 条新记忆 | base_score={base:.4f}")
+                        else:
+                            logger.info("[search] Phase2: 无新记忆可添加（mem0 get 失败或为空）")
+                else:
+                    logger.info("[search] Phase2: 无匹配事件")
+            else:
+                logger.info("[search] Phase2: EventStore 未初始化，跳过")
+        except Exception as e:
+            logger.warning(f"[search] Phase2 event recall failed (non-fatal): {e}")
+
+    # ── Phase 3: 图层实体信息 + mentions 共现召回 + LLM 过滤（现有） ──
     if use_infer:
         try:
             from modules.brain.graph import get_graph
@@ -359,6 +461,38 @@ def search_memory(query: str) -> list[dict]:
         for m in memories:
             m["entities"] = []
 
+    # ── Phase 4: 时间衰减加权（新增） ──
+    if use_infer:
+        try:
+            logger.info(f"[search] Phase4: 时间衰减开始 | 当前结果={len(memories)} 条")
+            from modules.brain.memory.events import get_event_store
+            event_store = get_event_store()
+            if event_store:
+                all_mem_ids = [m["id"] for m in memories if m.get("id")]
+                if all_mem_ids:
+                    event_map = event_store.get_events_for_memories(all_mem_ids)
+                    has_events = sum(1 for v in event_map.values() if v)
+                    logger.info(f"[search] Phase4: 事件映射 → {has_events}/{len(all_mem_ids)} 条记忆有事件关联")
+                    if has_events:
+                        # 记录衰减前后的分数变化
+                        before_scores = {m["id"]: m["score"] for m in memories if m.get("id")}
+                        memories = event_store.apply_decay_to_results(memories, event_map)
+                        for m in memories:
+                            mid = m.get("id", "")
+                            if mid in before_scores:
+                                old_s = before_scores[mid]
+                                new_s = m["score"]
+                                if abs(old_s - new_s) > 0.001:
+                                    logger.info(f"[search] Phase4: decay {mid[:8]} | {old_s:.4f} → {new_s:.4f} | source={m.get('source','')}")
+                        logger.info(f"[search] Phase4: 衰减完成 | 排序后 top3 scores={[m['score'] for m in memories[:3]]}")
+                    else:
+                        logger.info("[search] Phase4: 无记忆有关联事件，跳过衰减")
+            else:
+                logger.info("[search] Phase4: EventStore 未初始化，跳过")
+        except Exception as e:
+            logger.warning(f"[search] Phase4 time decay failed (non-fatal): {e}")
+
+    logger.info(f"[search] DONE | 返回 {len(memories)} 条结果 | sources={dict.fromkeys(m.get('source','unknown') for m in memories)}")
     return memories
 
 

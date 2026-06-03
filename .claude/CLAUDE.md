@@ -8,7 +8,8 @@
 
 4-这个是 @app.route('/overview/flask/restart', methods=['POST'])手动重启后端修改后端文件后可以使用这个接口重启后端
 
-5-后端刚启动需要预热加载语义模型不能马上请求记忆查询和保存，可以请求一下语义模型状态的接口来确认是否预热完成
+5-后端刚启动需要预热加载语义模型不能马上请求，可以查看日志文件出现[INFO] Model loaded successfully on cpu代表重启真正完成了，要等待1m让日志文件重新生成再读取
+
 @app.route('/overview/model', methods=['GET'])
 
 6-前端e2e测试需要使用playWright

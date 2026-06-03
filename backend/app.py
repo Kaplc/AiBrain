@@ -333,6 +333,14 @@ def _preload():
     except Exception as e:
         logger.warning(f"graph init failed (non-fatal): {e}")
 
+    # 初始化事件记忆层
+    try:
+        from modules.brain.memory.events import get_event_store
+        get_event_store()
+        logger.info("EventStore initialized")
+    except Exception as e:
+        logger.warning(f"EventStore init failed (non-fatal): {e}")
+
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:
         from rag.lightrag_wiki.rag_engine import get_rag
