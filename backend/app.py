@@ -92,6 +92,10 @@ reg_settings(app, _ready, logger, stats_db, settings_mgr, model_mgr)
 reg_wiki(app, _ready, logger, stats_db)
 reg_stats(app, _ready, logger, stats_db)
 
+# 初始化 RebuildService（实体网络重建）单例
+from core.rebuild_service import RebuildService
+RebuildService.get_instance().set_project_root(_PROJECT_ROOT)
+
 
 # ── 其他路由 ───────────────────────────────────────────────
 

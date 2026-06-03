@@ -233,7 +233,8 @@ class GraphMemory:
     def link_memory(self, mem0_id: str, text: str, link_entities: list[str] = None, root_entity: str = '用户'):
         """存储记忆节点，用传入的实体建边链接。
 
-        link_entities 每项格式为「旧实体-新实体」或纯实体名。
+        link_entities 为纯实体名列表（不允许用 '-' 分隔表达重命名）。
+        实体名重复或向量相似时自动 dedup 复用已有实体。
         root_entity 指定关联的根实体（用户/自己/事实/经验）。
         """
         logger.debug(f"[graph:link] mem0_id={mem0_id[:8]} link_entities={link_entities}")
@@ -257,75 +258,36 @@ class GraphMemory:
                 (mem0_id, text),
             )
             resolved_entities = []  # Track deduped entity names
-            for item in link_entities:
-                if not item:
+            for new_entity in link_entities:
+                if not new_entity:
                     continue
-                # 解析「旧实体-新实体」格式
-                if '-' in item:
-                    old_entity, new_entity = item.split('-', 1)
-                    old_entity = old_entity.strip()
-                    new_entity = new_entity.strip()
+                new_entity = new_entity.strip()
+                if not new_entity:
+                    continue
+
+                # Auto-dedup: check if a similar entity already exists
+                similar = self._find_similar_entity_vector(new_entity, threshold=0.85)
+                if similar and similar != new_entity:
+                    logger.info(f"[graph:dedup] '{new_entity}' → reusing '{similar}'")
+                    new_entity = similar
                 else:
-                    old_entity = None
-                    new_entity = item.strip()
-
-                logger.info(f"[graph:link] parse item={item!r} → old={old_entity!r} new={new_entity!r}")
-
-                if old_entity:
-                    # 旧实体-新实体格式：旧实体必须已存在
-                    exists = self._exec(
-                        "SELECT 1 FROM entity_nodes WHERE name = ?", (old_entity,)
-                    )
-                    if not exists:
-                        raise ValueError(f"旧实体「{old_entity}」不存在，必须先创建或使用已有实体")
-
-                    # 新实体在旧-新格式下必须不存在
-                    if new_entity:
-                        exists = self._exec(
-                            "SELECT 1 FROM entity_nodes WHERE name = ?", (new_entity,)
-                        )
-                        if exists:
-                            raise ValueError(f"新实体「{new_entity}」已存在，不能重复关联旧实体，请使用新的实体名")
-
-                if new_entity:
-                    # Auto-dedup: check if a similar entity already exists
-                    similar = self._find_similar_entity_vector(new_entity, threshold=0.85)
-                    if similar and similar != new_entity:
-                        logger.info(f"[graph:dedup] '{new_entity}' → reusing '{similar}'")
-                        new_entity = similar
-                    else:
-                        # New entity, insert and cache its embedding
-                        self._exec(
-                            "INSERT OR IGNORE INTO entity_nodes (name, type) VALUES (?, 'concept')",
-                            (new_entity,),
-                        )
-                        try:
-                            from brain_mcp.embedding import encode_texts
-                            vec = encode_texts([new_entity])[0]
-                            self._entity_embedding_cache[new_entity] = vec
-                        except Exception:
-                            pass
-                    self._exec(
-                        "INSERT OR IGNORE INTO mentions (mem0_id, entity_name) VALUES (?, ?)",
-                        (mem0_id, new_entity),
-                    )
-                    resolved_entities.append(new_entity)
-                    logger.info(f"[graph:link] → linked entity={new_entity!r}")
-                if old_entity:
+                    # New entity, insert and cache its embedding
                     self._exec(
                         "INSERT OR IGNORE INTO entity_nodes (name, type) VALUES (?, 'concept')",
-                        (old_entity,),
+                        (new_entity,),
                     )
-                    # 双向边：A→B 和 B→A
-                    self._exec(
-                        "INSERT OR IGNORE INTO entity_relations (from_entity, to_entity) VALUES (?, ?)",
-                        (old_entity, new_entity),
-                    )
-                    self._exec(
-                        "INSERT OR IGNORE INTO entity_relations (from_entity, to_entity) VALUES (?, ?)",
-                        (new_entity, old_entity),
-                    )
-                    logger.info(f"[graph:link] → inserted bidirectional relation {old_entity!r} ↔ {new_entity!r}")
+                    try:
+                        from brain_mcp.embedding import encode_texts
+                        vec = encode_texts([new_entity])[0]
+                        self._entity_embedding_cache[new_entity] = vec
+                    except Exception:
+                        pass
+                self._exec(
+                    "INSERT OR IGNORE INTO mentions (mem0_id, entity_name) VALUES (?, ?)",
+                    (mem0_id, new_entity),
+                )
+                resolved_entities.append(new_entity)
+                logger.info(f"[graph:link] → linked entity={new_entity!r}")
             self._conn.commit()
             # 新实体自动关联到对应的根实体
             valid_roots = {'用户', '自己', '事实', '经验'}

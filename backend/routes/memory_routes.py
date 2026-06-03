@@ -549,3 +549,66 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.error(f"[memory/entity/entitymgr] DELETE error: {e}")
             return jsonify({"error": str(e)})
+
+    @app.route('/memory/graph/rebuild', methods=['POST'])
+    def graph_rebuild_start():
+        """启动实体网络重建任务（后台线程执行）"""
+        try:
+            from core.rebuild_service import RebuildService
+            svc = RebuildService.get_instance()
+            # 可选参数
+            data = request.get_json(silent=True) or {}
+            workers = int(data.get('workers', 5))
+            batch_size = int(data.get('batch_size', 10))
+            delay = float(data.get('delay', 1.0))
+            if svc.is_running():
+                return jsonify({"error": "已有任务在跑"}), 409
+            ok = svc.start(workers=workers, batch_size=batch_size, delay=delay)
+            if not ok:
+                return jsonify({"error": "启动失败"}), 500
+            logger.info(f"[memory/graph/rebuild] 启动重建 workers={workers}")
+            return jsonify({"success": True, "started": True})
+        except Exception as e:
+            logger.error(f"[memory/graph/rebuild] 启动失败: {e}")
+            return jsonify({"error": f"启动失败: {e}"}), 500
+
+    @app.route('/memory/graph/rebuild', methods=['GET'])
+    def graph_rebuild_status():
+        """查询当前重建任务状态"""
+        try:
+            from core.rebuild_service import RebuildService
+            svc = RebuildService.get_instance()
+            return jsonify(svc.get_state())
+        except Exception as e:
+            logger.error(f"[memory/graph/rebuild:status] 失败: {e}")
+            return jsonify({"error": str(e), "status": "idle"}), 500
+
+    @app.route('/memory/graph/rebuild/cancel', methods=['POST'])
+    def graph_rebuild_cancel():
+        """取消正在运行的重建任务"""
+        try:
+            from core.rebuild_service import RebuildService
+            svc = RebuildService.get_instance()
+            if not svc.is_running():
+                return jsonify({"error": "没有任务在跑"}), 409
+            ok = svc.cancel()
+            if not ok:
+                return jsonify({"error": "设置停止标志失败"}), 500
+            return jsonify({"success": True, "message": "已设置停止标志，任务将终止"})
+        except Exception as e:
+            logger.error(f"[memory/graph/rebuild:cancel] 失败: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/memory/graph/rebuild/log', methods=['GET'])
+    def graph_rebuild_log():
+        """读取后端 logger 末尾 N 行（用于错误排查）"""
+        try:
+            from core.rebuild_service import RebuildService
+            svc = RebuildService.get_instance()
+            lines = request.args.get('lines', 100, type=int)
+            lines = min(max(lines, 10), 1000)
+            tail = svc.get_logs(lines)
+            return jsonify({"lines": tail, "returned": len(tail)})
+        except Exception as e:
+            logger.error(f"[memory/graph/rebuild:log] 失败: {e}")
+            return jsonify({"lines": [], "error": str(e)}), 500

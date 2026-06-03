@@ -27,11 +27,15 @@ export class MemoryViewModel {
    * 流程：更新 currentTab → 如果切换到 store Tab 则加载记忆列表 → 切换到 settings 则加载设置
    */
   switchTab(tab: 'search' | 'store' | 'organize' | 'settings' | 'graph' | 'entity'): void {
+    // 离开 entity Tab 时先清理轮询
+    if (this.currentTab.value === 'entity' && tab !== 'entity') {
+      this.entityTab.onTabUnmounted()
+    }
     this.currentTab.value = tab
     if (tab === 'store') this.storeTab.loadAll()
     if (tab === 'settings') this.settingsTab.load()
     if (tab === 'graph') this.graphTab.loadGraph()
-    if (tab === 'entity') this.entityTab.loadStats()
+    if (tab === 'entity') this.entityTab.onTabMounted()
   }
 
   /* loadAll：加载所有数据（初始化时调用）

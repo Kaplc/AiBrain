@@ -59,4 +59,4 @@ web/dist/
 web/test-output/
 .restart_trace.log
 .claude/settings.local.json
-.claude/settings.local.json
+scripts/rebuild_graph.log

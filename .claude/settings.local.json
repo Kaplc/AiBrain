@@ -200,7 +200,8 @@
       "Bash(echo \"Server PID: $!\")",
       "Bash(echo \"EXIT_CODE: $?\")",
       "Bash(findstr \"19399\\\\|19400\\\\|19401\")",
-      "Bash(sqlite3 *)"
+      "Bash(sqlite3 *)",
+      "Bash(awk '{for\\(i=1;i<=NF;i++\\) if\\($i ~ /^\\\\[.*\\\\]$/ && $i != \"[WARNING]\"\\) print $i}')"
     ]
   },
   "enableAllProjectMcpServers": true,
