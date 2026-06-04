@@ -341,6 +341,14 @@ def _preload():
     except Exception as e:
         logger.warning(f"EventStore init failed (non-fatal): {e}")
 
+    # 初始化记忆流水线引擎（步骤注册 + 配置加载）
+    try:
+        from modules.brain.memory.pipeline import init_pipelines
+        init_pipelines()
+        logger.info("PipelineEngine initialized")
+    except Exception as e:
+        logger.warning(f"PipelineEngine init failed (non-fatal): {e}")
+
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:
         from rag.lightrag_wiki.rag_engine import get_rag

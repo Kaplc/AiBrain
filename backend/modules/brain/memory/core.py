@@ -1,7 +1,8 @@
 """
-记忆核心逻辑 - 基于 mem0 实现
+记忆核心逻辑 - 基于 mem0 + PipelineEngine 实现
 mem0 全权管理：存储、去重、自动更新、自适应搜索。
 MCP 只暴露 store + search，其余给前端 UI 用。
+PipelineEngine 统一编排 store/search 的处理步骤。
 """
 import json
 import logging
@@ -138,8 +139,24 @@ def _get_search_options():
         return {"top_k": 50, "threshold": 0.55, "rerank": True}
 
 
+# ── PipelineEngine 兼容层 ──────────────────────────────────
+
+
+def _try_pipeline_run(pipeline_name: str, ctx):
+    """尝试通过 PipelineEngine 执行，引擎未初始化时返回 False"""
+    try:
+        from .pipeline import get_engine
+        engine = get_engine()
+        if engine.get_pipeline(pipeline_name):
+            engine.run(ctx, pipeline_name)
+            return True
+    except Exception as e:
+        logger.warning(f"[pipeline] engine run failed for '{pipeline_name}': {e}, falling back to legacy")
+    return False
+
+
 def store_memory(text: str, memory_meta: dict = None) -> dict:
-    """存储记忆，LLM 自动从文本中拆分多条事实。
+    """存储记忆，通过 PipelineEngine 编排各处理步骤。
 
     Args:
         text: 要存储的记忆文本
@@ -149,25 +166,69 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
         dict: 包含 result 消息和实际存入的原始文本列表
             {"result": "已记住: 新增 N 条记忆", "stored_texts": [...]}
     """
+    use_infer = _memory_settings.get("infer", True)
+    logger.info(f"[store_memory] START | text={text[:60]!r} | infer={use_infer}")
+
+    # 创建 PipelineContext
+    from .pipeline.context import PipelineContext
+    ctx = PipelineContext(
+        input_data=text,
+        metadata={
+            "infer": use_infer,
+            "memory_meta": memory_meta,
+        },
+    )
+
+    # 尝试通过引擎执行
+    if _try_pipeline_run("store", ctx):
+        # 从 context 中提取结果
+        added = ctx.metadata.get("_added", [])
+        updated = ctx.metadata.get("_updated", [])
+        deleted = ctx.metadata.get("_deleted", [])
+
+        parts = []
+        if added:
+            parts.append(f"新增 {len(added)} 条记忆")
+        if updated:
+            parts.append(f"更新 {len(updated)} 条记忆")
+        if deleted:
+            parts.append(f"自动清理 {len(deleted)} 条重复")
+
+        stored_texts = added + updated
+        msg = f"已记住: {', '.join(parts)}" if parts else "已处理"
+        entities = ctx.intermediate.get("entities", [])
+
+        logger.info(f"[store_memory] DONE (pipeline) | added={len(added)} deleted={len(deleted)}")
+        return {
+            "result": msg,
+            "stored_texts": stored_texts,
+            "added_count": len(added),
+            "deleted_count": len(deleted),
+            "entities": entities,
+        }
+
+    # ── Fallback：引擎不可用时使用旧逻辑 ──
+    logger.warning("[store_memory] pipeline engine unavailable, using legacy path")
+    return _store_memory_legacy(text, memory_meta)
+
+
+def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
+    """旧版 store_memory 逻辑（引擎不可用时的 fallback）"""
     client = get_mem0_client()
 
     use_infer = _memory_settings.get("infer", True)
-    logger.info(f"[store_memory] START | text={text[:60]!r} | infer={use_infer}")
     add_kwargs = {
         "user_id": "default",
         "infer": use_infer,
     }
 
-    # 合并 metadata
     metadata = {"category": "user"}
     if memory_meta:
         metadata.update(memory_meta)
     add_kwargs["metadata"] = metadata
 
     try:
-        logger.info("[store_memory] Step1: calling mem0 add...")
         result = client.add(text, **add_kwargs)
-        logger.info("[store_memory] Step1: mem0 add DONE")
     except Exception as e:
         if use_infer:
             logger.warning(f"store_memory failed (infer=True): {e}, fallback infer=False")
@@ -176,17 +237,11 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
         else:
             raise
 
-    # 完整日志：记录 mem0 返回的原始结果
-    logger.info(f"[store_memory] Step1: mem0 raw result: {result}")
-    logger.info(f"[store_memory] Step1: input text: {text}")
-
     events = result.get("results", [])
-
     added = [e["memory"] for e in events if e.get("event") == "ADD"]
     updated = [e["memory"] for e in events if e.get("event") == "UPDATE"]
     deleted = [e["memory"] for e in events if e.get("event") == "DELETE"]
 
-    # 有新增时自增缓存计数；mem0 自动删除的也要同步减少
     global _memory_count_cache
     if _memory_count_cache is not None:
         _memory_count_cache += len(added) - len(deleted)
@@ -200,15 +255,12 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
     if deleted:
         parts.append(f"自动清理 {len(deleted)} 条重复")
 
-    # 收集所有被记住的原始文本（用于 MCP 返回显示）
     stored_texts = added + updated
     msg = f"已记住: {', '.join(parts)}" if parts else "已处理"
 
-    # ── 图层：LLM 提取实体，链接新记忆到实体网络（仅 LLM 模式） ──
+    all_entity_names = []
     if use_infer:
-        all_entity_names = []
         try:
-            logger.info(f"[store_memory] Step2: starting graph link | {len(events)} events from mem0")
             from modules.brain.graph import get_graph
             graph = get_graph()
             if graph:
@@ -218,59 +270,40 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
                         auto_entity_names = []
                         root_entity = '用户'
                         try:
-                            logger.info(f"[store_memory] Step2: extracting entities | mem0_id={ev['id'][:8]}")
                             from modules.brain.llm import extract_entities_llm
                             result = extract_entities_llm(mem_text)
                             auto_entity_names = result.get("entities", [])
                             root_entity = result.get("root", "用户")
-                            logger.info(f"[store_memory] Step2: entities extracted | {auto_entity_names}")
                         except Exception:
                             pass
                         if not auto_entity_names:
-                            logger.info(f"[store_memory] 实体提取为空，跳过图节点 | mem0_id={ev['id'][:8]}")
                             continue
-                        logger.info(f"[store_memory] Step2: linking memory | mem0_id={ev['id'][:8]} | entities={auto_entity_names} | root={root_entity}")
                         graph.link_memory(ev["id"], mem_text, link_entities=auto_entity_names, root_entity=root_entity)
                         all_entity_names.extend(auto_entity_names)
-                        # 增量更新实体计数
                         graph.increment_entity_counts(auto_entity_names)
-                        logger.info(f"[store_memory] Step2: link_memory 完成 | mem0_id={ev['id'][:8]} | 实体数={len(auto_entity_names)} | root={root_entity}")
         except Exception as e:
             logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
 
-    # ── 事件层：后台异步提取事件 ──
     if use_infer and events:
         try:
             def _bg_event_extract(events_list, original_text):
-                logger.info(f"[store:event] Step3: background thread started | {len(events_list)} events")
                 from modules.brain.memory.events import get_event_store
                 es = get_event_store()
                 if not es:
-                    logger.warning("[store:event] Step3: EventStore not available, skip")
                     return
                 for ev in events_list:
                     if ev.get("event") == "ADD" and ev.get("id"):
                         try:
-                            logger.info(f"[store:event] Step3: extracting events for {ev['id'][:8]}")
                             new_ids = es.extract_events_from_memory(ev["id"], ev.get("memory", ""))
                             if new_ids:
-                                logger.info(f"[store:event] Step3: extracted {len(new_ids)} events for {ev['id'][:8]}")
                                 es.infer_event_chains(new_ids)
-                            else:
-                                logger.info(f"[store:event] Step3: no events extracted for {ev['id'][:8]} (concept/fact)")
                         except Exception as e:
-                            logger.warning(f"[store:event] Step3: failed for {ev['id'][:8]}: {e}")
-                logger.info("[store:event] Step3: background thread done")
+                            logger.warning(f"[store:event] failed for {ev['id'][:8]}: {e}")
 
             threading.Thread(target=_bg_event_extract, args=(events, text), daemon=True).start()
-            logger.info("[store:event] Step3: background thread launched")
         except Exception as e:
             logger.warning(f"[store:event] async start failed (non-fatal): {e}")
-    else:
-        all_entity_names = []
-        logger.info("[store_memory] LLM模式关闭，跳过实体提取和图层链接")
 
-    logger.info(f"[store_memory] DONE | added={len(added)} deleted={len(deleted)}")
     return {
         "result": msg,
         "stored_texts": stored_texts,
@@ -281,7 +314,7 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
 
 
 def search_memory(query: str) -> list[dict]:
-    """搜索记忆，直接请求高于阈值的结果，不足 15 条时补足。
+    """搜索记忆，通过 PipelineEngine 编排各搜索阶段。
 
     Args:
         query: 搜索关键词
@@ -289,6 +322,47 @@ def search_memory(query: str) -> list[dict]:
     Returns:
         list[dict]: [{id, text, score}, ...]
     """
+    use_infer = _memory_settings.get("infer", True)
+    logger.info(f"[search] START | query={query[:60]!r} | infer={use_infer}")
+
+    # 创建 PipelineContext
+    from .pipeline.context import PipelineContext
+    ctx = PipelineContext(
+        input_data=query,
+        metadata={
+            "infer": use_infer,
+        },
+    )
+
+    # 尝试通过引擎执行
+    if _try_pipeline_run("search", ctx):
+        # 从 intermediate 中合并所有结果
+        memories = list(ctx.intermediate.get("semantic_results", []))
+        event_results = ctx.intermediate.get("event_results")
+        if event_results:
+            memories.extend(event_results)
+        graph_results = ctx.intermediate.get("graph_results")
+        if graph_results:
+            memories.extend(graph_results)
+
+        # 非 infer 模式下确保 entities 字段存在
+        if not use_infer:
+            for m in memories:
+                m.setdefault("entities", [])
+
+        logger.info(
+            f"[search] DONE (pipeline) | 返回 {len(memories)} 条结果 | "
+            f"sources={dict.fromkeys(m.get('source', 'unknown') for m in memories)}"
+        )
+        return memories
+
+    # ── Fallback：引擎不可用时使用旧逻辑 ──
+    logger.warning("[search] pipeline engine unavailable, using legacy path")
+    return _search_memory_legacy(query)
+
+
+def _search_memory_legacy(query: str) -> list[dict]:
+    """旧版 search_memory 逻辑（引擎不可用时的 fallback）"""
     client = get_mem0_client()
     opts = _get_search_options()
 
@@ -296,10 +370,8 @@ def search_memory(query: str) -> list[dict]:
     rerank = opts.get("rerank", False)
     MIN_COUNT = 15
 
-    # 搜索所有记忆，限定 user_id 为 default
     filters = {"user_id": DEFAULT_USER_ID}
 
-    # 第一次请求：只拿高于阈值的
     kwargs = {
         "query": query,
         "filters": filters,
@@ -320,7 +392,6 @@ def search_memory(query: str) -> list[dict]:
         })
     memories.sort(key=lambda x: x["score"], reverse=True)
 
-    # 不足 MIN_COUNT 时，去掉阈值再请求补足
     if len(memories) < MIN_COUNT:
         kwargs_no_thresh = {
             "query": query,
@@ -344,35 +415,24 @@ def search_memory(query: str) -> list[dict]:
         memories = memories[:MIN_COUNT]
 
     use_infer = _memory_settings.get("infer", True)
-    logger.info(f"[search] START | query={query[:60]!r} | Phase1 结果={len(memories)} 条 | infer={use_infer}")
 
-    # ── Phase 2: 事件反查 + 事件链扩展（新增） ──
+    # Phase 2: 事件反查
     if use_infer:
         try:
-            logger.info("[search] Phase2: 事件召回开始...")
             from modules.brain.memory.events import get_event_store
             event_store = get_event_store()
             if event_store:
                 matched_events = event_store.search_events_by_query(query, max_results=15)
-                logger.info(f"[search] Phase2: LLM事件匹配 → {len(matched_events)} 条事件")
                 if matched_events:
-                    for ev in matched_events:
-                        logger.info(f"[search] Phase2: matched event | {ev['subject']}→{ev['action']} | {ev['summary'][:50]}")
-                    # 链扩展：1 跳
                     chain_event_ids = set()
                     for ev in matched_events:
                         chain_event_ids.add(ev["id"])
                         for chain_ev in event_store.get_chain_for_event(ev["id"], max_depth=1):
                             chain_event_ids.add(chain_ev["id"])
-                    logger.info(f"[search] Phase2: 链扩展后 → {len(chain_event_ids)} 条事件（含链）")
-                    # 反查关联的 memory_id
                     chain_memory_ids = event_store.get_memories_for_events(list(chain_event_ids))
-                    logger.info(f"[search] Phase2: 关联memory_id → {len(chain_memory_ids)} 条")
                     seen_ids = {m["id"] for m in memories}
                     new_mem_ids = [mid for mid in chain_memory_ids if mid not in seen_ids]
-                    logger.info(f"[search] Phase2: 去重后新记忆 → {len(new_mem_ids)} 条（已有{len(seen_ids)}条）")
                     if new_mem_ids:
-                        # 从 graph 的 memory_nodes 表获取记忆文本（比 mem0.get 更可靠）
                         event_results = []
                         try:
                             from modules.brain.graph import get_graph
@@ -387,52 +447,32 @@ def search_memory(query: str) -> list[dict]:
                                             "score": 0.5,
                                             "source": "event",
                                         })
-                                        logger.info(f"[search] Phase2: fetched mem {mid[:8]} | {rows[0][1][:50]}")
-                                    else:
-                                        logger.info(f"[search] Phase2: mem {mid[:8]} not in memory_nodes, skip")
-                        except Exception as e:
-                            logger.warning(f"[search] Phase2: graph lookup failed: {e}")
+                        except Exception:
+                            pass
                         if event_results:
-                            # 给事件召回的记忆打分（基于语义最低分 × 0.85）
                             semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
                             base = min(semantic_scores) * 0.85 if semantic_scores else 0.5
                             for i, er in enumerate(event_results):
                                 er["score"] = round(base - i * 0.001, 4)
                             memories.extend(event_results)
-                            logger.info(f"[search] Phase2: 事件链召回 {len(event_results)} 条新记忆 | base_score={base:.4f}")
-                        else:
-                            logger.info("[search] Phase2: 无新记忆可添加（mem0 get 失败或为空）")
-                else:
-                    logger.info("[search] Phase2: 无匹配事件")
-            else:
-                logger.info("[search] Phase2: EventStore 未初始化，跳过")
         except Exception as e:
             logger.warning(f"[search] Phase2 event recall failed (non-fatal): {e}")
 
-    # ── Phase 3: 图层实体信息 + mentions 共现召回 + LLM 过滤（现有） ──
+    # Phase 3: 图增强
     if use_infer:
         try:
             from modules.brain.graph import get_graph
             graph = get_graph()
             if graph:
                 mem_ids = [m["id"] for m in memories if m.get("id")]
-                logger.info(f"[memory:graph] 开始关联记忆扩展 | 向量命中 {len(mem_ids)} 条 | query={query[:50]!r}")
-                # 附上每条记忆的关联实体
                 entity_map = graph.get_entities_for_memories(mem_ids)
                 all_entities = []
                 for m in memories:
                     m["entities"] = entity_map.get(m["id"], [])
                     all_entities.extend(m["entities"])
                 all_entities = list(dict.fromkeys(all_entities))
-                logger.info(f"[memory:graph] 实体映射完成 | {len(entity_map)} 条记忆有实体关联 | 总实体={len(all_entities)}")
-
-                # mentions 共现召回
                 candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=50)
                 if candidates:
-                    logger.info(f"[memory:graph] 共现召回 {len(candidates)} 条候选记忆 | 调用 LLM 过滤")
-                    for i, c in enumerate(candidates):
-                        logger.info(f"[memory:graph] 候选[{i}] co_count={c.get('co_count',0)} | {c['id'][:8]} | {c['text'][:80]}")
-                    # LLM 批量过滤
                     from modules.brain.llm import filter_related_memories
                     related_ids = filter_related_memories(query, candidates)
                     if related_ids:
@@ -440,31 +480,22 @@ def search_memory(query: str) -> list[dict]:
                         semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
                         min_semantic = min(semantic_scores) if semantic_scores else 0.5
                         graph_base_score = min_semantic * 0.8
-                        added = []
                         for i, rid in enumerate(related_ids[:10]):
                             c = related_map.get(rid)
                             if c:
                                 c["score"] = round(graph_base_score - i * 0.001, 4)
                                 c["source"] = "graph"
                                 c["entities"] = entity_map.get(c["id"], [])
-                                added.append(c)
                                 memories.append(c)
-                        logger.info(f"[memory:graph] LLM 过滤后保留 {len(added)} 条 | 内容: {[(r['id'][:8], r['text'][:30]) for r in added]}")
-                    else:
-                        logger.info(f"[memory:graph] LLM 过滤后无相关记忆")
-                else:
-                    logger.info(f"[memory:graph] 共现召回无候选记忆")
         except Exception as e:
             logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
     else:
-        logger.info("[memory:search] LLM模式关闭，跳过图增强搜索（纯向量结果）")
         for m in memories:
             m["entities"] = []
 
-    # ── Phase 4: 时间衰减加权（新增） ──
+    # Phase 4: 时间衰减
     if use_infer:
         try:
-            logger.info(f"[search] Phase4: 时间衰减开始 | 当前结果={len(memories)} 条")
             from modules.brain.memory.events import get_event_store
             event_store = get_event_store()
             if event_store:
@@ -472,27 +503,12 @@ def search_memory(query: str) -> list[dict]:
                 if all_mem_ids:
                     event_map = event_store.get_events_for_memories(all_mem_ids)
                     has_events = sum(1 for v in event_map.values() if v)
-                    logger.info(f"[search] Phase4: 事件映射 → {has_events}/{len(all_mem_ids)} 条记忆有事件关联")
                     if has_events:
-                        # 记录衰减前后的分数变化
-                        before_scores = {m["id"]: m["score"] for m in memories if m.get("id")}
                         memories = event_store.apply_decay_to_results(memories, event_map)
-                        for m in memories:
-                            mid = m.get("id", "")
-                            if mid in before_scores:
-                                old_s = before_scores[mid]
-                                new_s = m["score"]
-                                if abs(old_s - new_s) > 0.001:
-                                    logger.info(f"[search] Phase4: decay {mid[:8]} | {old_s:.4f} → {new_s:.4f} | source={m.get('source','')}")
-                        logger.info(f"[search] Phase4: 衰减完成 | 排序后 top3 scores={[m['score'] for m in memories[:3]]}")
-                    else:
-                        logger.info("[search] Phase4: 无记忆有关联事件，跳过衰减")
-            else:
-                logger.info("[search] Phase4: EventStore 未初始化，跳过")
         except Exception as e:
             logger.warning(f"[search] Phase4 time decay failed (non-fatal): {e}")
 
-    logger.info(f"[search] DONE | 返回 {len(memories)} 条结果 | sources={dict.fromkeys(m.get('source','unknown') for m in memories)}")
+    logger.info(f"[search] DONE (legacy) | 返回 {len(memories)} 条结果")
     return memories
 
 
@@ -505,7 +521,6 @@ def list_memories(offset: int = 0, limit: int = 200, source: str = None) -> list
         source: 可选过滤来源，如 "user"（用户保存）或 "mcp"（MCP工具保存）
     """
     client = get_mem0_client()
-    # mem0 过滤 metadata 字段时需要用 "metadata.source" 前缀
     filters = {"user_id": DEFAULT_USER_ID}
     if source:
         filters["metadata.source"] = source
@@ -515,9 +530,7 @@ def list_memories(offset: int = 0, limit: int = 200, source: str = None) -> list
         top_k=10000,
     )
     all_memories = result.get("results", [])
-    # 按创建时间倒序（最新的在前面）
     all_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-    # 用户请求只显示最后20条时，直接截取前20条（忽略 offset/limit）
     if source == "user":
         paged = all_memories[:20]
     else:
@@ -535,7 +548,6 @@ def list_memories(offset: int = 0, limit: int = 200, source: str = None) -> list
 def delete_memory(memory_id: str) -> dict:
     """删除记忆（前端 UI 用），删前先取回文本内容"""
     client = get_mem0_client()
-    # 删前先获取文本，用于流记录展示
     memory_text = ''
     try:
         result = client.get(memory_id)
@@ -545,7 +557,6 @@ def delete_memory(memory_id: str) -> dict:
         logger.warning(f"[delete_memory] get text failed for {memory_id}: {e}")
     client.delete(memory_id)
 
-    # ── 图层：清理节点和边 ──
     try:
         from modules.brain.graph import get_graph
         graph = get_graph()
@@ -598,7 +609,6 @@ def refine_memories(groups: list[dict]) -> dict:
     """LLM 精炼合并相似记忆组（两步法第二步）"""
     use_infer = _memory_settings.get("infer", True)
     if not use_infer:
-        # 纯向量模式：返回空结果 + hint，前端手动处理
         return {
             "refined": [
                 {
@@ -636,7 +646,6 @@ def apply_organize(items: list[dict]) -> dict:
         if not new_text:
             continue
 
-        # 先删旧
         for mem_id in delete_ids:
             try:
                 delete_memory(mem_id)
@@ -644,7 +653,6 @@ def apply_organize(items: list[dict]) -> dict:
             except Exception as e:
                 logger.warning(f"[apply] 删除失败 {mem_id}: {e}")
 
-        # 再存新
         try:
             res = store_memory(new_text)
             added += 1
