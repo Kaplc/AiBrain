@@ -40,3 +40,4 @@ export function getAllTabs(): TabDef[] {
 import './ModelTab/ModelTab'
 import './Mem0Tab/Mem0Tab'
 import './WikiTab/WikiTab'
+import './LLMTab/LLMTab'

@@ -31,7 +31,44 @@ def get_dir_size(path: str) -> int:
 
 
 _DIR_KEYWORDS = ('dir', 'path', 'folder', 'directory')
-_NUMBER_KEYWORDS = ('size', 'timeout', 'count', 'limit')
+_NUMBER_KEYWORDS = ('size', 'timeout', 'count', 'limit', 'tokens', 'temperature')
+
+
+# ── Provider 分组（按接口协议） ─────────────────────────────
+# 前端 Tab 只暴露 openai / anthropic 两个最常用的；其它 provider（deepseek/ollama/...）
+# LLM 模块底层仍支持，feature 模块（如 chat）可以直接构造 LLMConfig 使用
+LLM_PROVIDER_GROUPS = [
+    {
+        'label': 'OpenAI 兼容',
+        'protocol': 'openai',
+        'providers': ['openai'],
+    },
+    {
+        'label': 'Anthropic 兼容',
+        'protocol': 'anthropic',
+        'providers': ['anthropic'],
+    },
+]
+
+# 扁平化的 options 列表（向后兼容老前端代码）
+LLM_PROVIDER_OPTIONS = [p for g in LLM_PROVIDER_GROUPS for p in g['providers']]
+
+
+def _llm_fields(data: dict, defaults: dict) -> list:
+    """LLM 专用字段定义
+
+    - `provider` 字段在 UI 上叫"接口类型"（label），用户选 openai/anthropic 之一
+    - key 仍是 `provider` 以兼容 LLMConfig / mem0.json 等下游模块
+    """
+    return [
+        {'key': 'provider',  'label': '接口类型',   'type': 'select',  'value': data.get('provider', ''),   'default': defaults.get('provider', ''),  'options': LLM_PROVIDER_OPTIONS, 'option_groups': LLM_PROVIDER_GROUPS, 'placeholder': '选择 LLM 接口类型'},
+        {'key': 'model',     'label': 'Model',      'type': 'text',    'value': data.get('model', ''),      'default': defaults.get('model', ''), 'placeholder': '如 gpt-4o-mini / claude-sonnet-4-20250514'},
+        {'key': 'api_key',   'label': 'API Key',    'type': 'password','value': data.get('api_key', ''),    'default': defaults.get('api_key', ''), 'placeholder': '从对应平台获取'},
+        {'key': 'base_url',  'label': 'Base URL',   'type': 'text',    'value': data.get('base_url', ''),   'default': defaults.get('base_url', ''), 'placeholder': '可选，留空用接口默认端点'},
+        {'key': 'temperature', 'label': 'Temperature', 'type': 'number', 'value': data.get('temperature', 0.7), 'default': defaults.get('temperature', 0.7)},
+        {'key': 'max_tokens',  'label': 'Max Tokens',  'type': 'number', 'value': data.get('max_tokens', 1024), 'default': defaults.get('max_tokens', 1024)},
+        {'key': 'timeout',     'label': 'Timeout (秒)', 'type': 'number', 'value': data.get('timeout', 60),   'default': defaults.get('timeout', 60)},
+    ]
 
 
 def build_fields(data: dict, defaults: dict, prefix: str = '') -> list:
@@ -118,11 +155,14 @@ class SettingsManager:
         cfg_mgr = ConfigManager.get_instance()
         mem0 = cfg_mgr.read_mem0()
         wiki = cfg_mgr.read_wiki()
+        llm = cfg_mgr.read_llm()
         defaults_mem0 = cfg_mgr.get_default_mem0()
         defaults_wiki = cfg_mgr.get_default_wiki()
+        defaults_llm = cfg_mgr.get_default_llm()
         return {
             'mem0': {'data': mem0, 'fields': build_fields(mem0, defaults_mem0)},
-            'wiki': {'data': wiki, 'fields': build_fields(wiki, defaults_wiki)}
+            'wiki': {'data': wiki, 'fields': build_fields(wiki, defaults_wiki)},
+            'llm':  {'data': llm,  'fields': _llm_fields(llm, defaults_llm)},
         }
 
     def save_aibrain_config(self, data: dict) -> dict:
@@ -134,7 +174,46 @@ class SettingsManager:
         if 'wiki' in data:
             cfg_mgr.write_wiki(data['wiki'])
             result['wiki'] = '已保存'
+        if 'llm' in data:
+            cfg_mgr.write_llm(data['llm'])
+            result['llm'] = '已保存'
         return {"result": result}
+
+    def test_llm_config(self, data: dict) -> dict:
+        """用给定的 LLM 配置真发一次请求，验证连通性。
+
+        Returns: {"ok": bool, "message": str, "response": str|None, "latency_ms": int}
+        """
+        import time
+        from modules.LLM import LLMConfig, call_llm_sync
+
+        try:
+            cfg = LLMConfig.from_dict(data)
+            ok, err = cfg.validate()
+            if not ok:
+                return {"ok": False, "message": f"配置无效: {err}", "response": None, "latency_ms": 0}
+
+            # 用一个超短 prompt 测连通性，max_tokens 压到 16 省成本
+            test_cfg = LLMConfig(
+                provider=cfg.provider,
+                model=cfg.model,
+                api_key=cfg.api_key,
+                base_url=cfg.base_url,
+                temperature=0,
+                max_tokens=16,
+                timeout=min(cfg.timeout, 30),
+            )
+            t0 = time.time()
+            text = call_llm_sync("只回 OK", "ping", test_cfg)
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "ok": True,
+                "message": f"连接成功 ({cfg.provider}/{cfg.model})",
+                "response": text[:100],
+                "latency_ms": latency_ms,
+            }
+        except Exception as e:
+            return {"ok": False, "message": str(e), "response": None, "latency_ms": 0}
 
     def check_path(self, path: str) -> dict:
         return {"exists": bool(path) and os.path.exists(path)}

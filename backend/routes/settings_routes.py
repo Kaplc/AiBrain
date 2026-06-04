@@ -38,3 +38,8 @@ def register(app, ready_state, logger, stats_db, settings_mgr, model_mgr):
     @app.route('/settings/select-directory', methods=['POST'])
     def select_directory_route():
         return jsonify(_mgr.select_directory(app.config.get('_PROJECT_ROOT', '')))
+
+    @app.route('/settings/llm/test', methods=['POST'])
+    def test_llm_route():
+        """用给定的 LLM 配置真发一次请求，验证连通性"""
+        return jsonify(_mgr.test_llm_config(request.get_json() or {}))

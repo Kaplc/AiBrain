@@ -51,6 +51,17 @@ DEFAULT_WIKI = {
     "search_timeout": 30
 }
 
+# LLM 通用配置（独立于 mem0/wiki）—— 用于 chat 意识流、未来其他 LLM 调用
+DEFAULT_LLM = {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "api_key": "",
+    "base_url": "",
+    "temperature": 0.7,
+    "max_tokens": 1024,
+    "timeout": 60,
+}
+
 
 class ConfigManager:
     _instance = None
@@ -60,6 +71,7 @@ class ConfigManager:
         self._config_dir = os.path.join(self._user_home, '.aibrain', 'config')
         self._mem0_path = os.path.join(self._config_dir, 'mem0.json')
         self._wiki_path = os.path.join(self._config_dir, 'wiki.json')
+        self._llm_path = os.path.join(self._config_dir, 'llm.json')
 
     @classmethod
     def get_instance(cls):
@@ -82,6 +94,9 @@ class ConfigManager:
         if not os.path.exists(self._wiki_path):
             with open(self._wiki_path, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_WIKI, f, indent=2, ensure_ascii=False)
+        if not os.path.exists(self._llm_path):
+            with open(self._llm_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_LLM, f, indent=2, ensure_ascii=False)
 
     def read_mem0(self) -> dict:
         if os.path.exists(self._mem0_path):
@@ -124,6 +139,32 @@ class ConfigManager:
 
     def get_default_wiki(self) -> dict:
         return DEFAULT_WIKI.copy()
+
+    def get_default_llm(self) -> dict:
+        return DEFAULT_LLM.copy()
+
+    def read_llm(self) -> dict:
+        """读取 llm.json，缺字段时用默认补"""
+        if os.path.exists(self._llm_path):
+            try:
+                with open(self._llm_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        # 缺字段补默认
+        merged = DEFAULT_LLM.copy()
+        merged.update(data)
+        return merged
+
+    def write_llm(self, data: dict):
+        """写入 llm.json"""
+        self.ensure_config_dir()
+        # 只保留已知字段
+        clean = {k: data.get(k, v) for k, v in DEFAULT_LLM.items()}
+        with open(self._llm_path, 'w', encoding='utf-8') as f:
+            json.dump(clean, f, indent=2, ensure_ascii=False)
 
 
 def resolve_device(setting: str) -> str:

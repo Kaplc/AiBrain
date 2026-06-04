@@ -9,9 +9,11 @@ export interface AibrainConfigSection {
 export interface ConfigField {
   key: string
   label: string
-  type: 'text' | 'number' | 'password' | 'dir'
+  type: 'text' | 'number' | 'password' | 'dir' | 'select'
   value: any
   default: any
+  options?: string[]
+  placeholder?: string
 }
 
 export const useConfigStore = defineStore('config', () => {
