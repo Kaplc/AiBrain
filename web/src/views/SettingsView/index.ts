@@ -24,6 +24,7 @@ export class SettingsViewModel {
   get mem0Tab() { return this.tabList.find(t => t.name === 'mem0')?.tabClass }
   get wikiTab() { return this.tabList.find(t => t.name === 'wiki')?.tabClass }
   get llmTab() { return this.tabList.find(t => t.name === 'llm')?.tabClass }
+  get chatTab() { return this.tabList.find(t => t.name === 'chat')?.tabClass }
 
   private _configStore = useConfigStore()
 

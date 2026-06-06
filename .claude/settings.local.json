@@ -201,7 +201,8 @@
       "Bash(echo \"EXIT_CODE: $?\")",
       "Bash(findstr \"19399\\\\|19400\\\\|19401\")",
       "Bash(sqlite3 *)",
-      "Bash(awk '{for\\(i=1;i<=NF;i++\\) if\\($i ~ /^\\\\[.*\\\\]$/ && $i != \"[WARNING]\"\\) print $i}')"
+      "Bash(awk '{for\\(i=1;i<=NF;i++\\) if\\($i ~ /^\\\\[.*\\\\]$/ && $i != \"[WARNING]\"\\) print $i}')",
+      "Bash(grep -E \"\\\\.py$\")"
     ]
   },
   "enableAllProjectMcpServers": true,

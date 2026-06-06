@@ -82,6 +82,7 @@ from routes.logs_routes import register as reg_logs
 from routes.settings_routes import register as reg_settings
 from routes.wiki_routes import register as reg_wiki
 from routes.stats_routes import register as reg_stats
+from routes.chat_routes import register as reg_chat
 
 reg_overview(app, _ready, logger, stats_db)
 reg_memory(app, _ready, logger, stats_db)
@@ -91,6 +92,7 @@ reg_logs(app, _ready, logger, stats_db)
 reg_settings(app, _ready, logger, stats_db, settings_mgr, model_mgr)
 reg_wiki(app, _ready, logger, stats_db)
 reg_stats(app, _ready, logger, stats_db)
+reg_chat(app, _ready, logger, stats_db)
 
 # 初始化 RebuildService（实体网络重建）单例
 from core.rebuild_service import RebuildService
@@ -119,6 +121,7 @@ def index():
 @app.route('/console')
 @app.route('/memory')
 @app.route('/settings')
+@app.route('/chat')
 def spa_shortcut():
     """前端路由快捷方式：无 / 前缀时转发到 SPA"""
     from flask import request
@@ -348,6 +351,28 @@ def _preload():
         logger.info("PipelineEngine initialized")
     except Exception as e:
         logger.warning(f"PipelineEngine init failed (non-fatal): {e}")
+
+    # ── 初始化意识流 Chat Loop ─────────────────────────────
+    try:
+        from modules.chat.agent_loop import init_consciousness_loop
+        from core.settings import ConfigManager
+        chat_cfg = ConfigManager.get_instance().read_chat()
+        chat_loop = init_consciousness_loop(stats_db, chat_cfg)
+        # 延迟注入 mem0 函数
+        try:
+            from modules.brain.mem0_adapter import get_mem0_client
+            m = get_mem0_client()
+            if m:
+                chat_loop.set_mem0_functions(
+                    search_fn=lambda **kw: m.search(**kw),
+                    add_fn=lambda **kw: m.add(**kw),
+                )
+                logger.info("consciousness loop: mem0 functions injected")
+        except Exception as e:
+            logger.warning(f"consciousness loop: mem0 injection failed (non-fatal): {e}")
+        logger.info("ConsciousnessLoop initialized")
+    except Exception as e:
+        logger.warning(f"ConsciousnessLoop init failed (non-fatal): {e}")
 
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:

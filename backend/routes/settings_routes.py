@@ -43,3 +43,20 @@ def register(app, ready_state, logger, stats_db, settings_mgr, model_mgr):
     def test_llm_route():
         """用给定的 LLM 配置真发一次请求，验证连通性"""
         return jsonify(_mgr.test_llm_config(request.get_json() or {}))
+
+    # ── Chat 意识流配置 ─────────────────────────────────────
+    @app.route('/settings/chat', methods=['GET'])
+    def get_chat_config_route():
+        """读取 chat.json 配置"""
+        return jsonify(_mgr.get_chat_config())
+
+    @app.route('/settings/chat', methods=['POST'])
+    def save_chat_config_route():
+        """保存 chat.json 配置并热更新 loop"""
+        result = _mgr.save_chat_config(request.get_json() or {})
+        return jsonify(result)
+
+    @app.route('/settings/chat/test', methods=['POST'])
+    def test_chat_config_route():
+        """测试 Chat LLM 连通性"""
+        return jsonify(_mgr.test_chat_config(request.get_json() or {}))

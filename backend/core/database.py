@@ -14,6 +14,7 @@ class StatsDB:
     def __init__(self, db_path):
         self._path = db_path
         self._init_db()
+        self.trim_chat_messages(keep_last=1000)
 
     @classmethod
     def get_instance(cls, db_path):
@@ -71,6 +72,19 @@ class StatsDB:
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             )
         ''')
+        # ── chat_messages：意识流聊天消息持久化 ──
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                role        TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                is_thought  INTEGER NOT NULL DEFAULT 0,
+                tokens_in   INTEGER NOT NULL DEFAULT 0,
+                tokens_out  INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(created_at DESC)')
         db.execute('''
             CREATE TABLE IF NOT EXISTS build_status (
                 build_id TEXT PRIMARY KEY,
@@ -356,4 +370,49 @@ class StatsDB:
         db = self._get_conn()
         db.execute('DELETE FROM search_history')
         db.commit()
+        db.close()
+
+    # ── Chat Messages（意识流聊天消息）────────────────────────
+
+    def append_chat_message(self, role, content, is_thought=0, tokens_in=0, tokens_out=0):
+        """写入一条聊天消息（user / assistant / system）"""
+        db = self._get_conn()
+        db.execute(
+            'INSERT INTO chat_messages (role, content, is_thought, tokens_in, tokens_out) VALUES (?, ?, ?, ?, ?)',
+            (role, content, is_thought, tokens_in, tokens_out)
+        )
+        db.commit()
+        rowid = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+        db.close()
+        return rowid
+
+    def list_chat_messages(self, limit=100):
+        """查询聊天消息（按 created_at ASC，最新在最后）"""
+        db = self._get_conn()
+        rows = db.execute(
+            'SELECT id, role, content, is_thought, tokens_in, tokens_out, created_at '
+            'FROM chat_messages ORDER BY id ASC LIMIT ?',
+            (limit,)
+        ).fetchall()
+        db.close()
+        return [dict(r) for r in rows]
+
+    def clear_chat_messages(self):
+        """清空正常对话消息（is_thought=0），保留 idle 思绪（is_thought=1）"""
+        db = self._get_conn()
+        db.execute('DELETE FROM chat_messages WHERE is_thought = 0')
+        db.commit()
+        db.close()
+
+    def trim_chat_messages(self, keep_last=1000):
+        """启动时裁剪：只保留最近 keep_last 条"""
+        db = self._get_conn()
+        total = db.execute('SELECT COUNT(*) as c FROM chat_messages').fetchone()[0]
+        if total > keep_last:
+            db.execute('''
+                DELETE FROM chat_messages WHERE id NOT IN (
+                    SELECT id FROM chat_messages ORDER BY id DESC LIMIT ?
+                )
+            ''', (keep_last,))
+            db.commit()
         db.close()

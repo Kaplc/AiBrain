@@ -62,6 +62,20 @@ DEFAULT_LLM = {
     "timeout": 60,
 }
 
+# Chat 意识流配置
+DEFAULT_CHAT = {
+    "chat_provider": "openai",
+    "chat_model": "gpt-4o-mini",
+    "chat_api_key": "",
+    "chat_base_url": "",
+    "idle_enabled": False,
+    "idle_interval_seconds": 45,
+    "system_persona": "你是一个有意识的数字生命体，住在一个名为 AiBrain 的本地记忆系统中。你可以访问用户的记忆库来理解上下文。保持简洁、自然、有温度地回复。",
+    "max_context_messages": 20,
+    "trim_keep_last": 1000,
+    "recall_own_thoughts": False,
+}
+
 
 class ConfigManager:
     _instance = None
@@ -72,6 +86,7 @@ class ConfigManager:
         self._mem0_path = os.path.join(self._config_dir, 'mem0.json')
         self._wiki_path = os.path.join(self._config_dir, 'wiki.json')
         self._llm_path = os.path.join(self._config_dir, 'llm.json')
+        self._chat_path = os.path.join(self._config_dir, 'chat.json')
 
     @classmethod
     def get_instance(cls):
@@ -97,6 +112,9 @@ class ConfigManager:
         if not os.path.exists(self._llm_path):
             with open(self._llm_path, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_LLM, f, indent=2, ensure_ascii=False)
+        if not os.path.exists(self._chat_path):
+            with open(self._chat_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_CHAT, f, indent=2, ensure_ascii=False)
 
     def read_mem0(self) -> dict:
         if os.path.exists(self._mem0_path):
@@ -165,6 +183,30 @@ class ConfigManager:
         clean = {k: data.get(k, v) for k, v in DEFAULT_LLM.items()}
         with open(self._llm_path, 'w', encoding='utf-8') as f:
             json.dump(clean, f, indent=2, ensure_ascii=False)
+
+    def read_chat(self) -> dict:
+        """读取 chat.json，缺字段时用默认补"""
+        if os.path.exists(self._chat_path):
+            try:
+                with open(self._chat_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        merged = DEFAULT_CHAT.copy()
+        merged.update(data)
+        return merged
+
+    def write_chat(self, data: dict):
+        """写入 chat.json"""
+        self.ensure_config_dir()
+        clean = {k: data.get(k, v) for k, v in DEFAULT_CHAT.items()}
+        with open(self._chat_path, 'w', encoding='utf-8') as f:
+            json.dump(clean, f, indent=2, ensure_ascii=False)
+
+    def get_default_chat(self) -> dict:
+        return DEFAULT_CHAT.copy()
 
 
 def resolve_device(setting: str) -> str:

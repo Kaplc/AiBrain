@@ -129,7 +129,7 @@ class SettingsManager:
             configs['aibrain']['size'] = format_size(get_dir_size(aibrain_dir))
             if os.path.exists(config_dir):
                 configs['aibrain']['configs'] = {}
-                for fname in ['mem0.json', 'wiki.json']:
+                for fname in ['mem0.json', 'wiki.json', 'chat.json']:
                     fpath = os.path.join(config_dir, fname)
                     if os.path.exists(fpath):
                         try:
@@ -217,6 +217,83 @@ class SettingsManager:
 
     def check_path(self, path: str) -> dict:
         return {"exists": bool(path) and os.path.exists(path)}
+
+    # ── Chat 意识流配置 ─────────────────────────────────────
+
+    def get_chat_config(self) -> dict:
+        """读取 chat.json 配置"""
+        cfg_mgr = ConfigManager.get_instance()
+        data = cfg_mgr.read_chat()
+        defaults = cfg_mgr.get_default_chat()
+        return {'data': data, 'defaults': defaults}
+
+    def save_chat_config(self, data: dict) -> dict:
+        """保存 chat.json 并热更新 ConsciousnessLoop"""
+        cfg_mgr = ConfigManager.get_instance()
+        cfg_mgr.write_chat(data)
+        # 热更新 loop
+        try:
+            from modules.chat.agent_loop import get_consciousness_loop
+            loop = get_consciousness_loop()
+            if loop is None:
+                # loop 未创建 → 尝试创建并启动
+                from core.database import StatsDB
+                import os
+                db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'stats.db')
+                stats_db = StatsDB.get_instance(db_path)
+                from modules.chat.agent_loop import init_consciousness_loop
+                loop = init_consciousness_loop(stats_db, cfg_mgr.read_chat())
+                # 注入 mem0 函数
+                try:
+                    from modules.brain.mem0_adapter import get_mem0_client
+                    m = get_mem0_client()
+                    if m:
+                        loop.set_mem0_functions(
+                            search_fn=lambda **kw: m.search(**kw),
+                            add_fn=lambda **kw: m.add(**kw),
+                        )
+                except Exception:
+                    pass
+                if not loop._thread or not loop._thread.is_alive():
+                    loop.start()
+            else:
+                loop.reload_config(cfg_mgr.read_chat())
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[settings] chat loop reload failed: {e}")
+        return {"result": "已保存，下次 tick 生效"}
+
+    def test_chat_config(self, data: dict) -> dict:
+        """测试 Chat LLM 连通性"""
+        import time
+        from modules.LLM import LLMConfig, call_llm_sync
+
+        try:
+            provider = data.get('chat_provider', 'openai')
+            cfg = LLMConfig(
+                provider=provider,
+                model=data.get('chat_model', 'gpt-4o-mini'),
+                api_key=data.get('chat_api_key', ''),
+                base_url=data.get('chat_base_url', ''),
+                temperature=0,
+                max_tokens=16,
+                timeout=15,
+            )
+            ok, err = cfg.validate()
+            if not ok:
+                return {"ok": False, "message": f"配置无效: {err}", "response": None, "latency_ms": 0}
+
+            t0 = time.time()
+            text = call_llm_sync("只回 OK", "ping", cfg)
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "ok": True,
+                "message": f"连接成功 ({provider}/{cfg.model})",
+                "response": text[:100],
+                "latency_ms": latency_ms,
+            }
+        except Exception as e:
+            return {"ok": False, "message": str(e), "response": None, "latency_ms": 0}
 
     def select_directory(self, project_root: str) -> dict:
         try:
