@@ -31,11 +31,16 @@ _OPENAI_COMPATIBLE = {
 
 # ── 公开 API ───────────────────────────────────────────────
 def call_llm_stream(
-    system_prompt: str,
-    user_prompt: str,
-    config: LLMConfig,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    config: LLMConfig = None,
+    messages: list[dict] = None,
 ) -> Iterator[dict]:
     """流式调用 LLM，统一 yield。
+
+    两种调用方式：
+    1. 传入 system_prompt + user_prompt → 自动构造 messages
+    2. 传入 messages → 直接使用，忽略 system_prompt 和 user_prompt
 
     Yields:
         {"content": str, "usage": dict|None, "finish_reason": str|None}
@@ -50,9 +55,9 @@ def call_llm_stream(
 
     provider = config.provider
     if provider in _OPENAI_COMPATIBLE:
-        yield from _openai_compatible_stream(system_prompt, user_prompt, config)
+        yield from _openai_compatible_stream(system_prompt, user_prompt, config, messages)
     elif provider == "anthropic":
-        yield from _anthropic_stream(system_prompt, user_prompt, config)
+        yield from _anthropic_stream(system_prompt, user_prompt, config, messages)
     else:
         raise ValueError(f"unsupported provider: {provider}")
 
@@ -72,13 +77,12 @@ def call_llm_sync(
 
 # ── OpenAI 兼容协议 ─────────────────────────────────────────
 def _openai_compatible_stream(
-    system_prompt: str,
-    user_prompt: str,
-    config: LLMConfig,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    config: LLMConfig = None,
+    messages: list[dict] = None,
 ) -> Iterator[dict]:
-    """OpenAI 兼容协议：所有 chunk 都有 .choices[0].delta.content；
-    最后一个 chunk 在 stream_options.include_usage=True 时带 usage。
-    """
+    """OpenAI 兼容协议：所有 chunk 都有 .choices[0].delta.content"""
     try:
         import openai
     except ImportError as e:
@@ -90,21 +94,31 @@ def _openai_compatible_stream(
 
     client = openai.OpenAI(**kwargs)
 
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    if user_prompt:
-        messages.append({"role": "user", "content": user_prompt})
+    # 优先使用传入的 messages，否则自动构造
+    if messages is not None:
+        msgs = messages
+    else:
+        msgs = []
+        if system_prompt:
+            msgs.append({"role": "system", "content": system_prompt})
+        if user_prompt:
+            msgs.append({"role": "user", "content": user_prompt})
+
+    # DeepSeek 思考模式
+    extra_kwargs = {}
+    if config.provider == "deepseek" and config.thinking_mode:
+        extra_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
 
     try:
         stream = client.chat.completions.create(
             model=config.model,
-            messages=messages,
+            messages=msgs,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             timeout=config.timeout,
             stream=True,
             stream_options={"include_usage": True},
+            **extra_kwargs,
         )
     except Exception as e:
         raise RuntimeError(f"OpenAI 兼容调用失败 ({config.provider}/{config.model}): {e}") from e
@@ -137,9 +151,10 @@ def _openai_compatible_stream(
 
 # ── Anthropic 协议 ─────────────────────────────────────────
 def _anthropic_stream(
-    system_prompt: str,
-    user_prompt: str,
-    config: LLMConfig,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    config: LLMConfig = None,
+    messages: list[dict] = None,
 ) -> Iterator[dict]:
     """Anthropic 流式：event stream 含 typed event；
     usage 在 message_delta 事件里。
@@ -166,7 +181,7 @@ def _anthropic_stream(
             max_tokens=config.max_tokens,
             temperature=config.temperature,
             system=system_prompt or "",
-            messages=messages,
+            messages=msgs,
         ) as stream:
             for text in stream.text_stream:
                 if text:

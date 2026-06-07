@@ -352,27 +352,43 @@ def _preload():
     except Exception as e:
         logger.warning(f"PipelineEngine init failed (non-fatal): {e}")
 
-    # ── 初始化意识流 Chat Loop ─────────────────────────────
+    # 初始化 AgentManager（LLM Agent 注册表）
     try:
-        from modules.chat.agent_loop import init_consciousness_loop
+        from modules.LLM.Agents import register_all_agents
+        register_all_agents()
+        logger.info("AgentManager initialized")
+    except Exception as e:
+        logger.warning(f"AgentManager init failed (non-fatal): {e}")
+
+    # 初始化 PromptPipeline（system prompt 构造流水线）
+    try:
+        from modules.chat.pipeline import init_pipeline
+        init_pipeline()
+        logger.info("PromptPipeline initialized")
+    except Exception as e:
+        logger.warning(f"PromptPipeline init failed (non-fatal): {e}")
+
+    # ── 初始化 ChatManager ──────────────────────────────────
+    try:
+        from modules.chat import ChatManager
         from core.settings import ConfigManager
+        mgr = ChatManager.get_instance()
         chat_cfg = ConfigManager.get_instance().read_chat()
-        chat_loop = init_consciousness_loop(stats_db, chat_cfg)
-        # 延迟注入 mem0 函数
+        mgr.load_config(chat_cfg)
+        # 启动空闲思绪后台线程
+        mgr.init_agentloop(stats_db, chat_cfg)
+        # 注入 mem0 add 函数（供空闲思绪写回用）
         try:
             from modules.brain.mem0_adapter import get_mem0_client
             m = get_mem0_client()
             if m:
-                chat_loop.set_mem0_functions(
-                    search_fn=lambda **kw: m.search(**kw),
-                    add_fn=lambda **kw: m.add(**kw),
-                )
-                logger.info("consciousness loop: mem0 functions injected")
+                mgr.set_mem0_add_fn(lambda **kw: m.add(**kw))
+                logger.info("ChatManager: mem0 add injected")
         except Exception as e:
-            logger.warning(f"consciousness loop: mem0 injection failed (non-fatal): {e}")
-        logger.info("ConsciousnessLoop initialized")
+            logger.warning(f"ChatManager: mem0 add injection failed (non-fatal): {e}")
+        logger.info("ChatManager initialized")
     except Exception as e:
-        logger.warning(f"ConsciousnessLoop init failed (non-fatal): {e}")
+        logger.warning(f"ChatManager init failed (non-fatal): {e}")
 
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:
@@ -381,6 +397,8 @@ def _preload():
         logger.info("LightRAG preloaded successfully")
     except Exception as e:
         logger.warning(f"LightRAG preload failed (will lazy-init on first search): {e}")
+
+    logger.info("=== AiBrain 系统初始化完成 ===")
 
 
 threading.Thread(target=_preload, daemon=True).start()

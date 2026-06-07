@@ -1,6 +1,5 @@
 """Chat 路由 - /chat/*（SSE 流式 + 消息管理）"""
 import json
-import queue
 
 from flask import request, jsonify, Response, stream_with_context
 
@@ -18,12 +17,12 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/chat/send', methods=['POST'])
     def chat_send():
-        """SSE 流式发送消息"""
+        """SSE 流式发送消息（直接调 LLM，不经过后台线程）"""
         user_msg = (request.get_json() or {}).get('message', '').strip()
         if not user_msg:
             return jsonify({'error': 'empty message'}), 400
 
-        # 缺 API key → 503 + 引导到 Settings
+        # 缺 API key → 503
         from core.settings import ConfigManager
         cfg = ConfigManager.get_instance().read_chat()
         if not cfg.get('chat_api_key'):
@@ -33,42 +32,33 @@ def register(app, ready_state, logger, stats_db):
                 'action': 'open_settings',
             }), 503
 
-        # 写入用户消息
-        stats_db.append_chat_message('user', user_msg, is_thought=0)
-
-        # 获取 loop
-        from modules.chat.agent_loop import get_consciousness_loop
-        loop = get_consciousness_loop()
-        if loop is None:
-            return jsonify({'error': 'agent_not_running'}), 503
-
-        q = queue.Queue(maxsize=64)
-        status = loop.request_user_tick(user_msg, q)
-        if status == 'busy':
-            return jsonify({
-                'error': 'agent_busy',
-                'message': 'AI 正在思考上一条消息，请稍候再发',
-            }), 409
-        if status == 'rejected':
-            return jsonify({'error': 'agent_not_running'}), 503
+        # 获取 ChatManager 并发送
+        from modules.chat import ChatManager
+        mgr = ChatManager.get_instance()
+        logger.info(f"[chat] send start: msg={user_msg[:60]!r}")
 
         def generate():
             yield f"data: {json.dumps({'type': 'start'})}\n\n"
-            while True:
-                try:
-                    evt = q.get(timeout=15)
-                except queue.Empty:
-                    yield ": ping\n\n"  # 心跳保活
-                    continue
-                t = evt.get('type')
-                if t == 'token':
-                    yield f"data: {json.dumps(evt)}\n\n"
-                elif t == 'done':
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    break
-                elif t == 'error':
-                    yield f"data: {json.dumps(evt)}\n\n"
-                    # error 之后继续等 done（保证 partial 已落库）
+            token_count = 0
+            try:
+                for event in mgr.send(user_msg):
+                    t = event.get('type')
+                    if t == 'token':
+                        token_count += 1
+                        yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'done':
+                        logger.info(f"[chat] send done: tokens={token_count}")
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        break
+                    elif t == 'error':
+                        logger.error(f"[chat] send error: {event.get('message')}")
+                        yield f"data: {json.dumps(event)}\n\n"
+                        break
+            except Exception as e:
+                logger.error(f"[chat/send] stream error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            finally:
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         return Response(
             stream_with_context(generate()),
@@ -81,7 +71,7 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/chat/clear', methods=['POST'])
     def chat_clear():
-        """清空对话消息（保留 idle 思绪）"""
+        """清空对话消息"""
         try:
             stats_db.clear_chat_messages()
             return jsonify({"ok": True})
@@ -92,13 +82,6 @@ def register(app, ready_state, logger, stats_db):
     @app.route('/chat/state', methods=['GET'])
     def chat_state():
         """获取意识流状态"""
-        from modules.chat.agent_loop import get_consciousness_loop
-        loop = get_consciousness_loop()
-        if loop is None:
-            return jsonify({
-                'is_running': False,
-                'idle_enabled': False,
-                'idle_count': 0,
-                'is_busy': False,
-            })
-        return jsonify(loop.get_state())
+        from modules.chat import ChatManager
+        mgr = ChatManager.get_instance()
+        return jsonify(mgr.get_loop_state())

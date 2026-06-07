@@ -24,7 +24,11 @@ def execute(ctx) -> None:
     use_infer = meta.get("infer", True)
     if not use_infer:
         logger.info("[step:graph_recall] infer=false, skip")
-        # 为所有结果添加空 entities 字段
+        for m in ctx.intermediate.get("semantic_results", []):
+            m.setdefault("entities", [])
+        return
+    if meta.get("_info_enough"):
+        logger.info("[step:graph_recall] info_enough=true, skip")
         for m in ctx.intermediate.get("semantic_results", []):
             m.setdefault("entities", [])
         return
@@ -71,13 +75,13 @@ def execute(ctx) -> None:
     for i, c in enumerate(candidates):
         logger.info(f"[step:graph_recall] 候选[{i}] co_count={c.get('co_count',0)} | {c['id'][:8]} | {c['text'][:80]}")
 
-    # LLM 批量过滤
+    # LLM 批量过滤（使用 MemoryRelationAgent）
     try:
-        from modules.brain.llm import filter_related_memories
-        related_ids = filter_related_memories(query, candidates)
+        from modules.LLM import get_agent_manager
+        agent = get_agent_manager().get("memory_relation")
+        related_ids = agent.run({"query": query, "candidates": candidates})
     except Exception as e:
-        # LLM 过滤失败：跳过 LLM 过滤，直接返回共现候选
-        logger.warning(f"[step:graph_recall] LLM filter failed, using raw candidates: {e}")
+        logger.warning(f"[step:graph_recall] MemoryRelationAgent failed, using raw candidates: {e}")
         related_ids = [c["id"] for c in candidates[:10]]
 
     if not related_ids:
@@ -97,10 +101,9 @@ def execute(ctx) -> None:
             added.append(c)
 
     ctx.intermediate["graph_results"] = added
-    logger.info(
-        f"[step:graph_recall] LLM 过滤后保留 {len(added)} 条 | "
-        f"内容: {[(r['id'][:8], r['text'][:30]) for r in added]}"
-    )
+    logger.info(f"[step:graph_recall] LLM 过滤后保留 {len(added)} 条")
+    for r in added:
+        logger.info(f"  └─ {r.get('id','')[:8]} | {r.get('text','')[:80]}")
 
 
 def _make_step():

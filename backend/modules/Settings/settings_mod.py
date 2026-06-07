@@ -228,34 +228,29 @@ class SettingsManager:
         return {'data': data, 'defaults': defaults}
 
     def save_chat_config(self, data: dict) -> dict:
-        """保存 chat.json 并热更新 ConsciousnessLoop"""
+        """保存 chat.json 并热更新 ChatManager"""
         cfg_mgr = ConfigManager.get_instance()
         cfg_mgr.write_chat(data)
-        # 热更新 loop
+        chat_cfg = cfg_mgr.read_chat()
+        # 热更新
         try:
-            from modules.chat.agent_loop import get_consciousness_loop
-            loop = get_consciousness_loop()
-            if loop is None:
-                # loop 未创建 → 尝试创建并启动
+            from modules.chat import ChatManager
+            mgr = ChatManager.get_instance()
+            mgr.load_config(chat_cfg)
+            # 尝试创建并启动空闲思绪线程
+            if mgr.get_loop_state().get('is_running') is False:
                 from core.database import StatsDB
                 import os
                 db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'stats.db')
                 stats_db = StatsDB.get_instance(db_path)
-                from modules.chat.agent_loop import init_consciousness_loop
-                loop = init_consciousness_loop(stats_db, cfg_mgr.read_chat())
-                # 注入 mem0 函数
+                mgr.init_agentloop(stats_db, chat_cfg)
                 try:
                     from modules.brain.mem0_adapter import get_mem0_client
                     m = get_mem0_client()
                     if m:
-                        loop.set_mem0_functions(
-                            search_fn=lambda **kw: m.search(**kw),
-                            add_fn=lambda **kw: m.add(**kw),
-                        )
+                        mgr.set_mem0_add_fn(lambda **kw: m.add(**kw))
                 except Exception:
                     pass
-                if not loop._thread or not loop._thread.is_alive():
-                    loop.start()
             else:
                 loop.reload_config(cfg_mgr.read_chat())
         except Exception as e:

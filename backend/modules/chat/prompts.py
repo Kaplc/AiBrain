@@ -38,7 +38,7 @@ def _now_str() -> str:
 def sanitize_memory(text: str, max_len: int = 200) -> str:
     """单条记忆：截断 + 转义 + 标签包裹"""
     if len(text) > max_len:
-        text = text[:max_len] + '...'
+         text = text[:max_len] + '...'
     # 转义 < > 防注入
     text = html.escape(text, quote=False)
     return f"<retrieved_memory>{text}</retrieved_memory>"

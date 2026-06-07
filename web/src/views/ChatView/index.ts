@@ -16,6 +16,7 @@ export interface ChatMessage {
   is_thought?: number
   isStreaming?: boolean
   created_at?: string
+  duration?: number  // LLM 响应耗时（秒）
 }
 
 const API_BASE = window.location.origin
@@ -98,8 +99,8 @@ export class ChatViewModel {
     this.messages.push({ role: 'user', content: text })
     this._scrollToBottom()
 
-    // 占位 assistant 消息
-    const streamMsg: ChatMessage = { role: 'assistant', content: '', isStreaming: true }
+    // 占位 assistant 消息（立即开始计时）
+    const streamMsg: ChatMessage = { role: 'assistant', content: '', isStreaming: true, duration: 0 }
     this.messages.push(streamMsg)
     const idx = this.messages.length - 1
     this.sending.value = true
@@ -135,6 +136,7 @@ export class ChatViewModel {
       const reader = resp.body!.getReader()
       const decoder = new TextDecoder()
       let buf = ''
+      const startTime = performance.now()
       while (true) {
         const { value, done } = await reader.read()
         if (done) break
@@ -153,6 +155,7 @@ export class ChatViewModel {
               this._toast.show(`AI 响应出错: ${payload.message}`, 'error')
             } else if (payload.type === 'done') {
               this.messages[idx].isStreaming = false
+              this.messages[idx].duration = parseFloat(((performance.now() - startTime) / 1000).toFixed(1))
             }
           } catch {
             // JSON parse error → skip

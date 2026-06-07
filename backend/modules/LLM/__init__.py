@@ -3,11 +3,13 @@ LLM 能力模块 —— 只负责"发请求拿响应"
 
 外部访问：
     from modules.LLM import get_llm_manager, LLMConfig, call_llm_stream, call_llm_sync
+    from modules.LLM import get_agent_manager  # Agent 注册表
 
 子模块：
     .config    - LLMConfig dataclass + provider 默认值
     .stream    - call_llm_stream 统一 provider 分发
     .llm_mod   - LLMManager 单例入口
+    .Agents    - AgentManager 单例 + Agent 注册表
 
 不做的事：
 - 不构造 system prompt / 不注入记忆 / 不做 prompt 模板
@@ -20,6 +22,7 @@ LLM 能力模块 —— 只负责"发请求拿响应"
 from .config import LLMConfig, SUPPORTED_PROVIDERS
 from .stream import call_llm_stream, call_llm_sync
 from .llm_mod import LLMManager, get_llm_manager
+from .Agents import AgentManager, get_agent_manager
 
 __all__ = [
     # 配置
@@ -31,4 +34,7 @@ __all__ = [
     # 单例
     "LLMManager",
     "get_llm_manager",
+    # Agent
+    "AgentManager",
+    "get_agent_manager",
 ]

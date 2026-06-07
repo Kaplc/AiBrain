@@ -6,15 +6,28 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const inputText = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
+const ticker = ref(0)
+let tickerTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   chatViewModel.setScrollFn(scrollToBottom)
   await chatViewModel.loadMessages()
   chatViewModel.startStatePolling()
+  // 启动计时器，实时更新 streaming 消息的耗时
+  tickerTimer = setInterval(() => {
+    ticker.value++
+    const msgs = chatViewModel.messages
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].isStreaming && msgs[i].duration !== undefined) {
+        msgs[i].duration = parseFloat((msgs[i].duration! + 0.1).toFixed(1))
+      }
+    }
+  }, 100)
 })
 
 onUnmounted(() => {
   chatViewModel.stopStatePolling()
+  if (tickerTimer) clearInterval(tickerTimer)
 })
 
 function scrollToBottom() {
@@ -133,6 +146,8 @@ function timeAgo(ts: number | null): string {
         <div class="msg-content" v-html="renderContent(msg)"></div>
         <!-- 流式光标 -->
         <span v-if="msg.isStreaming" class="cursor">▌</span>
+        <!-- 耗时 -->
+        <div v-if="msg.role==='assistant' && msg.duration!==undefined" class="msg-duration">{{ msg.duration.toFixed(1) }}s</div>
       </div>
     </div>
 
@@ -255,6 +270,14 @@ function timeAgo(ts: number | null): string {
   color: #a78bfa;
   margin-bottom: 4px;
   opacity: 0.7;
+}
+
+.msg-duration {
+  font-size: 10px;
+  color: #64748b;
+  text-align: right;
+  margin-top: 4px;
+  opacity: 0.6;
 }
 
 .msg-content :deep(pre) {

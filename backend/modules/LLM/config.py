@@ -39,6 +39,7 @@ class LLMConfig:
     temperature: float = 0.7
     max_tokens: int = 1024
     timeout: int = 60
+    thinking_mode: bool = True  # DeepSeek 思考模式（默认开启）
 
     # ── 工厂方法 ─────────────────────────────────────────
     @classmethod
@@ -51,6 +52,7 @@ class LLMConfig:
         temperature = float(data.get("temperature", 0.7))
         max_tokens = int(data.get("max_tokens", 1024))
         timeout = int(data.get("timeout", 60))
+        thinking_mode = bool(data.get("thinking_mode", True))
 
         # 缺省值用 provider 默认填充
         defaults = _PROVIDER_DEFAULTS.get(provider, {})
@@ -67,11 +69,12 @@ class LLMConfig:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
+            thinking_mode=thinking_mode,
         )
 
     @classmethod
-    def from_mem0_config(cls) -> "LLMConfig":
-        """兼容旧路径：~/.aibrain/config/mem0.json"""
+    def from_settings(cls) -> "LLMConfig":
+        """从全局设置加载 LLM 配置"""
         from core.settings import ConfigManager
         cfg = ConfigManager.get_instance().read_mem0()
         return cls.from_dict(cfg)

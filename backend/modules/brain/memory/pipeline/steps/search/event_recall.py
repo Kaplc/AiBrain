@@ -24,6 +24,9 @@ def execute(ctx) -> None:
     if not use_infer:
         logger.info("[step:event_recall] infer=false, skip")
         return
+    if meta.get("_info_enough"):
+        logger.info("[step:event_recall] info_enough=true, skip")
+        return
 
     query = ctx.input_data
     semantic_results = ctx.intermediate.get("semantic_results")

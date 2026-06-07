@@ -156,16 +156,9 @@ def _create_client():
         "model": llm_model,
         "api_key": api_key,
     }
-    # base_url 用于第三方代理
+    # base_url 统一用环境变量设置（避免 extra_body 不兼容 DeepSeek 等 provider）
     if cfg.get("base_url"):
-        if provider == "openai":
-            os.environ["OPENAI_BASE_URL"] = cfg["base_url"]
-        elif provider == "anthropic":
-            os.environ["ANTHROPIC_BASE_URL"] = cfg["base_url"]
-        elif provider == "minimax":
-            os.environ["MINIMAX_API_BASE"] = cfg["base_url"]
-        else:
-            llm_config.setdefault("extra_body", {})
+        os.environ.setdefault("OPENAI_BASE_URL", cfg["base_url"])
 
     # 修复 mem0 Anthropic LLM 的 ThinkingBlock 兼容性问题
     # MiniMax-M2.7 等模型返回 thinking block，mem0 假设第一个 block 是 TextBlock

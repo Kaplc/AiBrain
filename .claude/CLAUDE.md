@@ -6,13 +6,17 @@
 
 3-.claude\plan\这里是放项目计划的目录
 
-4-这个是 @app.route('/overview/flask/restart', methods=['POST'])手动重启后端修改后端文件后可以使用这个接口重启后端
+4-只有修改后端文件才要重启后端，这个是 @app.route('/overview/flask/restart', methods=['POST'])手动重启后端修改后端文件后可以使用这个接口重启后端
 
-5-后端刚启动需要预热加载语义模型不能马上请求，可以查看日志文件出现[INFO] Model loaded successfully on cpu代表重启真正完成了，要等待1m让日志文件重新生成再读取
+5-后端刚启动需要预热加载语义模型不能马上请求，可以查看日志文件出现[INFO] AiBrain 系统初始化完成 代表重启真正完成了，要等待1m让日志文件重新生成再读取
 
 @app.route('/overview/model', methods=['GET'])
 
 6-前端e2e测试需要使用playWright
 
-7-前端修改完成后自动构建一下前端代码
+7-只有修改前端文件的时候才需要执行npm run build 构建一下前端代码
+
+8-创建的文件和文件夹名要根据用户的提示自己来做成小驼峰加_这种形式例如, memory_search_agent结尾一定是名词
+
+9-写完代码需要检查，逻辑简洁，稳定性优先，整个逻辑链检查一下不能有做差不多类似重复的事情，无法处理或者怀疑的逻辑告知用户来处理
 

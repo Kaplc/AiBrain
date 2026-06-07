@@ -79,11 +79,47 @@ def execute(ctx) -> None:
     semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
     min_semantic = min(semantic_scores) if semantic_scores else 0.5
 
+    # 打印向量搜索结果
+    logger.info(f"[step:vector_search] 向量搜索结果共 {len(memories)} 条")
+    for m in memories:
+        logger.info(f"  └─ [{m.get('score',0):.4f}] {m.get('id','')[:8]} | {m.get('text','')[:80]}")
+
+    # 先判断搜索结果是否足够回答（不筛选，用原始结果判断）
+    ctx.metadata["_info_enough"] = False
+    if memories:
+        try:
+            from modules.LLM import get_agent_manager
+            agent = get_agent_manager().get("info_sufficient")
+            verdict = agent.run({"query": query, "memories": memories})
+            if verdict.get("enough"):
+                ctx.metadata["_info_enough"] = True
+                logger.info("[step:vector_search] info_sufficient=true，跳过筛选，直接回复")
+            else:
+                logger.info(f"[step:vector_search] info_sufficient=false，继续筛选")
+        except Exception as e:
+            logger.warning(f"[step:vector_search] info_sufficient failed: {e}")
+
+    # 如果不够，再进行 LLM 筛选（缩小范围供下游实体扩散）
+    if not ctx.metadata["_info_enough"] and memories:
+        try:
+            from modules.LLM import get_agent_manager
+            agent = get_agent_manager().get("memory_relation")
+            related_ids = agent.run({"query": query, "candidates": memories})
+            if related_ids:
+                id_set = set(related_ids)
+                memories = [m for m in memories if m.get("id") in id_set]
+                logger.info(f"[step:vector_search] LLM filter: {len(related_ids)} related kept")
+                for m in memories:
+                    logger.info(f"  └─ {m.get('id','')[:8]} | {m.get('text','')[:80]}")
+            else:
+                memories = []
+                logger.info("[step:vector_search] LLM filter: none related")
+        except Exception as e:
+            logger.warning(f"[step:vector_search] LLM filter failed, using all results: {e}")
+
     # 写入 intermediate
     ctx.intermediate["semantic_results"] = memories
     ctx.intermediate["min_semantic_score"] = min_semantic
-
-    # 也存一份到 metadata 供兼容层快速访问
     ctx.metadata["_search_query"] = query
 
     logger.info(f"[step:vector_search] results={len(memories)} min_score={min_semantic:.4f}")
@@ -99,5 +135,5 @@ def _make_step():
         enabled=True,
         required=True,
         pipeline="search",
-        timeout=10.0,
+        timeout=30.0,
     )

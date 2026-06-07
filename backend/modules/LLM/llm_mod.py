@@ -24,7 +24,7 @@ class LLMManager:
 
     使用：
         mgr = LLMManager.get_instance()
-        cfg = LLMConfig.from_mem0_config()  # 或自己构造
+        cfg = LLMConfig.from_settings()  # 或自己构造
         for chunk in mgr.stream("sys", "user", cfg):
             print(chunk["content"], end="")
 
@@ -72,7 +72,7 @@ class LLMManager:
     # ── 配置加载快捷方法 ─────────────────────────────────
     def load_config_from_mem0(self) -> LLMConfig:
         """从 ~/.aibrain/config/mem0.json 读 LLM 配置（兼容旧路径）"""
-        return LLMConfig.from_mem0_config()
+        return LLMConfig.from_settings()
 
     # ── 静态信息 ─────────────────────────────────────────
     @staticmethod
