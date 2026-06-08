@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onActivated, onDeactivated, onUnmounted, nextTick, computed } from 'vue'
 import { chatViewModel } from './index'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const inputText = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
+const showSettings = ref(false)
+const systemPersona = ref('')
+const saving = ref(false)
+const savedTip = ref(false)
 const ticker = ref(0)
 let tickerTimer: ReturnType<typeof setInterval> | null = null
 
@@ -23,6 +27,17 @@ onMounted(async () => {
       }
     }
   }, 100)
+})
+
+// KeepAlive 切回时刷新状态和滚动到底部
+onActivated(() => {
+  chatViewModel.loadState()
+  scrollToBottom()
+})
+
+// KeepAlive 离开时停止轮询节省资源
+onDeactivated(() => {
+  chatViewModel.stopStatePolling()
 })
 
 onUnmounted(() => {
@@ -60,8 +75,58 @@ function handleClear() {
   chatViewModel.clearChat()
 }
 
-function goToSettings() {
-  router.push('/settings?tab=chat')
+async function openSettings() {
+  showSettings.value = true
+  savedTip.value = false
+  try {
+    const resp = await fetch('/settings/chat')
+    const json = await resp.json()
+    systemPersona.value = json.data?.system_persona || ''
+  } catch {
+    systemPersona.value = ''
+  }
+}
+
+async function saveSettings() {
+  saving.value = true
+  try {
+    await fetch('/settings/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system_persona: systemPersona.value }),
+    })
+    savedTip.value = true
+    setTimeout(() => { savedTip.value = false }, 2000)
+  } catch (e) {
+    console.error('save settings failed:', e)
+  } finally {
+    saving.value = false
+  }
+}
+
+function closeSettings() {
+  showSettings.value = false
+}
+
+async function copyMsgContent(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+  // 浮动提示
+  const flash = document.createElement('div')
+  flash.className = 'copy-flash'
+  flash.textContent = '已复制'
+  document.body.appendChild(flash)
+  setTimeout(() => flash.remove(), 1200)
 }
 
 /* 简单 markdown 渲染 */
@@ -108,6 +173,23 @@ function timeAgo(ts: number | null): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
   return `${Math.floor(diff / 3600)}小时前`
 }
+
+/* 渲染时间分隔线：日期变化时显示 */
+function getDateSeparator(currentTime: string, prevTime: string | null): string {
+  if (!currentTime) return ''
+  const curDate = currentTime.slice(0, 10) // "2026-06-08"
+  if (!prevTime) return curDate // 第一条
+  const prevDate = prevTime.slice(0, 10)
+  if (curDate !== prevDate) return curDate
+  return ''
+}
+
+/* 格式化消息时间：显示 HH:mm:ss */
+function formatMsgTime(time: string): string {
+  if (!time) return ''
+  const m = time.match(/\d{2}:\d{2}:\d{2}/)
+  return m ? m[0] : ''
+}
 </script>
 
 <template>
@@ -119,7 +201,7 @@ function timeAgo(ts: number | null): string {
       <template v-if="chatViewModel.loopState.idle_enabled && chatViewModel.loopState.last_thought_at">
         <span class="status-detail">上次 {{ timeAgo(chatViewModel.loopState.last_thought_at) }}</span>
       </template>
-      <button class="status-btn" @click="goToSettings" title="Chat 设置">⚙</button>
+      <button class="status-btn" @click="openSettings" title="系统提示词">⚙</button>
       <button class="status-btn" @click="handleClear" title="清空对话">🗑</button>
     </div>
 
@@ -131,24 +213,38 @@ function timeAgo(ts: number | null): string {
         <div class="empty-sub">AI 会自动检索记忆库来理解上下文</div>
       </div>
 
-      <div
-        v-for="(msg, i) in chatViewModel.messages"
-        :key="i"
-        class="message"
-        :class="[
-          msg.role,
-          { thought: msg.is_thought === 1 },
-        ]"
-      >
-        <!-- 思绪标记 -->
-        <span v-if="msg.is_thought === 1" class="thought-badge">💭 思绪</span>
-        <!-- 消息内容 -->
-        <div class="msg-content" v-html="renderContent(msg)"></div>
-        <!-- 流式光标 -->
-        <span v-if="msg.isStreaming" class="cursor">▌</span>
-        <!-- 耗时 -->
-        <div v-if="msg.role==='assistant' && msg.duration!==undefined" class="msg-duration">{{ msg.duration.toFixed(1) }}s</div>
-      </div>
+      <template v-for="(msg, i) in chatViewModel.messages" :key="i">
+        <!-- 日期分隔线 -->
+        <div v-if="getDateSeparator(msg.created_at || '', (chatViewModel.messages[i-1]?.created_at || null))" class="date-separator">
+          {{ getDateSeparator(msg.created_at || '', (chatViewModel.messages[i-1]?.created_at || null)) }}
+        </div>
+        <div
+          class="message"
+          :class="[
+            msg.role,
+            { thought: msg.is_thought === 1 },
+          ]"
+        >
+          <!-- 思绪标记 -->
+          <span v-if="msg.is_thought === 1" class="thought-badge">💭 思绪</span>
+          <!-- 消息内容 -->
+          <div class="msg-content" v-html="renderContent(msg)"></div>
+          <!-- 流式状态 + 光标（仅流式期间显示） -->
+          <div v-if="msg.isStreaming" class="stream-status">
+            <span class="stream-label">{{ chatViewModel.currentStatus.value }}</span>
+            <span class="cursor">▌</span>
+          </div>
+          <!-- 时间戳 + 耗时 -->
+          <div v-if="msg.created_at" class="msg-footer" :class="msg.role">
+            <span class="msg-time">{{ formatMsgTime(msg.created_at) }}</span>
+            <span v-if="msg.role==='assistant' && msg.duration!==undefined" class="msg-duration">{{ msg.duration.toFixed(1) }}s</span>
+          </div>
+        </div>
+        <!-- 气泡操作栏 -->
+        <div class="msg-actions" :class="msg.role" v-if="!msg.isStreaming">
+          <button class="action-btn" @click="copyMsgContent(msg.content)" title="复制">📋</button>
+        </div>
+      </template>
     </div>
 
     <!-- 输入区 -->
@@ -175,6 +271,33 @@ function timeAgo(ts: number | null): string {
         title="发送"
       >➤</button>
     </div>
+
+    <!-- 系统提示词设置弹窗 -->
+    <Teleport to="body">
+      <div v-if="showSettings" class="modal-overlay" @click.self="closeSettings">
+        <div class="modal-panel">
+          <div class="modal-header">
+            <div class="modal-title">系统提示词</div>
+            <button class="modal-close" @click="closeSettings">✕</button>
+          </div>
+          <div class="modal-body">
+            <textarea
+              v-model="systemPersona"
+              class="modal-textarea"
+              placeholder="输入系统提示词..."
+              rows="8"
+            ></textarea>
+          </div>
+          <div class="modal-footer">
+            <span v-if="savedTip.value" class="save-tip">✓ 已保存</span>
+            <button class="btn-cancel" @click="closeSettings">取消</button>
+            <button class="btn-save" @click="saveSettings" :disabled="saving.value">
+              {{ saving.value ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -275,10 +398,46 @@ function timeAgo(ts: number | null): string {
 .msg-duration {
   font-size: 10px;
   color: #64748b;
-  text-align: right;
-  margin-top: 4px;
   opacity: 0.6;
 }
+
+/* 时间戳底部栏 */
+.msg-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.msg-footer.assistant {
+  justify-content: flex-start;
+}
+.msg-footer.user {
+  justify-content: flex-end;
+}
+.msg-time {
+  font-size: 11px;
+  color: #e2e8f0;
+}
+
+/* 日期分隔线 */
+.date-separator {
+  text-align: center;
+  font-size: 11px;
+  color: #475569;
+  padding: 8px 0;
+  position: relative;
+}
+.date-separator::before,
+.date-separator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  height: 1px;
+  background: #2d3149;
+}
+.date-separator::before { left: 0; }
+.date-separator::after { right: 0; }
 
 .msg-content :deep(pre) {
   background: #0f1117;
@@ -301,7 +460,18 @@ function timeAgo(ts: number | null): string {
   padding: 0;
 }
 
-/* 流式光标 */
+/* 流式状态 + 光标（仅流式期间显示） */
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.stream-label {
+  font-size: 10px;
+  color: #a78bfa;
+  opacity: 0.7;
+}
 .cursor {
   display: inline-block;
   animation: blink 0.8s infinite;
@@ -366,4 +536,158 @@ function timeAgo(ts: number | null): string {
   background: #dc2626;
 }
 .stop-btn:hover { background: #b91c1c; }
+
+/* ── 气泡操作栏 ── */
+.msg-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.msg-actions.assistant {
+  align-self: flex-start;
+  margin-left: 4px;
+}
+.msg-actions.user {
+  align-self: flex-end;
+  margin-right: 4px;
+  flex-direction: row-reverse;
+}
+.message:hover + .msg-actions,
+.msg-actions:hover {
+  opacity: 1;
+}
+.action-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+.action-btn:hover {
+  color: #94a3b8;
+  border-color: #2d3149;
+  background: #1e293b;
+}
+
+/* ── 复制浮动提示 ── */
+:global(.copy-flash) {
+  position: fixed;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #22c55e22;
+  color: #86efac;
+  border: 1px solid #22c55e44;
+  font-size: 11px;
+  padding: 4px 16px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 9999;
+  animation: copyFade 1.2s ease forwards;
+}
+@keyframes copyFade {
+  0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+}
+
+/* ── 设置弹窗 ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-panel {
+  background: #1a1d27;
+  border: 1px solid #2d3149;
+  border-radius: 12px;
+  width: 500px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #2d3149;
+}
+.modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+.modal-close:hover { color: #e2e8f0; background: #2d3149; }
+.modal-body {
+  padding: 16px 20px;
+}
+.modal-textarea {
+  width: 100%;
+  background: #0f1117;
+  border: 1px solid #2d3149;
+  border-radius: 8px;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  line-height: 1.5;
+  min-height: 120px;
+}
+.modal-textarea:focus { border-color: #7c3aed; }
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #2d3149;
+}
+.save-tip {
+  font-size: 12px;
+  color: #86efac;
+  margin-right: auto;
+}
+.btn-cancel {
+  background: #1e293b;
+  border: 1px solid #2d3149;
+  color: #94a3b8;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-cancel:hover { color: #e2e8f0; }
+.btn-save {
+  background: #7c3aed;
+  border: none;
+  color: #fff;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-save:hover { background: #6d28d9; }
+.btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

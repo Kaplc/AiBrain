@@ -1,7 +1,9 @@
 """
 WorkMemory - 工作记忆管理器（单例）
-管理 data/ 目录下的 .md 文件作为工作记忆，
-提供 CRUD + 滚动输入 + package 搜索接口。
+管理 data/ 目录下的 .json / .md 文件作为工作记忆。
+- input.json：输入记忆（JSON 数组）
+- package.json：搜索结果（JSON 对象）
+- output.md：对话历史（Markdown，供前端直接读取）
 
 外部访问：
     from modules.brain.memory.workmemory import get_work_memory
@@ -10,6 +12,7 @@ WorkMemory - 工作记忆管理器（单例）
     entries = wm.input_mem_read()
 """
 from __future__ import annotations
+import json
 import logging
 import os
 import re
@@ -23,8 +26,8 @@ logger = logging.getLogger(__name__)
 # 工作记忆文件存储根目录
 _BASE_DIR = Path(__file__).parent / "data"
 
-# 默认文件
-DEFAULT_FILES = ["input.md", "package.md"]
+# 默认文件（input/package 用 JSON，output 保留 Markdown 供前端读取）
+DEFAULT_FILES = ["input.json", "output.json", "package.json"]
 
 
 @dataclass
@@ -70,23 +73,24 @@ class WorkMemoryManager:
                 logger.info(f"[workmemory] created default: {fname}")
 
     def _scan_directory(self) -> None:
-        """扫描 data/ 下所有 .md 文件，刷新注册表"""
+        """扫描 data/ 下所有 .md / .json 文件，刷新注册表"""
         self._registry.clear()
-        for fpath in _BASE_DIR.glob("*.md"):
-            stat = fpath.stat()
-            info = FileInfo(
-                name=fpath.name,
-                size=stat.st_size,
-                created_at=stat.st_ctime,
-                modified_at=stat.st_mtime,
-            )
-            self._registry[fpath.name] = info
+        for ext in ("*.md", "*.json"):
+            for fpath in _BASE_DIR.glob(ext):
+                stat = fpath.stat()
+                info = FileInfo(
+                    name=fpath.name,
+                    size=stat.st_size,
+                    created_at=stat.st_ctime,
+                    modified_at=stat.st_mtime,
+                )
+                self._registry[fpath.name] = info
 
     def _resolve_path(self, name: str) -> Path:
         """安全拼接路径，防止路径穿越
 
         Args:
-            name: 文件名（如 "task.md"）
+            name: 文件名（如 "input.json" / "task.md"）
 
         Returns:
             完整的文件路径
@@ -94,10 +98,9 @@ class WorkMemoryManager:
         Raises:
             ValueError: 路径穿越
         """
-        # 补 .md 后缀
-        if not name.endswith(".md"):
+        # 补后缀（.json 或 .md）
+        if not name.endswith(".json") and not name.endswith(".md"):
             name += ".md"
-        # 安全拼接
         full = (_BASE_DIR / name).resolve()
         if not str(full).startswith(str(_BASE_DIR.resolve())):
             raise ValueError(f"路径穿越禁止: {name}")
@@ -138,12 +141,12 @@ class WorkMemoryManager:
         """读取文件内容
 
         Args:
-            name: 文件名（可省略 .md）
+            name: 文件名（可省略 .md / .json）
 
         Returns:
             文件内容，不存在返回 None
         """
-        if not name.endswith(".md"):
+        if not name.endswith(".md") and not name.endswith(".json"):
             name += ".md"
         try:
             fpath = self._resolve_path(name)
@@ -155,24 +158,16 @@ class WorkMemoryManager:
             return None
 
     def write(self, name: str, content: str) -> dict:
-        """写入/覆盖文件。省略文件名时默认写入 input.md
+        """写入/覆盖文件。省略后缀时默认 .md
 
         Args:
-            name: 文件名（可省略 .md）。如果内容不含换行且没有 name 则当 content 处理
+            name: 文件名（可省略后缀）
             content: 文件内容
 
         Returns:
             {"name": str, "size": int}
         """
-        # 处理省略文件名的情况：write("纯文本内容") → input.md
-        if not name.endswith(".md") and "\n" not in name and len(name) < 100:
-            # 判断 name 是否是文件名：包含 . 或路径分隔符
-            if "/" not in name and "\\" not in name and "." not in name.replace(".md", ""):
-                # 没有文件名特征，当作内容写入 input.md
-                content = f"{name}\n{content}" if content else name
-                name = "input.md"
-
-        if not name.endswith(".md"):
+        if not name.endswith(".json") and not name.endswith(".md"):
             name += ".md"
         fpath = self._resolve_path(name)
         fpath.write_text(content, encoding="utf-8")
@@ -189,7 +184,7 @@ class WorkMemoryManager:
         Returns:
             True 成功，False 不存在
         """
-        if not name.endswith(".md"):
+        if not name.endswith(".md") and not name.endswith(".json"):
             name += ".md"
         try:
             fpath = self._resolve_path(name)
@@ -237,10 +232,10 @@ class WorkMemoryManager:
                     continue
         return results
 
-    # ── input.md 专用方法 ────────────────────────────────
+    # ── input.json 专用方法 ─────────────────────────────
 
     def input_mem_write(self, content: str) -> dict:
-        """向 input.md 滚动追加条目，超过 20 条自动删除最旧
+        """向 input.json 滚动追加条目，超过 20 条自动删除最旧
 
         Args:
             content: 要追加的内容
@@ -248,16 +243,24 @@ class WorkMemoryManager:
         Returns:
             {"total": 条目数, "appended": content, "removed": 删除的条目数}
         """
-        fpath = _BASE_DIR / "input.md"
-        text = fpath.read_text(encoding="utf-8") if fpath.exists() else ""
-        entries = self._parse_entries(text)
+        fpath = _BASE_DIR / "input.json"
+        entries = []
+        if fpath.exists():
+            try:
+                raw = fpath.read_text(encoding="utf-8")
+                if raw.strip():
+                    entries = json.loads(raw)
+            except (json.JSONDecodeError, Exception):
+                entries = []
+        if not isinstance(entries, list):
+            entries = []
 
-        # 追加新条目（带时间戳）
-        seq = len(entries) + 1
+        # 计算最大序号
+        max_seq = max((e.get("seq", 0) for e in entries), default=0)
+        seq = max_seq + 1
         from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        new_entry = f"## 条目 {seq}\n时间：{ts}\n{content}"
-        entries.append(new_entry)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entries.append({"seq": seq, "content": content, "time": ts})
 
         # 超出 20 条，删最旧
         removed = 0
@@ -265,10 +268,8 @@ class WorkMemoryManager:
             entries.pop(0)
             removed += 1
 
-        # 写回：用 \n---\n 连接，末尾也加 \n---
-        output = "\n---\n".join(entries) + "\n---"
-        fpath.write_text(output, encoding="utf-8")
-        self._refresh_registry("input.md")
+        fpath.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._refresh_registry("input.json")
         logger.info(f"[workmemory] input_mem_write: total={len(entries)} removed={removed}")
 
         return {
@@ -278,104 +279,151 @@ class WorkMemoryManager:
         }
 
     def input_mem_read(self) -> list[dict]:
-        """读取 input.md 全部条目，返回结构化列表
+        """读取 input.json 全部条目
 
         Returns:
             [{"seq": 1, "content": "...", "time": "..."}, ...]
         """
-        fpath = _BASE_DIR / "input.md"
+        fpath = _BASE_DIR / "input.json"
         if not fpath.exists():
             return []
-        text = fpath.read_text(encoding="utf-8")
-        raw_entries = self._parse_entries(text)
-        result = []
-        for i, entry_text in enumerate(raw_entries, 1):
-            lines = entry_text.strip().split("\n")
-            time_str = ""
-            body_lines = []
-            for line in lines:
-                if line.startswith("## 条目"):
-                    continue
-                if line.startswith("时间："):
-                    time_str = line.replace("时间：", "").strip()
-                else:
-                    body_lines.append(line)
-            body = "\n".join(body_lines).strip()
-            result.append({"seq": i, "content": body, "time": time_str})
-        return result
-
-    def _parse_entries(self, text: str) -> list[str]:
-        """以 --- 分隔解析条目
-
-        Args:
-            text: input.md 全文
-
-        Returns:
-            条目字符串列表
-        """
-        if not text.strip():
+        try:
+            raw = fpath.read_text(encoding="utf-8")
+            if not raw.strip():
+                return []
+            entries = json.loads(raw)
+            if not isinstance(entries, list):
+                return []
+            return entries
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"[workmemory] input.json parse failed: {e}")
             return []
-        # 按 \n--- 分割，过滤空段
-        raw = [e.strip() for e in text.split("\n---") if e.strip()]
-        return raw
 
-    # ── package.md 专用方法 ──────────────────────────────
+    # ── output.json 专用方法 ──────────────────────────────
 
-    def package_mem_write(self, content: str) -> dict:
-        """写入 package.md（覆盖）
+    def output_mem_write(self, content: str, user_prompt: str = "") -> dict:
+        """向 output.json 滚动追加对话记录，超过 20 条自动删除最旧
 
         Args:
-            content: 文件内容
+            content: LLM 回复文本
+            user_prompt: 用户的提问
 
         Returns:
-            {"name": "package.md", "size": int}
+            {"total": 条目数, "appended": content摘要, "removed": 删除的条目数}
         """
-        fpath = _BASE_DIR / "package.md"
+        fpath = _BASE_DIR / "output.json"
+        entries = []
+        if fpath.exists():
+            try:
+                raw = fpath.read_text(encoding="utf-8")
+                if raw.strip():
+                    entries = json.loads(raw)
+            except (json.JSONDecodeError, Exception):
+                entries = []
+        if not isinstance(entries, list):
+            entries = []
+
+        # 计算最大序号
+        max_seq = max((e.get("seq", 0) for e in entries), default=0)
+        seq = max_seq + 1
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entries.append({
+            "seq": seq,
+            "user": user_prompt,
+            "assistant": content,
+            "time": ts,
+        })
+
+        # 超出 20 条，删最旧
+        removed = 0
+        while len(entries) > 20:
+            entries.pop(0)
+            removed += 1
+
+        fpath.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._refresh_registry("output.json")
+        logger.info(f"[workmemory] output_mem_write: total={len(entries)} removed={removed}")
+
+        return {
+            "total": len(entries),
+            "appended": content[:60],
+            "removed": removed,
+        }
+
+    def output_mem_read(self) -> list[dict]:
+        """读取 output.json 全部条目
+
+        Returns:
+            [{"seq": 1, "user": "...", "assistant": "...", "time": "..."}, ...]
+        """
+        fpath = _BASE_DIR / "output.json"
+        if not fpath.exists():
+            return []
+        try:
+            raw = fpath.read_text(encoding="utf-8")
+            if not raw.strip():
+                return []
+            entries = json.loads(raw)
+            return entries if isinstance(entries, list) else []
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"[workmemory] output.json parse failed: {e}")
+            return []
+
+    # ── package.json 专用方法 ───────────────────────────
+
+    def package_mem_write(self, data: dict) -> dict:
+        """写入 package.json（覆盖）
+
+        Args:
+            data: JSON 可序列化对象（如 {"query": str, "results": [...]}）
+
+        Returns:
+            {"name": "package.json", "size": int}
+        """
+        fpath = _BASE_DIR / "package.json"
+        content = json.dumps(data, ensure_ascii=False, indent=2)
         fpath.write_text(content, encoding="utf-8")
-        self._refresh_registry("package.md")
-        info = self._registry.get("package.md")
-        return {"name": "package.md", "size": info.size if info else 0}
+        self._refresh_registry("package.json")
+        info = self._registry.get("package.json")
+        return {"name": "package.json", "size": info.size if info else 0}
 
-    def package_mem_read(self) -> str:
-        """读取 package.md 全部内容
+    def package_mem_read(self) -> dict:
+        """读取 package.json
 
         Returns:
-            文件内容，不存在返回 ""
+            dict，不存在返回空 dict {"results": [], "query": ""}
         """
-        fpath = _BASE_DIR / "package.md"
+        fpath = _BASE_DIR / "package.json"
         if not fpath.exists():
-            return ""
-        return fpath.read_text(encoding="utf-8")
+            return {"results": [], "query": ""}
+        try:
+            raw = fpath.read_text(encoding="utf-8")
+            if not raw.strip():
+                return {"results": [], "query": ""}
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {"results": [], "query": ""}
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"[workmemory] package.json parse failed: {e}")
+            return {"results": [], "query": ""}
 
     def handle_packagemem(self) -> dict:
-        """搜索长期记忆并写入 package.md
+        """搜索长期记忆并写入 package.json
 
-        流程：读 input.md → 调 Agent 提取关键词和事件 → 搜索 → 写 package.md
+        流程：读 input → 直接用用户原话向量搜索 → 写 package.json
 
         Returns:
             {"query": str, "result_count": int, "package_size": int, "keyword_queries": [str]}
         """
-        # 1. 读 input.md 全部条目
+        # 1. 读 input 全部条目
         entries = self.input_mem_read()
         if not entries:
-            logger.info("[workmemory] handle_packagemem: input.md is empty")
+            logger.info("[workmemory] handle_packagemem: input is empty")
             return {"query": "", "result_count": 0, "package_size": 0, "keyword_queries": []}
 
-        # 2. 调 Agent 精炼当前提问（不传历史，避免历史话题干扰搜索意图）
-        query = ""
-        try:
-            from modules.LLM import get_agent_manager
-            agent = get_agent_manager().get("memory_search")
-            current = entries[-1]["content"]
-            result = agent.run({"current": current})
-            query = result.get("query", "")
-            logger.info(f"[workmemory] agent query={query!r}")
-        except Exception as e:
-            logger.warning(f"[workmemory] agent call failed: {e}")
-
-        # 3. 搜索（用 agent 返回的完整句子直接搜）
+        # 2. 直接用用户原话进行向量搜索
         all_results = []
-        search_query = query or entries[-1]["content"]
+        search_query = entries[-1]["content"]
         from modules.brain.memory.core import search_memory
         try:
             results = search_memory(search_query)
@@ -383,15 +431,6 @@ class WorkMemoryManager:
             logger.info(f"[workmemory] search '{search_query[:80]}': {len(results)} results")
         except Exception as e:
             logger.warning(f"[workmemory] search failed: {e}")
-
-        # 如果没有搜索结果，用当前消息直接搜作为兜底
-        if not all_results:
-            try:
-                from modules.brain.memory.core import search_memory
-                all_results = search_memory(entries[-1]["content"])
-                logger.info(f"[workmemory] fallback search: {len(all_results)} results")
-            except Exception as e:
-                logger.warning(f"[workmemory] fallback search failed: {e}")
 
         # 去重
         seen = set()
@@ -402,17 +441,67 @@ class WorkMemoryManager:
                 seen.add(rid)
                 unique_results.append(r)
 
-        # 4. 格式化为 Markdown
-        lines = []
-        for r in unique_results:
-            text = r.get("text", "") or r.get("memory", "")
-            lines.append(text)
-            lines.append("---")
+        # 3. 判断搜索结果是否足够，不够则精炼后重搜
+        try:
+            current = entries[-1]["content"]
+            outputs = self.output_mem_read()
+            conversation = []
+            for o in outputs[-6:]:
+                if o.get("user"):
+                    conversation.append({"role": "user", "content": o["user"]})
+                if o.get("assistant"):
+                    conversation.append({"role": "assistant", "content": o["assistant"]})
+            conversation.append({"role": "user", "content": current})
+            from modules.LLM import get_agent_manager
+            agent = get_agent_manager().get("info_sufficient")
+            verdict = agent.run({
+                "query": current,
+                "conversation": conversation,
+                "memories": [{"id": r.get("id",""), "text": r.get("text","") or r.get("memory","")} for r in unique_results],
+            })
+            if not verdict.get("enough") and all_results:
+                logger.info(f"[workmemory] results insufficient, refining query")
+                refined_agent = get_agent_manager().get("memory_search")
+                refined = refined_agent.run({"current": current})
+                refined_query = refined.get("query", "")
+                if refined_query and refined_query != current:
+                    logger.info(f"[workmemory] refined query={refined_query!r}")
+                    more_results = search_memory(refined_query)
+                    seen_ids = {r.get("id", "") for r in all_results if r.get("id")}
+                    for r in more_results:
+                        rid = r.get("id", "")
+                        if rid and rid not in seen_ids:
+                            seen_ids.add(rid)
+                            all_results.append(r)
+                    # 重新去重
+                    unique_results = []
+                    seen = set()
+                    for r in all_results:
+                        rid = r.get("id", "")
+                        if rid and rid not in seen:
+                            seen.add(rid)
+                            unique_results.append(r)
+                    logger.info(f"[workmemory] after refine: total={len(unique_results)}")
+            elif not verdict.get("enough"):
+                logger.info(f"[workmemory] no results to refine")
+            else:
+                logger.info("[workmemory] search results sufficient")
+        except Exception as e:
+            logger.warning(f"[workmemory] info check failed: {e}")
 
-        formatted = "\n".join(lines)
-
-        # 5. 写入 package.md
-        pw_result = self.package_mem_write(formatted)
+        # 4. 构建 JSON 并写入 package.json
+        pkg_data = {
+            "query": search_query,
+            "results": [
+                {
+                    "id": r.get("id", ""),
+                    "text": r.get("text", "") or r.get("memory", ""),
+                    "score": r.get("score", 0),
+                }
+                for r in unique_results
+            ],
+        }
+        pw_result = self.package_mem_write(pkg_data)
         logger.info(
             f"[workmemory] handle_packagemem: total={len(unique_results)} "
             f"written={pw_result['size']} bytes"
@@ -444,15 +533,14 @@ class WorkMemoryManager:
     # ── 打包读取（占位） ─────────────────────────────────
 
     def get_workmem(self) -> dict:
-        """打包读取 input + package
-
-        TODO: 合并 input_mem_read + package_mem_read
+        """打包读取 input + output + package
 
         Returns:
-            {"input": [{seq, content}], "package": str}
+            {"input": [{seq, content, time}], "output": [{seq, content, time}], "package": {query, results}}
         """
         return {
             "input": self.input_mem_read(),
+            "output": self.output_mem_read(),
             "package": self.package_mem_read(),
         }
 

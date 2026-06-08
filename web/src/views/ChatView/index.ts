@@ -24,6 +24,7 @@ const API_BASE = window.location.origin
 export class ChatViewModel {
   messages = reactive<ChatMessage[]>([])
   sending = ref(false)
+  currentStatus = ref('')
   loopState = reactive({
     is_running: false,
     idle_enabled: false,
@@ -33,6 +34,7 @@ export class ChatViewModel {
     last_thought_preview: null as string | null,
     is_busy: false,
     consecutive_failures: 0,
+    current_status: '',
   })
 
   private _abortCtl: AbortController | null = null
@@ -49,15 +51,20 @@ export class ChatViewModel {
     nextTick(() => this._scrollFn?.())
   }
 
-  /* loadMessages：加载历史消息 */
+  /* loadMessages：从工作记忆加载持久化对话历史 */
   async loadMessages(): Promise<void> {
     try {
-      const resp = await fetch(`${API_BASE}/chat/messages`)
+      const resp = await fetch(`${API_BASE}/chat/history`)
       const data = await resp.json()
       if (data.messages) {
         this.messages.splice(0, this.messages.length)
         for (const m of data.messages) {
-          this.messages.push({ ...m, isStreaming: false })
+          this.messages.push({
+            role: m.role,
+            content: m.content,
+            created_at: m.created_at,
+            isStreaming: false,
+          })
         }
         this._scrollToBottom()
       }
@@ -66,12 +73,15 @@ export class ChatViewModel {
     }
   }
 
-  /* loadState：加载意识流状态 */
+  /* loadState：加载意识流状态 + 当前处理状态 */
   async loadState(): Promise<void> {
     try {
       const resp = await fetch(`${API_BASE}/chat/state`)
       const data = await resp.json()
       Object.assign(this.loopState, data)
+      if (data.current_status) {
+        this.currentStatus.value = data.current_status
+      }
     } catch (e) {
       console.error('[chat] load state failed:', e)
     }

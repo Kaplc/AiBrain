@@ -1,6 +1,11 @@
-"""模型加载管理"""
-import os
-import torch
+"""模型加载管理
+
+语义模型 BGE-M3 已独立为 embed_server 进程（port 19402），
+主 Flask 不再本地加载，改为 HTTP 调用。
+
+ModelManager 保留兼容接口，load() 为重载标记。
+"""
+import logging
 from .settings import resolve_device
 
 
@@ -19,79 +24,20 @@ class ModelManager:
         return cls._instance
 
     def load(self, device_setting=None):
-        from brain_mcp import embedding as emb
+        """标记模型就绪（语义模型已独立为 embed_server 进程）
 
+        不再本地加载 SentenceTransformer，直接标记就绪。
+        """
         if device_setting is None:
             device_setting = self._settings.load().get("device", "cpu")
 
         device = resolve_device(device_setting)
-
-        # 如果模型已加载且设备一致，跳过重复加载
-        if emb._model is not None and self._ready.get("device") == device:
-            self._ready["model"] = True
-            self._logger.info(f"Model already loaded on {device}, skipping")
-            return
-
-        self._logger.info(f"Loading model on device: {device} (setting={device_setting})")
-
-        self._ready["model"] = False
-        self._ready["device"] = device
-
-        # 显式释放旧模型显存
-        if emb._model is not None:
-            try:
-                emb._model.to('cpu')
-                for p in emb._model.parameters():
-                    p.data = p.data.cpu()
-            except Exception:
-                pass
-            del emb._model
-            emb._model = None
-            emb._model_name = None
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-                self._logger.info(
-                    f"GPU VRAM released, free: {torch.cuda.memory_reserved(0)//1024//1024}MB reserved"
-                )
-
-        from sentence_transformers import SentenceTransformer
-        try:
-            model = SentenceTransformer(
-                emb.get_model_name(),
-                device=device,
-                local_files_only=True
-            )
-            emb._model = model
-            self._logger.info(f"Model loaded successfully on {device}")
-        except Exception as e:
-            self._logger.error(f"Model load failed: {e}")
-            self._ready["model"] = False
-            return
-
         self._ready["model"] = True
+        self._ready["device"] = device
+        self._logger.info(
+            f"Model ready (embedded service), device={device} setting={device_setting}"
+        )
 
     def get_model_info(self):
-        from brain_mcp import embedding as emb
-        raw = emb.get_model_name() if hasattr(emb, 'get_model_name') else 'BAAI/bge-m3'
-        if raw and ('/' in str(raw) or '\\' in str(raw)):
-            name = str(raw).replace('\\', '/').split('/')[-1]
-        else:
-            name = raw
-
-        size = ""
-        try:
-            if emb._model is not None:
-                total_params = sum(p.numel() for p in emb._model.parameters())
-                if total_params > 1e9:
-                    size = f"{total_params/1e9:.1f}B"
-                elif total_params > 1e6:
-                    size = f"{total_params/1e6:.0f}M"
-                else:
-                    size = f"{total_params/1e3:.0f}K"
-        except Exception:
-            pass
-
-        return {"name": name, "size": size}
+        """返回模型信息"""
+        return {"name": "bge-m3 (remote)", "size": ""}

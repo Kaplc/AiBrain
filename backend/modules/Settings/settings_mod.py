@@ -251,8 +251,6 @@ class SettingsManager:
                         mgr.set_mem0_add_fn(lambda **kw: m.add(**kw))
                 except Exception:
                     pass
-            else:
-                loop.reload_config(cfg_mgr.read_chat())
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"[settings] chat loop reload failed: {e}")

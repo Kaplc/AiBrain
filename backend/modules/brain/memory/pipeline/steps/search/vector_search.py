@@ -9,6 +9,14 @@ VectorSearch Step - 语义向量搜索（required）
 import logging
 
 from modules.brain.mem0_adapter import get_mem0_client
+
+
+def _set_status(s: str):
+    try:
+        from modules.chat import ChatManager
+        ChatManager.get_instance().set_status(s)
+    except Exception:
+        pass
 from modules.brain.memory.core import DEFAULT_USER_ID, _get_search_options
 
 logger = logging.getLogger('memory.pipeline')
@@ -21,6 +29,7 @@ def execute(ctx) -> None:
         ctx: PipelineContext
             input_data: str (query)
     """
+    _set_status("向量搜索")
     query = ctx.input_data
     client = get_mem0_client()
     opts = _get_search_options()

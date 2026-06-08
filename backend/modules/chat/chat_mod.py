@@ -29,6 +29,9 @@ class ChatManager:
         self._model = "gpt-4o-mini"
         self._api_key = ""
         self._base_url = ""
+        # 当前处理状态（供前端流式显示）
+        self._current_status = ""
+        self._status_lock = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> 'ChatManager':
@@ -37,6 +40,18 @@ class ChatManager:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
+
+    # ── 状态跟踪 ──────────────────────────────────────────
+
+    def set_status(self, status: str):
+        """设置当前处理状态（线程安全）"""
+        with self._status_lock:
+            self._current_status = status
+
+    def get_status(self) -> str:
+        """获取当前处理状态"""
+        with self._status_lock:
+            return self._current_status
 
     # ── 配置 ──────────────────────────────────────────────
 
@@ -83,13 +98,13 @@ class ChatManager:
             self._loop = None
 
     def get_loop_state(self) -> dict:
-        """获取空闲思绪状态"""
-        if self._loop is None:
-            return {
-                'is_running': False, 'idle_enabled': False,
-                'idle_count': 0, 'is_busy': False,
-            }
-        return self._loop.get_state()
+        """获取空闲思绪状态 + 当前处理状态"""
+        state = self._loop.get_state() if self._loop else {
+            'is_running': False, 'idle_enabled': False,
+            'idle_count': 0, 'is_busy': False,
+        }
+        state['current_status'] = self.get_status()
+        return state
 
     def reload_agentloop_config(self, config: dict):
         """热加载空闲思绪配置"""

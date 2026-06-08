@@ -120,3 +120,46 @@ class LoggerManager:
 # 保持向后兼容：模块级函数调用单例
 def setup_logger(project_root, role='app'):
     return LoggerManager.get_instance().setup_logger(project_root, role)
+
+
+def archive_logs(log_dir: str, prefix: str = "flask", keep: int = 3):
+    """归档指定前缀的日志文件，保留最新的 keep 份
+
+    供 mem0_server/embed_server 等独立服务进程启动时调用。
+
+    Args:
+        log_dir: 日志目录（如 project_root/logs）
+        prefix: 日志前缀（mem0 / embed / flask）
+        keep: 保留最新文件数（默认 3）
+    """
+    import glob, os, shutil
+
+    archive_dir = os.path.join(log_dir, 'archive')
+    os.makedirs(archive_dir, exist_ok=True)
+
+    pattern = os.path.join(log_dir, f'{prefix}_*.log')
+    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+
+    # 当前要写的文件保留不动，其他的移入 archive
+    for f in files:
+        try:
+            filename = os.path.basename(f)
+            archive_path = os.path.join(archive_dir, filename)
+            if os.path.exists(archive_path):
+                os.remove(archive_path)
+            shutil.move(f, archive_path)
+            print(f"[archive] {filename} → archive/")
+        except Exception as e:
+            print(f"[archive] {filename} failed: {e}")
+
+    # 只保留 keep 份
+    archived = sorted(
+        glob.glob(os.path.join(archive_dir, f'{prefix}_*.log')),
+        key=os.path.getmtime, reverse=True
+    )
+    for f in archived[keep:]:
+        try:
+            os.remove(f)
+            print(f"[archive] removed old: {os.path.basename(f)}")
+        except Exception as e:
+            print(f"[archive] cleanup failed: {e}")

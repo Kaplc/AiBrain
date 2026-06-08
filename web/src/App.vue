@@ -5,6 +5,9 @@ import NavSidebar from './components/NavSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
 import { toggleConsole } from '@/composables/useConsoleState'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 function handleGlobalKeydown(e: KeyboardEvent) {
   // ~ 键打开/关闭控制台
@@ -34,7 +37,7 @@ onUnmounted(() => {
     <main class="main-content">
       <div id="page-content">
         <RouterView v-slot="{ Component }">
-          <KeepAlive :include="[]">
+          <KeepAlive :include="['ChatView']">
             <component :is="Component" />
           </KeepAlive>
         </RouterView>
@@ -43,6 +46,7 @@ onUnmounted(() => {
     </main>
   </div>
   <ConsolePanel />
+  <div class="toast" :class="[toast.type.value, { show: toast.visible.value }]">{{ toast.message.value }}</div>
 </template>
 
 <style>

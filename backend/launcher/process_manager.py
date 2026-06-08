@@ -43,6 +43,8 @@ def _load_ports():
         'flask': ports[0] if len(ports) > 0 else 18980,
         'qdrant_http': ports[1] if len(ports) > 1 else 18981,
         'qdrant_grpc': ports[2] if len(ports) > 2 else 18982,
+        'mem0_server': ports[3] if len(ports) > 3 else 19401,
+        'embed_server': ports[4] if len(ports) > 4 else 19402,
     }
 
 
@@ -83,21 +85,25 @@ class ProcessManager:
             print(f"  [qdrant] WARNING: not ready after 60s, continuing...")
             return False
 
-    def start_flask(self):
-        """启动 Flask 服务"""
-        # 构建前端 dist
-        print(f"  [flask] Building frontend...")
-        web_dir = os.path.join(_PROJECT_ROOT, 'web')
-        build_result = subprocess.run(
-            'npm run build',
-            cwd=web_dir,
-            capture_output=True, timeout=120,
-            shell=True,
-        )
-        if build_result.returncode != 0:
-            print(f"  [flask] Build failed: {build_result.stderr.decode('utf-8', errors='replace')[:200]}")
-        else:
-            print(f"  [flask] Build done")
+    def start_flask(self, build=True):
+        """启动 Flask 服务
+
+        Args:
+            build: 是否构建前端（首次启动需要，重启时跳过）
+        """
+        if build:
+            print(f"  [flask] Building frontend...")
+            web_dir = os.path.join(_PROJECT_ROOT, 'web')
+            build_result = subprocess.run(
+                'npm run build',
+                cwd=web_dir,
+                capture_output=True, timeout=120,
+                shell=True,
+            )
+            if build_result.returncode != 0:
+                print(f"  [flask] Build failed: {build_result.stderr.decode('utf-8', errors='replace')[:200]}")
+            else:
+                print(f"  [flask] Build done")
 
         env = {
             **os.environ,
@@ -201,11 +207,75 @@ class ProcessManager:
         with open(_dbg_path, 'a') as _f:
             _f.write(f"  [STEP3] port freed={port_freed} after {(attempt+1)*0.5:.1f}s\n")
             _f.write(f"  [STEP4] calling start_flask()...\n")
-        ret = self.start_flask()
+        ret = self.start_flask(build=False)
         with open(_dbg_path, 'a') as _f:
             _f.write(f"  [STEP4] start_flask() returned={ret}\n")
             _f.write(f"[{time.strftime('%H:%M:%S')}] === restart_flask EXIT ===\n\n")
         return ret
+
+    def start_mem0_server(self):
+        """启动 mem0 独立服务（BGE-M3 + Qdrant 连接）"""
+        mem0_port = self.ports.get('mem0_server', 19401)
+        if self._is_port_listening(mem0_port):
+            print(f"  [mem0] Already running on port {mem0_port}")
+            return True
+
+        env = {
+            **os.environ,
+            'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',
+            'HF_HUB_OFFLINE': '1',
+            'TRANSFORMERS_OFFLINE': '1',
+        }
+        server_script = os.path.join(_BACKEND, 'mem0_server', 'server.py')
+        print(f"  [mem0] Starting on port {mem0_port}...")
+        proc = subprocess.Popen(
+            [_PYTHON, server_script, '--port', str(mem0_port)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        self.procs['mem0'] = proc
+
+        # 等待就绪（需要加载 BGE-M3，可能需要 40-60s）
+        url = f'http://127.0.0.1:{mem0_port}/health'
+        if self._wait_url(url, timeout=120, label='mem0'):
+            print(f"  [mem0] Ready (PID {proc.pid})")
+            return True
+        else:
+            print(f"  [mem0] WARNING: not ready after 120s")
+            return False
+
+    def start_embed_server(self):
+        """启动 Embedding 独立服务（BGE-M3 语义模型）"""
+        embed_port = self.ports.get('embed_server', 19402)
+        if self._is_port_listening(embed_port):
+            print(f"  [embed] Already running on port {embed_port}")
+            return True
+
+        env = {
+            **os.environ,
+            'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',
+            'HF_HUB_OFFLINE': '1',
+            'TRANSFORMERS_OFFLINE': '1',
+        }
+        server_script = os.path.join(_BACKEND, 'embed_server', 'server.py')
+        print(f"  [embed] Starting on port {embed_port}...")
+        proc = subprocess.Popen(
+            [_PYTHON, server_script, '--port', str(embed_port)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        self.procs['embed'] = proc
+
+        # 等待就绪（需要加载 BGE-M3，可能需要 40-60s）
+        url = f'http://127.0.0.1:{embed_port}/health'
+        if self._wait_url(url, timeout=120, label='embed'):
+            print(f"  [embed] Ready (PID {proc.pid})")
+            return True
+        else:
+            print(f"  [embed] WARNING: not ready after 120s")
+            return False
 
     def start_webview(self):
         """启动 PyWebView 窗口"""
@@ -247,8 +317,8 @@ class ProcessManager:
             return
         self._running = False
         print("\n=== Shutting down ===")
-        # 顺序: Flask → WebView → Qdrant
-        for name in ['flask', 'webview', 'qdrant']:
+        # 顺序: Flask → WebView → mem0 → Embed → Qdrant
+        for name in ['flask', 'webview', 'mem0', 'embed', 'qdrant']:
             proc = self.procs.get(name)
             if proc and proc.poll() is None:
                 print(f"  [{name}] Stopping (PID {proc.pid})...")
@@ -321,11 +391,15 @@ class ProcessManager:
                     if not self._running:
                         return
                     if name == 'flask':
-                        self.start_flask()
+                        self.start_flask(build=False)
                     elif name == 'qdrant':
                         self.start_qdrant()
                     elif name == 'webview':
                         self.start_webview()
+                    elif name == 'mem0':
+                        self.start_mem0_server()
+                    elif name == 'embed':
+                        self.start_embed_server()
 
     # ── 工具方法 ──
     def _is_port_free(self, port):
@@ -440,12 +514,12 @@ def main():
 
     print("=" * 50)
     print("  AiBrain Process Manager")
-    print(f"  Flask: {pm.ports['flask']}  Qdrant: {pm.ports['qdrant_http']}/{pm.ports['qdrant_grpc']}")
+    print(f"  Flask: {pm.ports['flask']}  Qdrant: {pm.ports['qdrant_http']}/{pm.ports['qdrant_grpc']}  mem0: {pm.ports.get('mem0_server', 19401)}  Embed: {pm.ports.get('embed_server', 19402)}")
     print("=" * 50)
 
     # 1. 清理旧进程（由 start.py 负责调用 kill_old.py）
 
-    # 2. 按顺序启动
+    # 2. 按顺序启动: Qdrant → Embed → mem0 → Flask → WebView
     print("\n=== Starting services ===")
     qdrant_ok = pm.start_qdrant()
     if not qdrant_ok:
@@ -455,6 +529,8 @@ def main():
         if not qdrant_ok:
             print("  [mgr] FATAL: Qdrant failed to start after retry, aborting.")
             sys.exit(1)
+    pm.start_embed_server()
+    pm.start_mem0_server()
     pm.start_flask()
     pm.start_webview()
 

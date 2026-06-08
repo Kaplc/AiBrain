@@ -14,12 +14,21 @@ from .base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """你是一个信息判断助手。给定用户的问题和搜索到的记忆，判断这些记忆是否足够回答用户的问题。
+SYSTEM_PROMPT = """你是一个信息判断助手。判断是否需要搜索长期记忆来回答用户的问题。
+
+你可以获得两部分信息：
+- 当前对话上下文（最近几轮对话）
+- 搜索到的记忆（如果有）
 
 规则：
-1. 如果记忆中包含回答该问题所需的关键信息 → enough=true
-2. 如果记忆不相关或信息不足 → enough=false
-3. 如果只是简单问候（你好、你是谁等），记忆中有基本介绍即可
+1. 如果【对话上下文】本身已经**明确包含**回答所需的关键信息 → enough=true
+2. 如果【当前对话上下文】不足以回答，但搜索到的【记忆】足够 → enough=true
+3. 如果不足以回答 → enough=false
+4. 如果当前问题是紧跟上一轮的追问、且上一轮对话已明确包含答案 → enough=true
+
+重要：不要因为"AI可以根据自身身份回答"就跳过搜索。AI的自身身份来源于记忆，
+对于"你是谁""你记得什么"等需要了解自身背景的问题，即使上下文看似足够也需要搜索记忆。
+只有当前对话中已明确提及并包含了答案内容时，才判断为足够。
 
 输出格式（严格遵守JSON）：
 {"enough": true/false, "reason": "判断理由"}"""
@@ -32,29 +41,42 @@ class InfoSufficientAgent(BaseAgent):
     enable_thinking = False
 
     def run(self, input_data: Any, **kwargs) -> dict:
-        """判断记忆是否足够回答
+        """判断是否足够回答（考虑对话上下文 + 搜索结果）
 
         Args:
-            input_data: {"query": str, "memories": [{"id": str, "text": str}, ...]}
+            input_data:
+                query: 当前用户问题
+                memories: 搜索到的记忆（可选，无搜索时可省略）
+                conversation: 最近对话上下文列表 [{role, content}, ...]（可选）
 
         Returns:
             {"enough": bool, "reason": str}
         """
         query = input_data.get("query", "") if isinstance(input_data, dict) else ""
         memories = input_data.get("memories", []) if isinstance(input_data, dict) else []
+        conversation = input_data.get("conversation", []) if isinstance(input_data, dict) else []
 
         if not query:
             return {"enough": False, "reason": "query为空"}
 
-        # 记忆为空 → 不足
-        if not memories:
-            return {"enough": False, "reason": "没有搜索到相关记忆"}
-
-        # 构建候选列表
-        lines = [f"用户问题：{query}", "", "搜索到的记忆："]
-        for i, m in enumerate(memories[:8]):
-            text = m.get("text", "") or m.get("memory", "")
-            lines.append(f"{i+1}. {text[:150]}")
+        # 构建提示
+        lines = [f"用户问题：{query}"]
+        if conversation:
+            lines.append("")
+            lines.append("最近对话：")
+            for turn in conversation[-4:]:  # 最近 2 轮
+                role = turn.get("role", "user")
+                content = turn.get("content", "")[:200]
+                lines.append(f"{role}：{content}")
+        if memories:
+            lines.append("")
+            lines.append("搜索到的记忆：")
+            for i, m in enumerate(memories[:8]):
+                text = m.get("text", "") or m.get("memory", "")
+                lines.append(f"{i+1}. {text[:150]}")
+        else:
+            lines.append("")
+            lines.append("（没有搜索到记忆）")
         user_prompt = "\n".join(lines)
 
         config = kwargs.get("config") or LLMConfig.from_settings()

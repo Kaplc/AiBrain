@@ -10,9 +10,7 @@ import { ModelCard } from './ModelCard/ModelCard'
 import { QdrantCard } from './QdrantCard/QdrantCard'
 import { FlaskCard } from './FlaskCard/FlaskCard'
 import { DeviceCard } from './DeviceCard/DeviceCard'
-import { memoryCardViewModel } from './MemoryCard/MemoryCard'
-
-export { memoryCardViewModel }
+import { balanceCard } from './BalanceCard/BalanceCard'
 
 // 重新导出各卡片类型，供外部按需引用
 export type { ModelBadge, ModelCardData } from './ModelCard/ModelCard'
@@ -22,11 +20,12 @@ export type { SystemInfo } from './DeviceCard/DeviceCard'
 
 /* ==================== OverviewViewModel ==================== */
 export class OverviewViewModel {
-  // 卡片实例（各 Vue 文件通过此处访问）
+  // 卡片实例
   readonly modelCard = new ModelCard()
   readonly qdrantCard = new QdrantCard()
   readonly flaskCard = new FlaskCard()
   readonly deviceCard = new DeviceCard()
+  readonly balanceCard = balanceCard
 
   // 从注册表获取卡片列表（用于动态渲染）
   readonly cardList = getAllCards()
@@ -44,27 +43,21 @@ export class OverviewViewModel {
     return `${m}分`
   }
 
-  /* onMounted：组件挂载时的初始化
-   * 流程：启动所有卡片轮询 → 委托 memoryCardViewModel 初始化图表
-   */
   onMounted(): void {
     this.modelCard.start()
     this.qdrantCard.start()
     this.flaskCard.start()
     this.deviceCard.start()
-    memoryCardViewModel.onMounted()
+    this.balanceCard.start()
   }
 
-  /* onUnmounted：组件卸载时清理
-   * 流程：委托 memoryCardViewModel 清理动画帧 → 清理 Flask 定时器 → 停止所有卡片轮询
-   */
   onUnmounted(): void {
-    memoryCardViewModel.onUnmounted()
     this.flaskCard.cleanup()
     this.modelCard.stop()
     this.qdrantCard.stop()
     this.flaskCard.stop()
     this.deviceCard.stop()
+    this.balanceCard.stop()
   }
 }
 

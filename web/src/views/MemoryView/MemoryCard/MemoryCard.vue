@@ -1,16 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onActivated, nextTick } from 'vue'
 import { memoryCardViewModel as vm } from './MemoryCard'
-
-onMounted(async () => {
-  await nextTick()
-  // DOM refs 注入由 template ref 绑定完成，无需额外赋值
-})
-
-onActivated(async () => {
-  await nextTick()
-  vm.redrawCharts()
-})
 </script>
 
 <template>

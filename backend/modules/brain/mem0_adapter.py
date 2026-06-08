@@ -6,6 +6,10 @@ mem0 适配层 - 配置并初始化 mem0 Memory 客户端
   ollama, lmstudio, together, xai, azure_openai, aws_bedrock 等
 
 Embedding 模型强制使用本地 models/bge-m3/，禁止从网络下载。
+
+架构变更：mem0 客户端已独立为 mem0_server 服务进程，
+本模块的 get_mem0_client() 改为返回 HTTP 客户端代理（Mem0HttpClient），
+通过 HTTP 调用 mem0_server，调用方无需任何改动。
 """
 import os
 import json
@@ -112,11 +116,34 @@ def _check_local_model():
     logger.info(f"使用本地 Embedding 模型: {_LOCAL_MODEL_PATH}")
 
 
+def _get_mem0_port():
+    """从 .port_config 读取 mem0 服务端口（第4位，索引3）"""
+    config_path = os.path.join(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')),
+        '.port_config'
+    )
+    try:
+        with open(config_path, 'r') as f:
+            parts = f.read().strip().split(',')
+        if len(parts) >= 4:
+            return int(parts[3].strip())
+    except Exception:
+        pass
+    return 19401
+
+
 def get_mem0_client():
-    """单例模式获取 mem0 客户端"""
+    """单例模式获取 mem0 客户端（HTTP 代理）
+
+    返回 Mem0HttpClient 实例，通过 HTTP 调用 mem0_server 服务。
+    接口与原始 mem0.Memory 完全一致，调用方无需改动。
+    """
     global _client
     if _client is None:
-        _client = _create_client()
+        from mem0_server.client_adapter import Mem0HttpClient
+        port = _get_mem0_port()
+        _client = Mem0HttpClient(host='127.0.0.1', port=port)
+        logger.info(f"mem0 HTTP client created (port={port})")
     return _client
 
 

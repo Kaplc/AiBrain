@@ -5,6 +5,38 @@ from flask import request, jsonify, Response, stream_with_context
 
 
 def register(app, ready_state, logger, stats_db):
+    @app.route('/chat/history', methods=['GET'])
+    def chat_history():
+        """从 output.json 读取对话历史
+
+        Returns:
+            {"messages": [{role, content, time}, ...]}  user/assistant 交替
+        """
+        try:
+            from modules.brain.memory.workmemory import get_work_memory
+            wm = get_work_memory()
+            outputs = wm.output_mem_read()
+
+            messages = []
+            for entry in outputs:
+                ts = entry.get("time", "")
+                if entry.get("user"):
+                    messages.append({
+                        "role": "user",
+                        "content": entry["user"],
+                        "created_at": ts,
+                    })
+                if entry.get("assistant"):
+                    messages.append({
+                        "role": "assistant",
+                        "content": entry["assistant"],
+                        "created_at": ts,
+                    })
+            return jsonify({"messages": messages})
+        except Exception as e:
+            logger.error(f"[chat] load history failed: {e}")
+            return jsonify({"messages": [], "error": str(e)}), 500
+
     @app.route('/chat/messages', methods=['GET'])
     def chat_messages():
         """获取聊天历史（按时间 ASC）"""
@@ -26,6 +58,7 @@ def register(app, ready_state, logger, stats_db):
         from core.settings import ConfigManager
         cfg = ConfigManager.get_instance().read_chat()
         if not cfg.get('chat_api_key'):
+            logger.warning(f"[chat] send failed: API key missing (base_url={cfg.get('chat_base_url','')!r})")
             return jsonify({
                 'error': 'chat_api_key_missing',
                 'message': '请先在 Settings → Chat 配置 API Key',

@@ -1,6 +1,7 @@
 """Overview 路由 - 模型/Qdrant/Flask/系统状态卡片（纯转发）
 提供各状态卡片的详细数据：模型状态、Qdrant 状态、Flask 状态、系统信息"""
 import os
+import json
 import time
 import torch
 from flask import jsonify, request
@@ -150,3 +151,36 @@ def register(app, ready_state, logger, stats_db):
             return jsonify({"build_id": build_id, "status": status, "msg": msg})
         except Exception as e:
             return jsonify({"error": str(e)})
+
+    @app.route('/overview/balance', methods=['GET'])
+    def overview_balance():
+        """查询 DeepSeek 账户余额（转发官方 API）"""
+        try:
+            from core.settings import ConfigManager
+            cfg = ConfigManager.get_instance().read_chat()
+            api_key = cfg.get('chat_api_key', '')
+            base_url = cfg.get('chat_base_url', 'https://api.deepseek.com')
+
+            if not api_key:
+                logger.warning("[balance] API key not configured")
+                return jsonify({"error": "API key not configured"}), 503
+            if 'deepseek' not in base_url.lower():
+                logger.warning(f"[balance] not a DeepSeek base URL: {base_url}")
+                return jsonify({"error": "not a DeepSeek base URL"}), 400
+
+            import urllib.request
+            url = f'{base_url.rstrip("/")}/user/balance'
+            logger.info(f"[balance] requesting {url}")
+            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {api_key}'})
+            logger.info(f"[balance] auth: Bearer {api_key[:8]}...")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            logger.info(f"[balance] response: is_available={data.get('is_available')}, "
+                        f"infos={[f'{b['currency']}={b['total_balance']}' for b in data.get('balance_infos', [])]}")
+            return jsonify(data)
+        except urllib.error.HTTPError as e:
+            logger.warning(f"[balance] HTTP {e.code}: {e.reason}")
+            return jsonify({"error": f"DeepSeek API {e.code}: {e.reason}"}), e.code
+        except Exception as e:
+            logger.warning(f"[balance] error: {e}")
+            return jsonify({"error": str(e)}), 500

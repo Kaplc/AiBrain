@@ -202,7 +202,10 @@
       "Bash(findstr \"19399\\\\|19400\\\\|19401\")",
       "Bash(sqlite3 *)",
       "Bash(awk '{for\\(i=1;i<=NF;i++\\) if\\($i ~ /^\\\\[.*\\\\]$/ && $i != \"[WARNING]\"\\) print $i}')",
-      "Bash(grep -E \"\\\\.py$\")"
+      "Bash(grep -E \"\\\\.py$\")",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "Bash(findstr \":19402\")",
+      "Bash(findstr LISTENING)"
     ]
   },
   "enableAllProjectMcpServers": true,

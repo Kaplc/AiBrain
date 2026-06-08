@@ -1,20 +1,18 @@
-"""记忆片段 — 从工作记忆读取 handle_packagemem 结果"""
+"""记忆片段 — 把搜索结果放到 metadata 供 loop 作为独立参考消息"""
 from ..context import PromptContext
 
 
 def execute(ctx: PromptContext) -> None:
-    pkg_text = ctx.work_memory.get("package", "")
-    if not pkg_text:
+    pkg = ctx.work_memory.get("package", {})
+    if not isinstance(pkg, dict):
         return
 
-    # 按 --- 分隔提取各条记忆
-    mem_items = [item.strip() for item in pkg_text.split("---") if item.strip()]
-
-    if not mem_items:
+    results = pkg.get("results", [])
+    if not results:
         return
 
-    lines = [f"• {item[:200]}" for item in mem_items]
-    ctx.add_section("相关记忆", "\n".join(lines))
+    lines = [f"• {r.get('text', '')[:200]}" for r in results]
+    ctx.metadata["_memory_reference"] = "\n".join(lines)
 
 
 def _make_step():

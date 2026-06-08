@@ -13,7 +13,7 @@ class PromptContext:
     # 输入
     user_message: str = ""           # 当前用户消息
     system_persona: str = ""         # 人设
-    work_memory: dict = field(default_factory=dict)  # {input: [{seq,content,time}], package: str}
+    work_memory: dict = field(default_factory=dict)  # {input: [{seq,content,time}], package: {query, results}}
 
     # 输出（Section 按序追加）
     parts: list[str] = field(default_factory=list)

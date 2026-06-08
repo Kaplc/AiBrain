@@ -19,6 +19,15 @@ _conversation_history: list[dict] = []  # [{"role": "user"/"assistant", "content
 logger = logging.getLogger(__name__)
 
 
+def _set_status(s: str):
+    """线程安全设置当前状态"""
+    try:
+        from .chat_mod import ChatManager
+        ChatManager.get_instance().set_status(s)
+    except Exception:
+        pass
+
+
 def send_message(
     prompt: str,
     *,
@@ -32,7 +41,7 @@ def send_message(
 ) -> Iterator[dict]:
     """发送消息到 LLM，流式返回 token
 
-    自动将消息写入工作记忆 input.md 并触发 package 搜索，
+    自动将消息写入工作记忆 input.json 并触发 package 搜索，
     通过 PromptPipeline 构造 system prompt。
 
     Args:
@@ -49,6 +58,7 @@ def send_message(
         logger.info(f"[loop] send_message start: prompt={prompt[:60]!r}")
 
         # 0. 写入工作记忆 + 触发 package 搜索
+        _set_status("分析记忆")
         try:
             from modules.brain.memory.workmemory import get_work_memory
             wm = get_work_memory()
@@ -66,22 +76,29 @@ def send_message(
         except Exception as e:
             logger.warning(f"[loop] get workmemory failed: {e}")
 
-        # 2. 通过 PromptPipeline 构造 system prompt（不含历史对话）
+        # 2. 通过 PromptPipeline 构造 system prompt + 记忆参考
         ctx = PromptContext(
             user_message=prompt,
             work_memory=work_memory,
         )
         pipeline = PromptPipeline.get_instance()
         system_prompt = pipeline.run(ctx)
+        memory_ref = ctx.metadata.get("_memory_reference", "")
         logger.info(f"[loop] system_prompt:\n{system_prompt}")
+        if memory_ref:
+            logger.info(f"[loop] memory_ref:\n{memory_ref[:200]}")
 
-        # 3. 构建 messages 数组（多轮对话）
+        # 3. 构建 messages 数组
+        #    system:   人设/规则
+        #    user:     记忆参考信息（独立消息，作为上下文参考）
+        #    history:  历史 user/assistant 轮次
+        #    user:     当前提问
         global _conversation_history
-        msgs = [{"role": "system", "content": system_prompt}]
-        # 追加历史对话轮次
+        msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        if memory_ref:
+            msgs.append({"role": "user", "content": f"参考信息：\n{memory_ref}"})
         for turn in _conversation_history[-MAX_HISTORY_TURNS * 2:]:
             msgs.append(turn)
-        # 追加当前用户消息
         msgs.append({"role": "user", "content": prompt})
 
         # 4. 调用 LLM
@@ -95,6 +112,9 @@ def send_message(
             timeout=timeout,
         )
         logger.info(f"[loop] calling LLM: {len(msgs)} msgs, provider={provider} model={model}")
+        logger.info(f"[loop]  └─ system: {system_prompt[:300]}")
+        logger.info(f"[loop]  └─ user: {prompt[:200]}")
+        _set_status("生成回复")
         full_response: list[str] = []
         token_count = 0
         for chunk in call_llm_stream(config=cfg, messages=msgs):
@@ -118,6 +138,14 @@ def send_message(
         while len(_conversation_history) > MAX_HISTORY_TURNS * 2:
             _conversation_history.pop(0)
             _conversation_history.pop(0)
+
+        # 写入工作记忆 output.md（含用户提问 + LLM 回复）
+        try:
+            from modules.brain.memory.workmemory import get_work_memory
+            get_work_memory().output_mem_write(assistant_text, user_prompt=prompt)
+            logger.info("[loop] assistant reply written to workmemory output.md")
+        except Exception as e:
+            logger.warning(f"[loop] output_mem_write failed: {e}")
 
         logger.info(f"[loop] LLM done: tokens={token_count} total_chars={len(assistant_text)}")
         yield {"type": "done"}

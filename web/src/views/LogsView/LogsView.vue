@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, nextTick, ref, watch, watchEffect } from 'vue'
+import { onMounted, nextTick, ref, watchEffect } from 'vue'
 import { logsViewModel } from './LogsViewModel'
 
 const logWrapRef = ref<HTMLElement | null>(null)
@@ -17,7 +17,6 @@ watchEffect(() => {
   const el = logWrapRef.value
   console.log('[logs] watchEffect: len=', len, 'el=', !!el)
   if (len > 0 && el) {
-    // 需要等待 v-for 完全渲染 DOM，multiple nextTick
     const tick = () => {
       const el2 = logWrapRef.value
       if (!el2) return
@@ -32,9 +31,24 @@ watchEffect(() => {
 <template>
   <div class="logs-wrap">
     <div class="logs-title">日志</div>
+
+    <!-- 日志源 Tab 栏 -->
+    <div class="log-tabs">
+      <button
+        v-for="src in logsViewModel.sources"
+        :key="src.key"
+        class="log-tab"
+        :class="{ active: logsViewModel.currentSource.value.key === src.key }"
+        @click="logsViewModel.switchSource(src)"
+      >
+        <span class="log-tab-icon">{{ src.icon }}</span>
+        {{ src.label }}
+      </button>
+    </div>
+
     <div class="log-section">
       <div class="log-header">
-        <div class="log-title-text">系统日志</div>
+        <div class="log-title-text">{{ logsViewModel.currentSource.value.label }}</div>
         <span class="ft-meta">{{ logsViewModel.meta.value }}</span>
         <button
           class="btn-action btn-secondary"
@@ -85,6 +99,44 @@ watchEffect(() => {
   font-weight: 700;
 }
 
+/* ── Tab 栏 ─────────────────────────────────── */
+.log-tabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.log-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px solid #2d3149;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.log-tab:hover {
+  background: #1e293b;
+  color: #cbd5e1;
+}
+
+.log-tab.active {
+  background: #1e293b;
+  border-color: #eab30866;
+  color: #fde047;
+}
+
+.log-tab-icon {
+  font-size: 13px;
+}
+
+/* ── 日志内容 ─────────────────────────────────── */
 .log-section {
   background: #1a1d27;
   border: 1px solid #2d3149;

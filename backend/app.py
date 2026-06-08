@@ -39,14 +39,19 @@ from flask_cors import CORS
 # ── 初始化 core 模块 ──────────────────────────────────────
 from core.logger import setup_logger
 
-# 在 import 前检测进程角色（用于日志文件命名）
+# 检测进程角色，用于日志文件命名
+# --flask-only: 写入 logs/flask_*.log
+# --webview-only / 单进程模式: 简单 basicConfig，不创建独立日志文件
 _log_role = 'app'
 if '--flask-only' in sys.argv:
     _log_role = 'flask'
-elif '--webview-only' in sys.argv:
-    _log_role = 'ui'
 
-logger = setup_logger(_PROJECT_ROOT, role=_log_role)
+if '--webview-only' in sys.argv or _log_role == 'app':
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    logger = logging.getLogger(__name__)
+else:
+    logger = setup_logger(_PROJECT_ROOT, role=_log_role)
 
 from core.database import StatsDB
 stats_db = StatsDB.get_instance(os.path.join(_BASE, 'stats.db'))
@@ -301,13 +306,14 @@ def _preload():
         except Exception as e:
             logger.error(f"Failed to sync qdrant count: {e}")
 
-    # 初始化 mem0 客户端
+    # 等待 mem0 独立服务就绪
         try:
             from modules.brain.mem0_adapter import get_mem0_client
-            get_mem0_client()
-            logger.info("mem0 client initialized successfully")
+            client = get_mem0_client()
+            health = client.health()
+            logger.info(f"mem0 service connected: {health}")
         except Exception as e:
-            logger.warning(f"mem0 initialization failed (non-fatal): {e}")
+            logger.warning(f"mem0 service not ready yet (non-fatal): {e}")
 
         # 自动迁移旧记忆
         try:

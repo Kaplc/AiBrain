@@ -199,11 +199,22 @@ class ConfigManager:
         return merged
 
     def write_chat(self, data: dict):
-        """写入 chat.json"""
+        """写入 chat.json（保留现有字段，仅覆盖传入的字段）"""
         self.ensure_config_dir()
-        clean = {k: data.get(k, v) for k, v in DEFAULT_CHAT.items()}
+        # 读取当前已有数据
+        existing = {}
+        if os.path.exists(self._chat_path):
+            try:
+                with open(self._chat_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+        # 合并：现有数据为底，传入数据覆盖，缺失字段用默认值兜底
+        merged = DEFAULT_CHAT.copy()
+        merged.update(existing)
+        merged.update(data)
         with open(self._chat_path, 'w', encoding='utf-8') as f:
-            json.dump(clean, f, indent=2, ensure_ascii=False)
+            json.dump(merged, f, indent=2, ensure_ascii=False)
 
     def get_default_chat(self) -> dict:
         return DEFAULT_CHAT.copy()

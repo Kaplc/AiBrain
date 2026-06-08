@@ -11,9 +11,12 @@ import { OrganizeTab } from './OrganizeTab/OrganizeTab'
 import { MemorySettingsTab } from './SettingsTab/MemorySettingsTab'
 import { GraphTab } from './GraphTab/GraphTab'
 import { EntityTab } from './EntityTab/EntityTab'
+import { memoryCardViewModel } from './MemoryCard/MemoryCard'
+
+export type MemoryTab = 'search' | 'store' | 'organize' | 'settings' | 'graph' | 'entity' | 'chart'
 
 export class MemoryViewModel {
-  readonly currentTab = ref<'search' | 'store' | 'organize' | 'settings' | 'graph' | 'entity'>('search')
+  readonly currentTab = ref<MemoryTab>('search')
   readonly animatingCount = ref(0)
 
   readonly searchTab = new SearchTab()
@@ -22,11 +25,9 @@ export class MemoryViewModel {
   readonly settingsTab = new MemorySettingsTab()
   readonly graphTab = new GraphTab()
   readonly entityTab = new EntityTab()
+  readonly chartTab = memoryCardViewModel
 
-  /* switchTab：切换 Tab
-   * 流程：更新 currentTab → 如果切换到 store Tab 则加载记忆列表 → 切换到 settings 则加载设置
-   */
-  switchTab(tab: 'search' | 'store' | 'organize' | 'settings' | 'graph' | 'entity'): void {
+  switchTab(tab: MemoryTab): void {
     // 离开 entity Tab 时先清理轮询
     if (this.currentTab.value === 'entity' && tab !== 'entity') {
       this.entityTab.onTabUnmounted()
@@ -36,20 +37,14 @@ export class MemoryViewModel {
     if (tab === 'settings') this.settingsTab.load()
     if (tab === 'graph') this.graphTab.loadGraph()
     if (tab === 'entity') this.entityTab.onTabMounted()
+    if (tab === 'chart') this.chartTab.redrawCharts()
   }
 
-  /* loadAll：加载所有数据（初始化时调用）
-   * 流程：加载 store Tab 记忆列表 → 更新统计
-   */
   async loadAll(): Promise<void> {
     this.storeTab.loadAll()
     this.updateStats()
   }
 
-  /* updateStats：从后端获取记忆总数并触发动画
-   * 流程：GET /memory/count → animateCount 动画过渡到目标数字
-   * 错误处理：失败时使用本地 storeTab.memories 数量作为兜底
-   */
   async updateStats(): Promise<void> {
     const { useApi } = await import('@/composables/useApi')
     const api = useApi()
@@ -61,10 +56,6 @@ export class MemoryViewModel {
     }
   }
 
-  /* animateCount：数字动画过渡效果
-   * 流程：计算起始值和目标值的差 → 每 50ms 递增步进值 → 接近目标时直接跳到目标值
-   * 步进策略：差值/10，最小为 1，保证动画流畅且不过于缓慢
-   */
   animateCount(target: number): void {
     const current = this.animatingCount.value
     if (current === target) return
@@ -82,21 +73,17 @@ export class MemoryViewModel {
     }, 50)
   }
 
-  /* onMounted：组件挂载时的初始化
-   * 流程：加载搜索历史 → 更新统计 → 加载记忆设置 → 挂载文档点击事件监听（关闭历史面板）
-   */
   onMounted(): void {
     console.log('[MemoryView] mounted')
     this.searchTab.loadHistory()
     this.updateStats()
     this.settingsTab.load()
+    this.chartTab.onMounted()
     document.addEventListener('click', this.searchTab.onDocumentClick.bind(this.searchTab))
   }
 
-  /* onUnmounted：组件卸载时清理
-   * 流程：移除文档点击事件监听，防止内存泄漏
-   */
   onUnmounted(): void {
+    this.chartTab.onUnmounted()
     document.removeEventListener('click', this.searchTab.onDocumentClick.bind(this.searchTab))
   }
 }

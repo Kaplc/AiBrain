@@ -1,7 +1,10 @@
 /* 日志视图模型 - 面向对象设计
  *
  * 作用：管理日志页面状态、日志解析、复制和滚动功能
- * 实现：提供单例 logsViewModel，供 Vue 组件调用 loadLog/copyLine/scrollToBottom 等方法
+ * 实现：提供单例 logsViewModel，支持多日志源 tab 切换，可配置注册新源
+ *
+ * 添加新的日志源：
+ *   在 LOG_SOURCES 数组中新增一项即可，后端需支持对应 type 参数
  */
 
 import { ref, nextTick } from 'vue'
@@ -22,6 +25,22 @@ export interface ParsedLine {
   cls: string
 }
 
+/** 日志源配置 */
+export interface LogSource {
+  key: string
+  label: string
+  icon?: string
+  /** 默认关键词过滤（可选，空则显示所有行） */
+  defaultKeywords?: string
+}
+
+/** 可注册的日志源列表 — 在此添加新的日志类型 */
+const LOG_SOURCES: LogSource[] = [
+  { key: 'flask', label: '系统日志', icon: '📋', defaultKeywords: 'wiki,RAG,lightrag,index,search,embed,ERROR,WARNING,WARN,error,warning,warn,fail,failed,exception' },
+  { key: 'mem0', label: 'Mem0 日志', icon: '🧠' },
+  { key: 'embed', label: '语义模型', icon: '🔤' },
+]
+
 export class LogsViewModel {
   // UI State
   readonly logLines = ref<ParsedLine[]>([])
@@ -31,16 +50,24 @@ export class LogsViewModel {
   readonly copyToastVisible = ref(false)
   readonly logWrapEl = ref<HTMLElement | null>(null)
 
+  // 日志源
+  readonly sources = LOG_SOURCES
+  readonly currentSource = ref<LogSource>(LOG_SOURCES[0])
+
   // Private
   private _api = useApi()
   private _toast = useToast()
 
+  // ── 日志源切换 ─────────────────────────────────────────
+
+  switchSource(source: LogSource): void {
+    if (this.currentSource.value.key === source.key) return
+    this.currentSource.value = source
+    this.loadLog()
+  }
+
   // ── 工具函数 ─────────────────────────────────────────────
 
-  /* escHtml：将特殊字符转义为 HTML 实体
-   * 流程：& → &amp;，< → &lt;，> → &gt;
-   * 用于防止日志内容中的特殊字符破坏 HTML 结构
-   */
   escHtml(s: string): string {
     return String(s || '')
       .replace(/&/g, '&amp;')
@@ -48,15 +75,10 @@ export class LogsViewModel {
       .replace(/>/g, '&gt;')
   }
 
-  /* parseLine：解析单行日志，生成带样式的 HTML
-   * 流程：检测日志级别 → 添加时间戳/级别样式标签 → 返回 {raw, html, cls}
-   * 支持：INFO/WARNING/ERROR 级别识别、时间戳提取、降级/失败等关键词高亮
-   */
   parseLine(line: string): ParsedLine {
     let cls = ''
     let html = this.escHtml(line)
 
-    // 匹配 [时间戳] [级别] 格式
     const m = line.match(/^\[([^\]]+)\]\s+\[(INFO|WARNING|ERROR|WARN)\]/i)
     if (m) {
       const lvl = m[2].toLowerCase()
@@ -87,22 +109,25 @@ export class LogsViewModel {
 
   // ── 加载日志 ─────────────────────────────────────────────
 
-  /* loadLog：从后端获取日志数据并解析渲染
-   * 流程：设置加载状态 → 调用 /logs/api 获取原始日志 → 逐行解析 → 更新 UI → 滚动到底部
-   * 错误处理：日志为空时显示"无日志"，网络失败时显示具体错误信息
-   */
   async loadLog(): Promise<void> {
-    console.log('[logs] loadLog start')
+    const source = this.currentSource.value
+    console.log('[logs] loadLog start, type=', source.key)
     this.loading.value = true
     this.error.value = ''
     this.logLines.value = []
 
     try {
-      const data = await this._api.fetchJson<LogData>('/logs/api?lines=300&keywords=wiki,RAG,lightrag,index,search,embed,ERROR,WARNING,WARN,error,warning,warn,fail,failed,exception', 5)
+      // 构造 URL
+      let url = `/logs/api?lines=300&type=${source.key}`
+      if (source.defaultKeywords) {
+        url += `&keywords=${encodeURIComponent(source.defaultKeywords)}`
+      }
+
+      const data = await this._api.fetchJson<LogData>(url, 5)
       console.log('[logs] log data received:', data.lines ? data.lines.length + ' lines' : 'no lines')
 
       if (!data.lines) {
-        this.error.value = data.error || '无日志'
+        this.error.value = data.error || '暂无日志'
         console.log('[logs] loadLog done, rendered empty')
         return
       }
@@ -111,7 +136,7 @@ export class LogsViewModel {
         this.meta.value =
           data.file +
           ' | 共 ' +
-          data.total_relevant +
+          (data.total_relevant || 0) +
           ' 条，显示 ' +
           data.returned +
           ' 条'
@@ -130,10 +155,6 @@ export class LogsViewModel {
 
   // ── 复制行 ──────────────────────────────────────────────
 
-  /* copyLine：将指定日志行复制到剪贴板
-   * 流程：优先使用 Clipboard API → 失败时降级为 textarea execCommand 方案 → 显示复制成功提示
-   * 提示：复制成功后显示 toast，1200ms 后自动隐藏
-   */
   async copyLine(raw: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(raw)
@@ -153,19 +174,12 @@ export class LogsViewModel {
     }, 1200)
   }
 
-  // ── 滚动到底部 ───────────────────────────────────────────
+  // ── 滚动 ────────────────────────────────────────────────
 
-  /* scrollToBottom：滚动日志容器到底部
-   * 注意：依赖于 setLogWrap 设置的 logWrapEl 引用
-   */
   scrollToBottom(): void {
     // scrollToBottom uses logWrapEl which is set via setLogWrap
   }
 
-  /* setLogWrap：设置日志容器 DOM 引用
-   * 参数：el - 日志容器 HTMLElement
-   * 用于 scrollToBottom 时获取容器进行滚动
-   */
   setLogWrap(el: HTMLElement | null): void {
     this.logWrapEl.value = el
     console.log('[logs] setLogWrap:', el)

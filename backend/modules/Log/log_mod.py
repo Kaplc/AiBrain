@@ -15,11 +15,23 @@ class LogManager:
             cls._instance = cls()
         return cls._instance
 
-    def get_latest_log_file(self, project_root: str) -> tuple[str | None, str | None]:
-        """返回最新日志文件路径和内容"""
+    def get_latest_log_file(self, project_root: str, prefix: str = "flask") -> tuple[str | None, str | None]:
+        """返回最新日志文件路径和文件名
+
+        Args:
+            project_root: 项目根目录
+            prefix: 日志前缀，如 "flask", "mem0", "embed", "app", "ui", "*" 为所有
+
+        Returns:
+            (file_path, file_name) 或 (None, None)
+        """
         log_dir = os.path.join(project_root, 'logs')
+        if prefix == "*" or prefix == "all":
+            patterns = ('app_*.log', 'flask_*.log', 'ui_*.log', 'mem0_*.log', 'embed_*.log')
+        else:
+            patterns = (f'{prefix}_*.log',)
         files = []
-        for pat in ('app_*.log', 'flask_*.log', 'ui_*.log'):
+        for pat in patterns:
             files.extend(glob.glob(os.path.join(log_dir, pat)))
         if not files:
             return None, None

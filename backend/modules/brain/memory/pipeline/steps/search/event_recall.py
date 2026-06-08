@@ -13,7 +13,16 @@ import logging
 logger = logging.getLogger('memory.pipeline')
 
 
+def _set_status(s: str):
+    try:
+        from modules.chat import ChatManager
+        ChatManager.get_instance().set_status(s)
+    except Exception:
+        pass
+
+
 def execute(ctx) -> None:
+    _set_status("事件搜索")
     """执行 EventRecall 步骤：事件反查 + 链扩展
 
     Args:

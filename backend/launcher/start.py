@@ -61,9 +61,10 @@ def _load_ports_from_config():
         return {
             'Flask': ports[0] if len(ports) > 0 else 18980,
             'Qdrant-HTTP': ports[1] if len(ports) > 1 else 18981,
+            'mem0': ports[3] if len(ports) > 3 else 19401,
         }
     except Exception:
-        return {'Flask': 18980, 'Qdrant-HTTP': 18981}
+        return {'Flask': 18980, 'Qdrant-HTTP': 18981, 'mem0': 19401}
 
 
 def _is_port_in_use(port):

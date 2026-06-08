@@ -14,7 +14,16 @@ import logging
 logger = logging.getLogger('memory.pipeline')
 
 
+def _set_status(s: str):
+    try:
+        from modules.chat import ChatManager
+        ChatManager.get_instance().set_status(s)
+    except Exception:
+        pass
+
+
 def execute(ctx) -> None:
+    _set_status("实体搜索")
     """执行 GraphRecall 步骤：实体映射 + 共现召回 + LLM 过滤
 
     Args:

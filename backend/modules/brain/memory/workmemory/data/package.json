@@ -1,0 +1,15 @@
+{
+  "query": "分布式这种是怎么实现呢",
+  "results": [
+    {
+      "id": "9b396282-6f79-4099-9275-f2df48822e05",
+      "text": "Hermes进程隔离机制包含两种模式：delegate_task隔离对话但共享进程，适合短任务；spawn创建完全独立进程，适合长时间运行任务",
+      "score": 0.4582
+    },
+    {
+      "id": "208c6b60-b6d5-4c96-b8e2-cde078a4af3e",
+      "text": "Hermes的delegate_task支持同步生成子agent，函数签名为delegate_task(goal, context, toolsets)，父进程等待子摘要返回；批量模式通过tasks=[{goal, ...}, ...]实现，最多3个任务并行执行（delegation.max_concurrent_children配置控制）",
+      "score": 0.4547
+    }
+  ]
+}
