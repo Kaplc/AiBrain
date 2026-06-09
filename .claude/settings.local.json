@@ -205,7 +205,11 @@
       "Bash(grep -E \"\\\\.py$\")",
       "WebFetch(domain:api-docs.deepseek.com)",
       "Bash(findstr \":19402\")",
-      "Bash(findstr LISTENING)"
+      "Bash(findstr LISTENING)",
+      "Bash(sed -i '82d' token-usage-panel.md)",
+      "Bash(sed -i '86d' token-usage-panel.md)",
+      "Bash(sed -i '223s/^5\\\\. /6. /' token-usage-panel.md)",
+      "Bash(sed -i '224d' token-usage-panel.md)"
     ]
   },
   "enableAllProjectMcpServers": true,
