@@ -48,6 +48,10 @@ const card = overviewViewModel.balanceCard
         <span>赠金: ¥{{ card.formatBalance(card.balanceList.value[0]?.granted_balance || '0') }}</span>
         <span>充值: ¥{{ card.formatBalance(card.balanceList.value[0]?.topped_up_balance || '0') }}</span>
       </div>
+      <div class="today-cost" v-if="card.todayCost.value">
+        <span class="tc-label">今日消耗</span>
+        <span class="tc-value">¥{{ card.todayCost.value.total_cost.toFixed(2) }}</span>
+      </div>
     </template>
   </div>
 </template>
@@ -55,7 +59,7 @@ const card = overviewViewModel.balanceCard
 <style scoped>
 .status-card {
   flex: 1;
-  min-width: 180px;
+  min-width: 280px;
   background: #1a1d27;
   border: 1px solid #2d3149;
   border-radius: 10px;
@@ -101,6 +105,30 @@ const card = overviewViewModel.balanceCard
   gap: 16px;
   font-size: 10px;
   color: #64748b;
+}
+
+/* 今日消耗 */
+.today-cost {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #2d3149;
+  width: 100%;
+  font-size: 11px;
+}
+.tc-label {
+  color: #64748b;
+}
+.tc-value {
+  color: #f59e0b;
+  font-weight: 700;
+}
+.tc-tokens {
+  color: #64748b;
+  font-size: 10px;
+  margin-left: auto;
 }
 
 /* 徽章 */

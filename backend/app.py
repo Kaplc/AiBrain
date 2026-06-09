@@ -374,6 +374,18 @@ def _preload():
     except Exception as e:
         logger.warning(f"PromptPipeline init failed (non-fatal): {e}")
 
+    # 初始化 Chat 工具注册表
+    try:
+        from modules.LLM.tools.memory_tools import register_memory_tools
+        from modules.LLM.tools.file_tools import register_file_tools
+        from modules.LLM.tools.plan_tools import register_plan_tools
+        register_memory_tools()
+        register_file_tools()
+        register_plan_tools()
+        logger.info("Chat tools registered")
+    except Exception as e:
+        logger.warning(f"Chat tools registration failed (non-fatal): {e}")
+
     # ── 初始化 ChatManager ──────────────────────────────────
     try:
         from modules.chat import ChatManager
@@ -525,9 +537,7 @@ def _wait_and_start_ui():
     # 设置控制台窗口标题（任务管理器可识别）
     try:
         import ctypes
-        ctypes.windll.kernel32.SetConsoleTitleW(
-            f"AiBrain-UI :{_FLASK_PORT}"
-        )
+        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain")
     except Exception:
         pass
 
@@ -540,8 +550,7 @@ if __name__ == '__main__':
     import argparse
     try:
         import ctypes
-        _title = "AiBrain Flask" if '--flask-only' in sys.argv else "AiBrain WebView" if '--webview-only' in sys.argv else "AiBrain"
-        ctypes.windll.kernel32.SetConsoleTitleW(_title)
+        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain")
     except Exception:
         pass
 

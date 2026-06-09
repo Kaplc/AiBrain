@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from modules.LLM import LLMConfig, call_llm_stream
+from modules.LLM import LLMConfig, get_llm_manager
 from .prompts import (
     build_idle_prompt,
     IDLE_CUES,
@@ -115,7 +115,7 @@ class ConsciousnessLoop:
                     base_url=self._state.llm_base_url,
                     temperature=0.9, max_tokens=256, timeout=60,
                 )
-                for chunk in call_llm_stream(system_prompt, "", cfg):
+                for chunk in get_llm_manager().stream(system_prompt, "", cfg, source='idle_thought'):
                     token = chunk.get('content', '')
                     if token:
                         thought_parts.append(token)

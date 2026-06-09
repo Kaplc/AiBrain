@@ -13,7 +13,7 @@ import logging
 from typing import Iterator
 
 from .config import LLMConfig, SUPPORTED_PROVIDERS
-from .stream import call_llm_stream, call_llm_sync
+from .stream import call_llm_stream, call_llm_sync, call_llm_nonstream
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +51,19 @@ class LLMManager:
         system_prompt: str,
         user_prompt: str,
         config: LLMConfig,
+        source: str = 'chat',
     ) -> Iterator[dict]:
-        """流式 LLM 调用。统一 yield {'content':str, 'usage':dict|None, 'finish_reason':str|None}
+        """流式 LLM 调用（system + user 双参数版）"""
+        return call_llm_stream(system_prompt, user_prompt, config, source=source)
 
-        注意：system_prompt 和 user_prompt 由调用方构造好传进来，
-        本模块不做任何模板拼接。
-        """
-        return call_llm_stream(system_prompt, user_prompt, config)
+    def stream_messages(
+        self,
+        messages: list[dict],
+        config: LLMConfig,
+        source: str = 'chat',
+    ) -> Iterator[dict]:
+        """流式 LLM 调用（直接传 messages 数组）"""
+        return call_llm_stream(config=config, messages=messages, source=source)
 
     # ── 非流式 ─────────────────────────────────────────
     def complete(
@@ -66,8 +72,35 @@ class LLMManager:
         user_prompt: str,
         config: LLMConfig,
     ) -> str:
-        """一次性返回完整文本。底层 = 流式拼接。"""
+        """一次性返回完整文本（system + user 双参数版）"""
         return call_llm_sync(system_prompt, user_prompt, config)
+
+    def complete_messages(
+        self,
+        messages: list[dict],
+        config: LLMConfig,
+    ) -> str:
+        """一次性返回完整文本（直接传 messages 数组）"""
+        return call_llm_sync(config=config, messages=messages)
+
+    def complete_with_tools(
+        self,
+        messages: list[dict],
+        config: LLMConfig,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
+    ) -> dict:
+        """非流式调用 + 工具调用支持
+
+        Returns:
+            {"content": str, "tool_calls": [...]}  — tool_calls 可能为空
+        """
+        return call_llm_nonstream(
+            config=config,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     # ── 配置加载快捷方法 ─────────────────────────────────
     def load_config_from_mem0(self) -> LLMConfig:

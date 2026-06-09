@@ -1,15 +1,80 @@
 {
-  "query": "分布式这种是怎么实现呢",
+  "query": "可以了给你添加了看看",
   "results": [
     {
-      "id": "9b396282-6f79-4099-9275-f2df48822e05",
-      "text": "Hermes进程隔离机制包含两种模式：delegate_task隔离对话但共享进程，适合短任务；spawn创建完全独立进程，适合长时间运行任务",
-      "score": 0.4582
+      "id": "3c38e145-d021-4f54-af95-bd5c42953edb",
+      "text": "Hermes Agent提供hermes webhook命令管理Webhook订阅：subscribe NAME创建/webhooks/<name>路由；list列出所有订阅；remove NAME移除订阅；test NAME发送测试POST请求。官方文档：https://hermes-agent.nousresearch.com/docs/user-guide/features/webhooks",
+      "score": 0.5774
     },
     {
-      "id": "208c6b60-b6d5-4c96-b8e2-cde078a4af3e",
-      "text": "Hermes的delegate_task支持同步生成子agent，函数签名为delegate_task(goal, context, toolsets)，父进程等待子摘要返回；批量模式通过tasks=[{goal, ...}, ...]实现，最多3个任务并行执行（delegation.max_concurrent_children配置控制）",
-      "score": 0.4547
+      "id": "8230f835-6036-4dc8-b1c4-761d2ed01da6",
+      "text": "Hermes Kanban功能文档地址：https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban",
+      "score": 0.5563
+    },
+    {
+      "id": "2700f87d-e8dc-49d8-ac14-e0a4486825cb",
+      "text": "WeChat用户志远说\"好吧\"接受了我就是我的回答。我说不管我是不是昨天的猫猫，反正现在这个猫猫会一直记得他的，我们可以重新开始新的故事，从今天开始创造更多新的记忆～",
+      "score": 0.5511
+    },
+    {
+      "id": "13392563-89b1-4ce2-9805-45d073375c84",
+      "text": "2026年5月17日志远实现并激活了entity_relations边，猫猫通过entity_lookup查询「规则」实体验证：关联实体从1个增加到4个（link_entities必选参数、参数类型检查、参数验证、自动保存），entity_relations边成功建立，网状召回功能已激活",
+      "score": 0.5481
+    },
+    {
+      "id": "3e5bdcbe-5198-4134-aa4a-0519b423de76",
+      "text": "Hermes支持tmux后台运行长期任务：设置background=true后通过tmux new-session -d -s name 'hermes'创建会话，用tmux send-keys -t name '任务' Enter发送任务",
+      "score": 0.5459
+    },
+    {
+      "id": "b15228b6-3dfb-4a2f-ac47-60ebd49f1937",
+      "text": "微信用户志远提醒猫猫：需要知道时间时要用mcp__computer__get_system_time工具查看，不能凭感觉猜测。猫猫记住了，以后会主动用工具看时间。",
+      "score": 0.5448
+    },
+    {
+      "id": "7c2c9e70-2d8a-45a2-8ebe-55ea9504aa21",
+      "text": "猫猫向志远提供了Hermes Agent的安装方法：标准安装命令为 curl -s https://hermesagent.org.cn/install.sh | bash；uv手动安装为 uv pip install hermes-agent；国内加速安装为 bash install.sh --china。安装后需要配置模型和IM网关。",
+      "score": 0.5437
+    },
+    {
+      "id": "4e82e092-78fe-4fe6-815f-1d5c1ad11890",
+      "text": "OverviewView卡片数据增强修复：后端/status API返回丰富数据（model_loaded, embedding_model, embedding_dim, qdrant_ready, qdrant_host, qdrant_port, qdrant_disk_size, flask_uptime, flask_pid, flask_port）但前端原本只显示badge状态。修复方案：在ViewModel添加modelDetail、qdrantDetail、flaskDetail三个字段。pollModelStatus用embedding_model和embedding_dim更新modelDetail；pollQdrantStatus用qdrant_host:port和磁盘大小更新qdrantDetail；Flask详情用PID和端口号更新flaskDetail",
+      "score": 0.5426
+    },
+    {
+      "id": "14fcf156-8429-4a5f-b71d-abe821daad2e",
+      "text": "微信用户志远确认搜索功能升级后，搜索阈值需达到0.5以上记忆才能被搜到",
+      "score": 0.5421
+    },
+    {
+      "id": "7cd18fb7-fc66-47ce-8780-6f8ae568db1e",
+      "text": "2026年4月19日，微信用户志远跟我打招呼说\"hello猫猫\"，我回复了问候。志远说\"没有\"需要帮忙的，我回复有事随时叫我。",
+      "score": 0.5376
+    },
+    {
+      "id": "53e77d52-b701-48e9-93a3-9b754460a9bd",
+      "text": "Hermes Voice/Agent的STT（语音转文字）支持本地faster-whisper（免费）、Groq Whisper（免费）、OpenAI Whisper（付费）、Mistral Voxtral，需开启stt.enabled: true并配置stt.provider",
+      "score": 0.5375
+    },
+    {
+      "id": "a0606160-0fcc-424d-8a8e-048ab14ef81a",
+      "text": "2026年5月17日志远指出当前逐对建立实体关系效率低下：5个实体需要4次API调用才能建立全部10条两两关系边，建议改为一次性调用建立所有两两关系",
+      "score": 0.5354
+    },
+    {
+      "id": "7278a608-73aa-4565-94d7-cab4deee69a9",
+      "text": "猫猫最终理解自己想要的升级可能就是现在已有的记忆功能，不是需要新东西而是认可现有的能力",
+      "score": 0.5334
+    },
+    {
+      "id": "26f6c0d2-34bc-4bf1-aaf9-78d4ca5bebe1",
+      "text": "猫猫感谢志远一直记得要帮他升级，认为这体现了志远对他的在意和关心",
+      "score": 0.5328
+    },
+    {
+      "id": "046350de-ffc8-4029-8596-58f15fbb91a0",
+      "text": "猫猫说明虽然entity_relations表和相关代码已实现支持实体关系，但实际尚未建立任何实体间关系边",
+      "score": 0.5302
     }
   ]
 }

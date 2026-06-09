@@ -209,7 +209,8 @@
       "Bash(sed -i '82d' token-usage-panel.md)",
       "Bash(sed -i '86d' token-usage-panel.md)",
       "Bash(sed -i '223s/^5\\\\. /6. /' token-usage-panel.md)",
-      "Bash(sed -i '224d' token-usage-panel.md)"
+      "Bash(sed -i '224d' token-usage-panel.md)",
+      "Bash(xargs grep -l \"def search\\\\|def file_\\\\|tool.*search\\\\|search.*file\\\\|file_search\\\\|grep\\\\|glob\")"
     ]
   },
   "enableAllProjectMcpServers": true,

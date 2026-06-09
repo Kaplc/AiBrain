@@ -74,6 +74,7 @@ DEFAULT_CHAT = {
     "max_context_messages": 20,
     "trim_keep_last": 1000,
     "recall_own_thoughts": False,
+    "tools_enabled": True,
 }
 
 

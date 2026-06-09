@@ -6,6 +6,7 @@ import QdrantCard from './QdrantCard/QdrantCard.vue'
 import FlaskCard from './FlaskCard/FlaskCard.vue'
 import DeviceCard from './DeviceCard/DeviceCard.vue'
 import BalanceCard from './BalanceCard/BalanceCard.vue'
+import TokenCard from './TokenCard/TokenCard.vue'
 
 onMounted(async () => {
   await nextTick()
@@ -21,6 +22,9 @@ onUnmounted(() => overviewViewModel.onUnmounted())
       <QdrantCard />
       <FlaskCard />
       <DeviceCard />
+    </div>
+    <div class="overview-row">
+      <TokenCard />
     </div>
     <div class="overview-row">
       <BalanceCard />

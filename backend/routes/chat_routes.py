@@ -79,6 +79,12 @@ def register(app, ready_state, logger, stats_db):
                     if t == 'token':
                         token_count += 1
                         yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'tool_call':
+                        yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'tool_history':
+                        yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'usage':
+                        yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'done':
                         logger.info(f"[chat] send done: tokens={token_count}")
                         yield f"data: {json.dumps({'type': 'done'})}\n\n"

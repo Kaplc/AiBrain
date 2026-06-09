@@ -24,6 +24,7 @@ class BaseAgent(ABC):
     description: str = ""
     system_prompt: str = ""
     enable_thinking: bool = True  # 默认开启 DeepSeek 思考模式
+    tools: list[str] = []  # 允许使用的工具名列表，空列表 = 不使用工具
 
     @abstractmethod
     def run(self, input_data: Any, **kwargs) -> Any:

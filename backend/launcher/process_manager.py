@@ -492,7 +492,7 @@ def _release_pm_lock():
 def main():
     try:
         import ctypes
-        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain Manager")
+        ctypes.windll.kernel32.SetConsoleTitleW("AiBrain")
     except Exception:
         pass
 

@@ -29,6 +29,7 @@ class ChatManager:
         self._model = "gpt-4o-mini"
         self._api_key = ""
         self._base_url = ""
+        self._tools_enabled = False
         # 当前处理状态（供前端流式显示）
         self._current_status = ""
         self._status_lock = threading.Lock()
@@ -61,7 +62,8 @@ class ChatManager:
         self._model = config.get('chat_model', 'gpt-4o-mini')
         self._api_key = config.get('chat_api_key', '')
         self._base_url = config.get('chat_base_url', '')
-        # system_persona 已迁移到 PromptPipeline，此处不再使用
+        self._tools_enabled = config.get('tools_enabled', False)
+        self._system_persona = config.get('system_persona', '')
 
     # ── 用户交互（直接调 LLM，无线程） ─────────────────
 
@@ -78,6 +80,8 @@ class ChatManager:
             model=self._model,
             api_key=self._api_key,
             base_url=self._base_url,
+            tools_enabled=self._tools_enabled,
+            system_persona=self._system_persona,
         )
 
     # ── 空闲思绪（后台线程） ───────────────────────────

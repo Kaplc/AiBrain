@@ -85,6 +85,21 @@ class StatsDB:
             )
         ''')
         db.execute('CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(created_at DESC)')
+        # ── token_usage：LLM Token 用量记录 ──
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_hit_tokens  INTEGER NOT NULL DEFAULT 0,
+                cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens      INTEGER NOT NULL DEFAULT 0,
+                model             TEXT DEFAULT '',
+                source            TEXT DEFAULT 'chat',
+                created_at        TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at DESC)')
         db.execute('''
             CREATE TABLE IF NOT EXISTS build_status (
                 build_id TEXT PRIMARY KEY,
@@ -416,3 +431,156 @@ class StatsDB:
             ''', (keep_last,))
             db.commit()
         db.close()
+
+    # ── Token Usage（LLM 调用用量记录）─────────────────────
+
+    def record_token_usage(self, prompt_tokens=0, completion_tokens=0,
+                           cache_hit_tokens=0, cache_miss_tokens=0,
+                           model='', source='chat'):
+        """记录一次 LLM 调用的 Token 用量（非阻塞，失败只打日志）"""
+        total = prompt_tokens + completion_tokens
+        try:
+            db = self._get_conn()
+            db.execute(
+                'INSERT INTO token_usage '
+                '(prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens, '
+                'total_tokens, model, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (prompt_tokens, completion_tokens, cache_hit_tokens,
+                 cache_miss_tokens, total, model, source)
+            )
+            db.commit()
+            db.close()
+        except Exception as e:
+            _db_logger.warning(f"[token_usage] record failed: {e}")
+
+    def get_token_usage_summary(self, hours=24):
+        """查询最近 N 小时的聚合摘要 + 时序数据
+
+        Args:
+            hours: 时间范围（小时）
+
+        Returns:
+            {
+                "summary": {prompt_tokens, completion_tokens, cache_hit_tokens,
+                            cache_miss_tokens, total_tokens, cache_hit_rate},
+                "data": [{date, prompt_tokens, completion_tokens,
+                          cache_hit_tokens, total_tokens}, ...]
+            }
+        """
+        db = self._get_conn()
+        cutoff = f'-{hours} hours'
+
+        # 聚合摘要
+        row = db.execute(
+            "SELECT COALESCE(SUM(prompt_tokens),0) as p,"
+            "       COALESCE(SUM(completion_tokens),0) as c,"
+            "       COALESCE(SUM(cache_hit_tokens),0) as ch,"
+            "       COALESCE(SUM(cache_miss_tokens),0) as cm,"
+            "       COALESCE(SUM(total_tokens),0) as t "
+            "FROM token_usage WHERE created_at >= datetime('now','localtime',?)",
+            (cutoff,)
+        ).fetchone()
+
+        summary = {
+            "prompt_tokens": row[0],
+            "completion_tokens": row[1],
+            "cache_hit_tokens": row[2],
+            "cache_miss_tokens": row[3],
+            "total_tokens": row[4],
+            "cache_hit_rate": round(row[2] / (row[2] + row[3]), 4) if (row[2] + row[3]) > 0 else 0,
+        }
+
+        # 时序分组：24h → 按15分钟, 7d/30d → 按天
+        if hours <= 24:
+            period_expr = "strftime('%H:', created_at) || printf('%02d', cast(strftime('%M', created_at) as integer) / 15 * 15)"
+        else:
+            period_expr = "strftime('%m-%d', created_at)"
+
+        rows = db.execute(
+            f"SELECT {period_expr} as period,"
+            "       SUM(prompt_tokens) as p, SUM(completion_tokens) as c,"
+            "       SUM(cache_hit_tokens) as ch, SUM(total_tokens) as t "
+            "FROM token_usage WHERE created_at >= datetime('now','localtime',?) "
+            "GROUP BY period ORDER BY MIN(created_at)",
+            (cutoff,)
+        ).fetchall()
+
+        data = [
+            {
+                "date": r[0],
+                "prompt_tokens": r[1],
+                "completion_tokens": r[2],
+                "cache_hit_tokens": r[3],
+                "total_tokens": r[4],
+            }
+            for r in rows
+        ]
+
+        db.close()
+        return {"summary": summary, "data": data}
+
+    # ── DeepSeek 模型参考定价（元/百万 token） ───────────
+    _MODEL_COST_TABLE = {
+        'deepseek-chat':      {'input': 0.14, 'output': 0.28, 'cache_hit_input': 0.07},
+        'deepseek-reasoner':  {'input': 0.55, 'output': 2.19, 'cache_hit_input': 0.07},
+        'gpt-4o-mini':        {'input': 0.15, 'output': 0.60, 'cache_hit_input': 0.075},
+        'gpt-4o':             {'input': 2.50, 'output': 10.0, 'cache_hit_input': 1.25},
+    }
+
+    def get_today_cost(self) -> dict:
+        """查询今日 Token 消耗及预估费用
+
+        Returns:
+            {
+                "total_cost": 0.00,        # 预估总费用（元）
+                "prompt_cost": 0.00,        # 输入费用
+                "completion_cost": 0.00,    # 输出费用
+                "prompt_tokens": 0,         # 输入 token 数
+                "completion_tokens": 0,     # 输出 token 数
+            }
+        """
+        db = self._get_conn()
+        rows = db.execute(
+            "SELECT model,"
+            "       SUM(prompt_tokens) as p, SUM(completion_tokens) as c,"
+            "       SUM(cache_hit_tokens) as ch, SUM(cache_miss_tokens) as cm "
+            "FROM token_usage "
+            "WHERE created_at >= datetime('now','localtime','start of day') "
+            "GROUP BY model"
+        ).fetchall()
+
+        total_cost = 0.0
+        prompt_cost = 0.0
+        completion_cost = 0.0
+        total_prompt = 0
+        total_completion = 0
+
+        for row in rows:
+            model_name = row[0] or 'unknown'
+            p_tokens, c_tokens, ch_tokens, cm_tokens = row[1:5]
+            total_prompt += p_tokens
+            total_completion += c_tokens
+
+            pricing = self._MODEL_COST_TABLE.get(model_name)
+            if pricing:
+                in_p  = pricing['input']
+                in_ch = pricing['cache_hit_input']
+                out_p = pricing['output']
+            else:
+                # 未识别的模型按 input ¥2 / output ¥8 估算
+                in_p, in_ch, out_p = 2.0, 0.5, 8.0
+
+            p_cost = (cm_tokens * in_p + ch_tokens * in_ch) / 1_000_000
+            c_cost = (c_tokens * out_p) / 1_000_000
+            total_cost += p_cost + c_cost
+            prompt_cost += p_cost
+            completion_cost += c_cost
+
+        db.close()
+        return {
+            "total_cost": round(total_cost, 4),
+            "prompt_cost": round(prompt_cost, 4),
+            "completion_cost": round(completion_cost, 4),
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+        }

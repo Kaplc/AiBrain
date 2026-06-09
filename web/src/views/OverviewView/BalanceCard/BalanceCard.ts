@@ -17,9 +17,18 @@ export interface BalanceInfo {
   topped_up_balance: string
 }
 
+export interface TodayCost {
+  total_cost: number
+  prompt_cost: number
+  completion_cost: number
+  prompt_tokens: number
+  completion_tokens: number
+}
+
 export interface BalanceData {
   is_available: boolean
   balance_infos?: BalanceInfo[]
+  today_cost?: TodayCost
   error?: string
 }
 
@@ -28,6 +37,7 @@ export class BalanceCard {
   readonly error = ref('')
   readonly available = ref(false)
   readonly balanceList = ref<BalanceInfo[]>([])
+  readonly todayCost = ref<TodayCost | null>(null)
 
   private _api = useApi()
   private _polling = usePolling(() => this.poll(), 30000, 0)
@@ -42,6 +52,7 @@ export class BalanceCard {
       }
       this.available.value = data.is_available
       this.balanceList.value = data.balance_infos || []
+      this.todayCost.value = data.today_cost || null
       this.loading.value = false
       this.error.value = ''
     } catch (e: any) {

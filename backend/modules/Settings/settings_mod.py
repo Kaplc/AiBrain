@@ -185,7 +185,7 @@ class SettingsManager:
         Returns: {"ok": bool, "message": str, "response": str|None, "latency_ms": int}
         """
         import time
-        from modules.LLM import LLMConfig, call_llm_sync
+        from modules.LLM import LLMConfig, get_llm_manager
 
         try:
             cfg = LLMConfig.from_dict(data)
@@ -204,7 +204,7 @@ class SettingsManager:
                 timeout=min(cfg.timeout, 30),
             )
             t0 = time.time()
-            text = call_llm_sync("只回 OK", "ping", test_cfg)
+            text = get_llm_manager().complete("只回 OK", "ping", test_cfg)
             latency_ms = int((time.time() - t0) * 1000)
             return {
                 "ok": True,
@@ -259,7 +259,7 @@ class SettingsManager:
     def test_chat_config(self, data: dict) -> dict:
         """测试 Chat LLM 连通性"""
         import time
-        from modules.LLM import LLMConfig, call_llm_sync
+        from modules.LLM import LLMConfig, get_llm_manager
 
         try:
             provider = data.get('chat_provider', 'openai')
@@ -277,7 +277,7 @@ class SettingsManager:
                 return {"ok": False, "message": f"配置无效: {err}", "response": None, "latency_ms": 0}
 
             t0 = time.time()
-            text = call_llm_sync("只回 OK", "ping", cfg)
+            text = get_llm_manager().complete("只回 OK", "ping", cfg)
             latency_ms = int((time.time() - t0) * 1000)
             return {
                 "ok": True,

@@ -10,8 +10,17 @@ const showSettings = ref(false)
 const systemPersona = ref('')
 const saving = ref(false)
 const savedTip = ref(false)
+const quotePreview = ref('')
+const quoteIndex = ref(-1)
+const showScrollBtn = ref(false)
 const ticker = ref(0)
 let tickerTimer: ReturnType<typeof setInterval> | null = null
+
+function onScroll() {
+  const el = messagesEl.value
+  if (!el) return
+  showScrollBtn.value = el.scrollHeight - el.scrollTop - el.clientHeight > 100
+}
 
 onMounted(async () => {
   chatViewModel.setScrollFn(scrollToBottom)
@@ -54,8 +63,12 @@ function scrollToBottom() {
 }
 
 async function handleSend() {
-  const text = inputText.value.trim()
+  let text = inputText.value.trim()
   if (!text || chatViewModel.sending.value) return
+  if (quotePreview.value) {
+    text = `> ${quotePreview.value}\n\n${text}`
+    quotePreview.value = ''
+  }
   inputText.value = ''
   await chatViewModel.sendMessage(text)
 }
@@ -106,6 +119,38 @@ async function saveSettings() {
 
 function closeSettings() {
   showSettings.value = false
+}
+
+function quoteMsg(text: string, index: number) {
+  const lines = text.split('\n').filter(Boolean)
+  let quote = lines.slice(0, 3).join('\n')
+  if (lines.length > 3) quote += '\n...'
+  quotePreview.value = quote
+  quoteIndex.value = index
+  nextTick(() => {
+    const ta = document.querySelector('.chat-input') as HTMLTextAreaElement
+    ta?.focus()
+  })
+}
+
+function jumpToQuote() {
+  if (quoteIndex.value < 0) return
+  const el = messagesEl.value
+  if (!el) return
+  const msgs = el.querySelectorAll('.message')
+  const target = msgs[quoteIndex.value] as HTMLElement
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    target.style.transition = 'background 0.5s'
+    target.style.background = 'rgba(124, 58, 237, 0.15)'
+    setTimeout(() => { target.style.background = '' }, 1500)
+  }
+  clearQuote()
+}
+
+function clearQuote() {
+  quotePreview.value = ''
+  quoteIndex.value = -1
 }
 
 async function copyMsgContent(text: string) {
@@ -184,6 +229,39 @@ function getDateSeparator(currentTime: string, prevTime: string | null): string 
   return ''
 }
 
+/* 工具标签 */
+const TOOL_ICONS: Record<string, string> = {
+  memory_search: '🔍', memory_store: '💾',
+  file_search: '📁', read_file: '📖',
+  list_directory: '📂', web_fetch: '🌐',
+  plan: '📋',
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  memory_search: '搜索记忆', memory_store: '保存记忆',
+  file_search: '搜索文件', read_file: '读取文件',
+  list_directory: '浏览目录', web_fetch: '获取网页',
+  plan: '计划管理',
+}
+
+function toolIcon(name: string): string {
+  return TOOL_ICONS[name] || '🔧'
+}
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] || name
+}
+
+function toolArgsText(args: Record<string, any>): string {
+  const parts: string[] = []
+  if (args.pattern) parts.push(`"${args.pattern}"`)
+  if (args.query) parts.push(`"${args.query}"`)
+  if (args.path) parts.push(args.path)
+  if (args.file_pattern) parts.push(args.file_pattern)
+  if (args.url) parts.push(args.url)
+  return parts.join('  ') || ''
+}
+
 /* 格式化消息时间：显示 HH:mm:ss */
 function formatMsgTime(time: string): string {
   if (!time) return ''
@@ -206,7 +284,7 @@ function formatMsgTime(time: string): string {
     </div>
 
     <!-- 消息列表 -->
-    <div class="messages" ref="messagesEl">
+    <div class="messages" ref="messagesEl" @scroll="onScroll">
       <div v-if="!chatViewModel.messages.length" class="empty-hint">
         <div class="empty-icon">💭</div>
         <div>开始与 AiBrain 对话</div>
@@ -227,6 +305,14 @@ function formatMsgTime(time: string): string {
         >
           <!-- 思绪标记 -->
           <span v-if="msg.is_thought === 1" class="thought-badge">💭 思绪</span>
+          <!-- 工具调用展示 -->
+          <div v-if="msg.toolCalls?.length" class="tool-calls">
+            <div v-for="(tc, ti) in msg.toolCalls" :key="ti" class="tool-call">
+              <span class="tool-call-icon">{{ toolIcon(tc.name) }}</span>
+              <span class="tool-call-name">{{ toolLabel(tc.name) }}</span>
+              <span class="tool-call-args">{{ toolArgsText(tc.arguments || {}) }}</span>
+            </div>
+          </div>
           <!-- 消息内容 -->
           <div class="msg-content" v-html="renderContent(msg)"></div>
           <!-- 流式状态 + 光标（仅流式期间显示） -->
@@ -243,10 +329,19 @@ function formatMsgTime(time: string): string {
         <!-- 气泡操作栏 -->
         <div class="msg-actions" :class="msg.role" v-if="!msg.isStreaming">
           <button class="action-btn" @click="copyMsgContent(msg.content)" title="复制">📋</button>
+          <button class="action-btn" @click="quoteMsg(msg.content, i)" title="引用">💬</button>
         </div>
       </template>
+      <!-- 滚动到底部按钮 -->
+      <button v-if="showScrollBtn" class="scroll-bottom-btn" @click="scrollToBottom">⬇</button>
     </div>
 
+    <!-- 引用预览 -->
+    <div v-if="quotePreview" class="quote-preview">
+      <div class="quote-preview-bar"></div>
+      <div class="quote-preview-text">{{ quotePreview }}</div>
+      <button class="quote-preview-close" @click="clearQuote">✕</button>
+    </div>
     <!-- 输入区 -->
     <div class="input-area">
       <textarea
@@ -342,6 +437,7 @@ function formatMsgTime(time: string): string {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
 }
 
 .empty-hint {
@@ -362,6 +458,7 @@ function formatMsgTime(time: string): string {
   line-height: 1.6;
   word-break: break-word;
   position: relative;
+  user-select: text;
 }
 
 .message.user {
@@ -384,6 +481,38 @@ function formatMsgTime(time: string): string {
   font-style: italic;
   color: #c4b5fd;
   max-width: 70%;
+}
+
+/* ── 工具调用（气泡内） ── */
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+.tool-call {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 11px;
+}
+.tool-call-icon {
+  font-size: 12px;
+}
+.tool-call-name {
+  color: #a78bfa;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tool-call-args {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thought-badge {
@@ -439,6 +568,10 @@ function formatMsgTime(time: string): string {
 .date-separator::before { left: 0; }
 .date-separator::after { right: 0; }
 
+.msg-content {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .msg-content :deep(pre) {
   background: #0f1117;
   border: 1px solid #2d3149;
@@ -481,6 +614,52 @@ function formatMsgTime(time: string): string {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* ── 引用预览 ── */
+.quote-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #1a1d27;
+  border-top: 1px solid #2d3149;
+  border-bottom: 1px solid #2d3149;
+  flex-shrink: 0;
+}
+.quote-preview-bar {
+  width: 3px;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: #7c3aed;
+  border-radius: 2px;
+}
+.quote-preview-text {
+  flex: 1;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.quote-preview-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.quote-preview-close:hover {
+  color: #e2e8f0;
+  background: #2d3149;
 }
 
 /* ── 输入区 ── */
@@ -536,6 +715,31 @@ function formatMsgTime(time: string): string {
   background: #dc2626;
 }
 .stop-btn:hover { background: #b91c1c; }
+
+/* ── 滚动到底部按钮 ── */
+.scroll-bottom-btn {
+  position: absolute;
+  bottom: 60px;
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 1px solid #2d3149;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  z-index: 10;
+  transition: all .15s;
+}
+.scroll-bottom-btn:hover {
+  background: #263044;
+  color: #cbd5e1;
+}
 
 /* ── 气泡操作栏 ── */
 .msg-actions {

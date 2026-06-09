@@ -11,6 +11,7 @@ import { QdrantCard } from './QdrantCard/QdrantCard'
 import { FlaskCard } from './FlaskCard/FlaskCard'
 import { DeviceCard } from './DeviceCard/DeviceCard'
 import { balanceCard } from './BalanceCard/BalanceCard'
+import { tokenCard } from './TokenCard/TokenCard'
 
 // 重新导出各卡片类型，供外部按需引用
 export type { ModelBadge, ModelCardData } from './ModelCard/ModelCard'
@@ -26,6 +27,7 @@ export class OverviewViewModel {
   readonly flaskCard = new FlaskCard()
   readonly deviceCard = new DeviceCard()
   readonly balanceCard = balanceCard
+  readonly tokenCard = tokenCard
 
   // 从注册表获取卡片列表（用于动态渲染）
   readonly cardList = getAllCards()
@@ -49,6 +51,7 @@ export class OverviewViewModel {
     this.flaskCard.start()
     this.deviceCard.start()
     this.balanceCard.start()
+    this.tokenCard.start()
   }
 
   onUnmounted(): void {
@@ -58,6 +61,7 @@ export class OverviewViewModel {
     this.flaskCard.stop()
     this.deviceCard.stop()
     this.balanceCard.stop()
+    this.tokenCard.stop()
   }
 }
 

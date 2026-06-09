@@ -20,7 +20,7 @@ LLM 能力模块 —— 只负责"发请求拿响应"
 依赖：openai（必需），anthropic（可选，Anthropic provider 才需要）。
 """
 from .config import LLMConfig, SUPPORTED_PROVIDERS
-from .stream import call_llm_stream, call_llm_sync
+from .stream import call_llm_stream, call_llm_sync, call_llm_nonstream
 from .llm_mod import LLMManager, get_llm_manager
 from .Agents import AgentManager, get_agent_manager
 
@@ -31,6 +31,7 @@ __all__ = [
     # Stream
     "call_llm_stream",
     "call_llm_sync",
+    "call_llm_nonstream",
     # 单例
     "LLMManager",
     "get_llm_manager",

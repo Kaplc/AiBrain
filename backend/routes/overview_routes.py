@@ -177,6 +177,13 @@ def register(app, ready_state, logger, stats_db):
                 data = json.loads(resp.read().decode('utf-8'))
             logger.info(f"[balance] response: is_available={data.get('is_available')}, "
                         f"infos={[f'{b['currency']}={b['total_balance']}' for b in data.get('balance_infos', [])]}")
+            # 附加今日 Token 消耗费用
+            try:
+                today_cost = stats_db.get_today_cost()
+                data['today_cost'] = today_cost
+                logger.info(f"[balance] today_cost=¥{today_cost['total_cost']}")
+            except Exception as ec:
+                logger.warning(f"[balance] today_cost failed: {ec}")
             return jsonify(data)
         except urllib.error.HTTPError as e:
             logger.warning(f"[balance] HTTP {e.code}: {e.reason}")
@@ -184,3 +191,41 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[balance] error: {e}")
             return jsonify({"error": str(e)}), 500
+
+    @app.route('/overview/token-usage', methods=['GET'])
+    def token_usage():
+        """Token 用量统计（支持预设时间段和自定义范围）
+
+        Query params:
+            start: 开始日期 YYYY-MM-DD 或 YYYY-MM-DD HH:MM（可选）
+            end:   结束日期（可选，默认当前时间）
+        不传参数返回 24h / 7d / 30d 三个预设时间段
+        """
+        try:
+            start = request.args.get('start', '')
+            end = request.args.get('end', '')
+
+            if start:
+                # 自定义范围
+                import datetime as _dt
+                try:
+                    start_dt = _dt.datetime.strptime(start[:16], '%Y-%m-%d %H:%M')
+                except ValueError:
+                    start_dt = _dt.datetime.strptime(start[:10], '%Y-%m-%d')
+                now = _dt.datetime.now()
+                hours = int((now - start_dt).total_seconds() / 3600) + 1
+                result = stats_db.get_token_usage_summary(hours=max(1, hours))
+                return jsonify({"ok": True, "custom": result})
+
+            # 预设时间段
+            return jsonify({
+                "ok": True,
+                "periods": {
+                    "24h": stats_db.get_token_usage_summary(hours=24),
+                    "7d": stats_db.get_token_usage_summary(hours=168),
+                    "30d": stats_db.get_token_usage_summary(hours=720),
+                }
+            })
+        except Exception as e:
+            logger.error(f"[token-usage] error: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500

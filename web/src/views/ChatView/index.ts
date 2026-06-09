@@ -11,12 +11,15 @@ import { useToast } from '@/composables/useToast'
 
 export interface ChatMessage {
   id?: number
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   is_thought?: number
   isStreaming?: boolean
   created_at?: string
   duration?: number  // LLM 响应耗时（秒）
+  toolCalls?: Array<{name: string; arguments: Record<string,any>; result: string}>
+  toolName?: string
+  toolArgs?: Record<string, any>
 }
 
 const API_BASE = window.location.origin
@@ -163,6 +166,16 @@ export class ChatViewModel {
               this._scrollToBottom()
             } else if (payload.type === 'error') {
               this._toast.show(`AI 响应出错: ${payload.message}`, 'error')
+            } else if (payload.type === 'tool_call') {
+              // 工具调用追加到 assistant 气泡内
+              if (!this.messages[idx].toolCalls) {
+                this.messages[idx].toolCalls = []
+              }
+              this.messages[idx].toolCalls.push({
+                name: payload.name,
+                arguments: payload.arguments || {},
+              })
+              this._scrollToBottom()
             } else if (payload.type === 'done') {
               this.messages[idx].isStreaming = false
               this.messages[idx].duration = parseFloat(((performance.now() - startTime) / 1000).toFixed(1))
