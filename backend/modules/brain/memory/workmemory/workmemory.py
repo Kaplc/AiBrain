@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -302,7 +303,8 @@ class WorkMemoryManager:
     # ── output.json 专用方法 ──────────────────────────────
 
     def output_mem_write(self, content: str, user_prompt: str = "") -> dict:
-        """向 output.json 滚动追加对话记录，超过 20 条自动删除最旧
+        """向 output.json 滚动追加对话记录，超过 100 条自动删除最旧
+        使用临时文件 + 原子替换，防止崩溃损坏。
 
         Args:
             content: LLM 回复文本
@@ -335,13 +337,22 @@ class WorkMemoryManager:
             "time": ts,
         })
 
-        # 超出 20 条，删最旧
+        # 超出 100 条，删最旧
         removed = 0
-        while len(entries) > 20:
+        while len(entries) > 100:
             entries.pop(0)
             removed += 1
 
-        fpath.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 原子写入：临时文件 + os.replace
+        fd, tmp = tempfile.mkstemp(dir=str(_BASE_DIR), suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, fpath)
+        except Exception:
+            os.unlink(tmp)
+            raise
+
         self._refresh_registry("output.json")
         logger.info(f"[workmemory] output_mem_write: total={len(entries)} removed={removed}")
 
@@ -550,3 +561,8 @@ class WorkMemoryManager:
 def get_work_memory() -> WorkMemoryManager:
     """获取 WorkMemoryManager 单例"""
     return WorkMemoryManager.get_instance()
+
+
+def get_base_dir() -> Path:
+    """获取工作记忆数据目录路径"""
+    return _BASE_DIR

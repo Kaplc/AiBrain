@@ -78,7 +78,14 @@ def send_message(
     try:
         logger.info(f"[loop] send_message start: prompt={prompt[:60]!r} tools={tools_enabled}")
 
-        # 0. 写入工作记忆 + (非工具模式时) 触发 package 搜索
+        # 0. 压缩后重载检查
+        try:
+            from .compression.context_compress import reload_if_needed
+            reload_if_needed(_conversation_history)
+        except Exception as e:
+            logger.warning(f"[loop] compress reload failed: {e}")
+
+        # 0.1 写入工作记忆 + (非工具模式时) 触发 package 搜索
         _set_status("分析记忆")
         try:
             from modules.brain.memory.workmemory import get_work_memory
@@ -116,7 +123,7 @@ def send_message(
         #    在多轮对话间保持稳定，提高 DeepSeek KV 缓存命中率
         global _conversation_history
         msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
-        for turn in _conversation_history[-MAX_HISTORY_TURNS * 2:]:
+        for turn in _conversation_history:
             msgs.append(turn)
         if memory_ref:
             msgs.append({"role": "user", "content": f"参考信息：\n{memory_ref}"})
@@ -158,6 +165,7 @@ def send_message(
         _set_status("生成回复")
         full_response: list[str] = []
         token_count = 0
+        last_prompt_tokens = 0
         for chunk in get_llm_manager().stream_messages(msgs, cfg):
             token = chunk.get('content', '')
             if token:
@@ -165,9 +173,10 @@ def send_message(
                 token_count += 1
             yield {"type": "token", "content": token}
             if chunk.get('usage'):
+                last_prompt_tokens = chunk['usage'].get('prompt_tokens', 0)
                 yield {
                     "type": "usage",
-                    "prompt_tokens": chunk['usage'].get('prompt_tokens', 0),
+                    "prompt_tokens": last_prompt_tokens,
                     "completion_tokens": chunk['usage'].get('completion_tokens', 0),
                 }
 
@@ -175,7 +184,13 @@ def send_message(
         assistant_text = "".join(full_response)
         _conversation_history.append({"role": "user", "content": prompt})
         _conversation_history.append({"role": "assistant", "content": assistant_text})
-        _trim_history()
+
+        # 后台压缩检查（基于 Token 占比）
+        try:
+            from .compression.context_compress import try_spawn_compress
+            try_spawn_compress(_conversation_history, last_prompt_tokens)
+        except Exception as e:
+            logger.warning(f"[loop] compress spawn failed: {e}")
 
         # 写入工作记忆 output.md
         try:
@@ -213,6 +228,7 @@ def _tool_loop(
 
     tool_history = []
     final_text = ""
+    total_prompt_tokens = 0
 
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         _set_status(f"工具调用 (第{round_num}轮)")
@@ -230,11 +246,13 @@ def _tool_loop(
             final_text = f"抱歉，AI 调用时出错：{e}"
             break
 
-        # 转发 usage
+        # 转发 usage（累计总 prompt_tokens）
         if response.get("usage"):
+            round_tokens = response["usage"].get("prompt_tokens", 0)
+            total_prompt_tokens += round_tokens
             yield {
                 "type": "usage",
-                "prompt_tokens": response["usage"].get("prompt_tokens", 0),
+                "prompt_tokens": round_tokens,
                 "completion_tokens": response["usage"].get('completion_tokens', 0),
             }
 
@@ -306,7 +324,13 @@ def _tool_loop(
     # 3. 保存对话到 _conversation_history（只存 user + assistant 文本，不存 tool 消息）
     _conversation_history.append({"role": "user", "content": prompt})
     _conversation_history.append({"role": "assistant", "content": final_text})
-    _trim_history()
+
+    # 后台压缩检查（基于 Token 占比，使用累计 prompt_tokens）
+    try:
+        from .compression.context_compress import try_spawn_compress
+        try_spawn_compress(_conversation_history, total_prompt_tokens)
+    except Exception as e:
+        logger.warning(f"[loop] compress spawn failed: {e}")
 
     # 4. 写入工作记忆
     try:
