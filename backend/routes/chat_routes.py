@@ -83,6 +83,8 @@ def register(app, ready_state, logger, stats_db):
                         yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'tool_history':
                         yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'token_estimate':
+                        yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'usage':
                         yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'done':

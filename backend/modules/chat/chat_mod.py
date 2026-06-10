@@ -33,6 +33,9 @@ class ChatManager:
         # 当前处理状态（供前端流式显示）
         self._current_status = ""
         self._status_lock = threading.Lock()
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._stats_db = None
 
     @classmethod
     def get_instance(cls) -> 'ChatManager':
@@ -53,6 +56,11 @@ class ChatManager:
         """获取当前处理状态"""
         with self._status_lock:
             return self._current_status
+
+    def set_token_usage(self, prompt: int, completion: int):
+        """记录 token 用量"""
+        self._prompt_tokens = prompt
+        self._completion_tokens = completion
 
     # ── 配置 ──────────────────────────────────────────────
 
@@ -88,6 +96,7 @@ class ChatManager:
 
     def init_agentloop(self, stats_db, config: dict) -> ConsciousnessLoop:
         """初始化空闲思绪后台线程"""
+        self._stats_db = stats_db
         if self._loop is not None:
             return self._loop
         self._loop = ConsciousnessLoop(stats_db, config)
@@ -102,12 +111,33 @@ class ChatManager:
             self._loop = None
 
     def get_loop_state(self) -> dict:
-        """获取空闲思绪状态 + 当前处理状态"""
+        """获取空闲思绪状态 + 当前处理状态 + token 用量"""
         state = self._loop.get_state() if self._loop else {
             'is_running': False, 'idle_enabled': False,
             'idle_count': 0, 'is_busy': False,
         }
         state['current_status'] = self.get_status()
+        # 内存中最后一次 LLM 返回的 token 数；页面刷新后从数据库读取最近一次记录
+        prompt_tokens = self._prompt_tokens
+        completion_tokens = self._completion_tokens
+        if prompt_tokens <= 0 and self._stats_db:
+            try:
+                last = self._stats_db.get_last_token_usage()
+                if last:
+                    self._prompt_tokens = last.get("prompt_tokens", 0)
+                    self._completion_tokens = last.get("completion_tokens", 0)
+                    prompt_tokens = self._prompt_tokens
+                    completion_tokens = self._completion_tokens
+                    logger.info(f"[token] loaded from db → memory: prompt={prompt_tokens} completion={completion_tokens}")
+            except Exception as e:
+                logger.warning(f"[token] db fallback failed: {e}")
+        state['prompt_tokens'] = prompt_tokens
+        state['completion_tokens'] = completion_tokens
+        try:
+            from .compression.compress_config import MAX_CONTEXT_TOKENS
+            state['max_context_tokens'] = MAX_CONTEXT_TOKENS
+        except Exception:
+            state['max_context_tokens'] = 400000
         return state
 
     def reload_agentloop_config(self, config: dict):

@@ -17,13 +17,6 @@ _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
 
-# 默认搜索目录（排除无关目录）
-_DEFAULT_EXCLUDE = (
-    "venv312", ".venv", "__pycache__", ".git", "node_modules",
-    "dist", ".claude", "logs", "qdrant/storage", "rag/lightrag_data",
-    "models", ".aibrain",
-)
-
 
 def _grep_search_fn(
     pattern: str,
@@ -39,15 +32,13 @@ def _grep_search_fn(
     if not os.path.isdir(search_dir):
         return f"路径不存在: {search_dir}"
 
-    exclude_args = []
-    for d in _DEFAULT_EXCLUDE:
-        exclude_args.extend(["--exclude-dir", d])
-
-    include_args = []
+    cmd = ["grep", "-rn", "--color=never"]
     if file_pattern:
-        include_args.extend(["--include", file_pattern])
-
-    cmd = ["grep", "-rn", "--color=never"] + exclude_args + include_args
+        cmd.extend(["--include", file_pattern])
+    if not path:
+        # 默认全项目搜索时排除大目录防超时；指定 path 时不排除，允许搜任何目录
+        for d in ("node_modules", ".venv", "venv312", "__pycache__", ".git", "dist", "logs", "models"):
+            cmd.extend(["--exclude-dir", d])
     if context > 0:
         cmd.extend(["-C", str(context)])
     if output_mode == "count":
@@ -100,9 +91,7 @@ def _rg_search_fn(
     if not os.path.isdir(search_dir):
         return f"路径不存在: {search_dir}"
 
-    cmd = ["rg", "--no-heading", "--color=never", "-n"]
-    for d in _DEFAULT_EXCLUDE:
-        cmd.extend(["--glob", f"!{d}/**"])
+    cmd = ["rg", "--no-heading", "--color=never", "-n", "--hidden"]
     if file_pattern:
         cmd.extend(["--glob", file_pattern])
     if context > 0:
@@ -149,17 +138,17 @@ def _rg_search_fn(
 
 
 def _detect_search_tool() -> tuple[str, callable]:
-    """自动检测使用 rg 还是 grep"""
+    """自动检测可用搜索工具，优先 ripgrep（更快、支持 --hidden）"""
     try:
         subprocess.run(["rg", "--version"], capture_output=True, timeout=3)
-        return "ripgrep", _rg_search_fn
+        return "rg", _rg_search_fn
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return "grep", _grep_search_fn
 
 
 def _build_content_search_fn():
     """包装 _file_search_fn 为 content 模式（兼容旧 _file_search_fn 签名）"""
-    tool, fn = _detect_search_tool()
+    _, fn = _detect_search_tool()
     def wrapper(pattern="", path="", file_pattern="", max_results=20, offset=0, output_mode="content", context=0):
         return fn(pattern=pattern, path=path, file_pattern=file_pattern, max_results=max_results, offset=offset, output_mode=output_mode, context=context)
     return wrapper
@@ -209,8 +198,7 @@ def _search_by_name(pattern: str, path: str = "", limit: int = 50, offset: int =
         if not os.path.isfile(fpath):
             continue
         rel = os.path.relpath(fpath, _PROJECT_ROOT)
-        if any(excl in rel.replace("\\", "/").split("/") for excl in _DEFAULT_EXCLUDE):
-            continue
+        # (no directory exclusion)
         try:
             mtime = os.path.getmtime(fpath)
             size = os.path.getsize(fpath)
@@ -380,7 +368,7 @@ def _list_directory_fn(path: str = "", max_depth: int = 1) -> str:
 
     for root, dirs, files in os.walk(search_dir):
         # 跳过排除目录
-        dirs[:] = [d for d in dirs if d not in _DEFAULT_EXCLUDE and not d.startswith('.')]
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
 
         rel = os.path.relpath(root, base)
         if rel == '.':

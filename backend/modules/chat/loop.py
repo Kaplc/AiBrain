@@ -20,6 +20,7 @@ from .pipeline.context import PromptContext
 MAX_HISTORY_TURNS = 10
 MAX_TOOL_ROUNDS = 999
 _conversation_history: list[dict] = []
+_tool_memory: list[dict] = []  # 最近一轮 Tool Loop 的工具消息，不落盘
 
 logger = logging.getLogger(__name__)
 
@@ -75,15 +76,28 @@ def send_message(
         {"type": "done"}
         {"type": "error", "message": str}
     """
+    global _conversation_history
     try:
         logger.info(f"[loop] send_message start: prompt={prompt[:60]!r} tools={tools_enabled}")
 
-        # 0. 压缩后重载检查
+        # 0. 加载/重载对话历史到内存
         try:
             from .compression.context_compress import reload_if_needed
-            reload_if_needed(_conversation_history)
+            if not _conversation_history:
+                # 首次对话：从 output.json 加载历史
+                from modules.brain.memory.workmemory import get_work_memory
+                entries = get_work_memory().output_mem_read()
+                if entries:
+                    for e in entries:
+                        if e.get("user"):
+                            _conversation_history.append({"role": "user", "content": e["user"]})
+                        if e.get("assistant"):
+                            _conversation_history.append({"role": "assistant", "content": e["assistant"]})
+                    logger.info(f"[loop] loaded {len(entries)} entries from output.json → {len(_conversation_history)} msgs")
+            else:
+                reload_if_needed(_conversation_history)
         except Exception as e:
-            logger.warning(f"[loop] compress reload failed: {e}")
+            logger.warning(f"[loop] history load failed: {e}")
 
         # 0.1 写入工作记忆 + (非工具模式时) 触发 package 搜索
         _set_status("分析记忆")
@@ -121,10 +135,12 @@ def send_message(
         # 3. 构建 messages 数组
         #    注意：memory_ref 放在历史对话之后，这样 [system] + [历史] 前缀
         #    在多轮对话间保持稳定，提高 DeepSeek KV 缓存命中率
-        global _conversation_history
         msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
         for turn in _conversation_history:
             msgs.append(turn)
+        if _tool_memory:
+            msgs.extend(_tool_memory)
+            logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
         if memory_ref:
             msgs.append({"role": "user", "content": f"参考信息：\n{memory_ref}"})
         msgs.append({"role": "user", "content": prompt})
@@ -156,12 +172,21 @@ def send_message(
                 tool_schemas = []
 
         if tools_enabled and tool_schemas:
-            yield from _tool_loop(cfg, msgs, prompt, tool_schemas)
+            # 统计 msgs 组成
+            n_sys = 1 if msgs and msgs[0].get("role") == "system" else 0
+            n_hist = sum(1 for m in msgs if m.get("role") in ("user", "assistant") and not m.get("tool_calls"))
+            n_tool = sum(1 for m in msgs if m.get("role") == "tool" or m.get("tool_calls"))
+            n_ref = sum(1 for m in msgs if m.get("role") == "user" and "参考信息" in (m.get("content") or ""))
+            logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
+            pre_tool_len = len(msgs)
+            yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
             return
 
         # ════════════════════════════════════════════════════════
         # 流式路径（tools_enabled=False 或无工具注册）
         # ════════════════════════════════════════════════════════
+        if _tool_memory:
+            logger.info(f"[loop] stream path with {len(_tool_memory)} tool memory msgs (ignored)")
         _set_status("生成回复")
         full_response: list[str] = []
         token_count = 0
@@ -174,6 +199,11 @@ def send_message(
             yield {"type": "token", "content": token}
             if chunk.get('usage'):
                 last_prompt_tokens = chunk['usage'].get('prompt_tokens', 0)
+                logger.info(f"[loop] actual prompt_tokens from LLM: {last_prompt_tokens}")
+                yield {
+                    "type": "token_estimate",
+                    "prompt_tokens": last_prompt_tokens,
+                }
                 yield {
                     "type": "usage",
                     "prompt_tokens": last_prompt_tokens,
@@ -182,13 +212,16 @@ def send_message(
 
         # 记录本轮对话到历史
         assistant_text = "".join(full_response)
+        logger.info(f"[loop] LLM final response ({len(assistant_text)} chars): {assistant_text[:200]}{'...' if len(assistant_text) > 200 else ''}")
         _conversation_history.append({"role": "user", "content": prompt})
         _conversation_history.append({"role": "assistant", "content": assistant_text})
 
-        # 后台压缩检查（基于 Token 占比）
+        # 后台压缩检查 + token 用量记录
         try:
             from .compression.context_compress import try_spawn_compress
             try_spawn_compress(_conversation_history, last_prompt_tokens)
+            from .chat_mod import ChatManager
+            ChatManager.get_instance().set_token_usage(last_prompt_tokens, token_count)
         except Exception as e:
             logger.warning(f"[loop] compress spawn failed: {e}")
 
@@ -213,6 +246,7 @@ def _tool_loop(
     msgs: list[dict],
     prompt: str,
     tool_schemas: list[dict],
+    pre_tool_len: int = 0,
 ) -> Iterator[dict]:
     """Tool Loop — 非流式 LLM 调用 + 工具执行循环
 
@@ -228,13 +262,17 @@ def _tool_loop(
 
     tool_history = []
     final_text = ""
-    total_prompt_tokens = 0
+    last_prompt_tokens = 0
 
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         _set_status(f"工具调用 (第{round_num}轮)")
         logger.info(f"[loop] tool loop round {round_num}")
 
         try:
+            # 调用前 sanitize：移除孤儿 tool_call/tool_result 对
+            from .compilation.sanitizer import sanitize_tool_pairs
+            msgs = sanitize_tool_pairs(msgs)
+
             response = get_llm_manager().complete_with_tools(
                 messages=msgs,
                 config=cfg,
@@ -246,14 +284,20 @@ def _tool_loop(
             final_text = f"抱歉，AI 调用时出错：{e}"
             break
 
-        # 转发 usage（累计总 prompt_tokens）
+        # 转发 LLM 返回的实际 token 数（取最后一轮，不累加）
         if response.get("usage"):
             round_tokens = response["usage"].get("prompt_tokens", 0)
-            total_prompt_tokens += round_tokens
+            last_prompt_tokens = round_tokens
+            last_completion_tokens = response["usage"].get('completion_tokens', 0)
+            logger.info(f"[loop] actual prompt_tokens from LLM (round {round_num}): {round_tokens}")
+            yield {
+                "type": "token_estimate",
+                "prompt_tokens": round_tokens,
+            }
             yield {
                 "type": "usage",
                 "prompt_tokens": round_tokens,
-                "completion_tokens": response["usage"].get('completion_tokens', 0),
+                "completion_tokens": last_completion_tokens,
             }
 
         finish = response.get("finish_reason")
@@ -276,7 +320,7 @@ def _tool_loop(
                     fn_args = {}
                 tool_call_id = tc["id"]
 
-                logger.info(f"[loop] executing tool: {fn_name} args={fn_args}")
+                logger.info(f"[loop] executing tool: {fn_name}")
                 # 实时推送工具调用事件到前端
                 yield {
                     "type": "tool_call",
@@ -284,7 +328,6 @@ def _tool_loop(
                     "arguments": fn_args,
                 }
                 result_str = reg.execute(fn_name, fn_args)
-                logger.info(f"[loop] tool result: {result_str[:200]}")
 
                 tool_history.append({
                     "name": fn_name,
@@ -313,6 +356,21 @@ def _tool_loop(
 
     # ── Tool Loop 结束后 ──
 
+    # 0. 提取本轮 Tool Loop 的工具消息 → _tool_memory
+    #    只有本轮确实调了工具才更新，没调则保留上一轮的记忆
+    global _tool_memory
+    _new_tool_msgs = [
+        msg for msg in msgs[pre_tool_len:]
+        if (msg["role"] in ("assistant", "tool") and msg["role"] != "assistant")
+        or msg.get("tool_calls")
+    ]
+    if _new_tool_msgs:
+        _tool_memory = _new_tool_msgs
+        tool_roles = sorted(set(m.get("role", "?") for m in _tool_memory))
+        logger.info(f"[loop] tool memory updated: {len(_tool_memory)} msgs [{', '.join(tool_roles)}]")
+    else:
+        logger.info(f"[loop] tool memory unchanged ({len(_tool_memory)} msgs, no tool calls this round)")
+
     # 1. yield tool_history
     if tool_history:
         yield {"type": "tool_history", "tools": tool_history}
@@ -321,14 +379,19 @@ def _tool_loop(
     _set_status("生成回复")
     yield {"type": "token", "content": final_text}
 
+    logger.info(f"[loop] LLM final response ({len(final_text)} chars): {final_text[:200]}{'...' if len(final_text) > 200 else ''}")
+
     # 3. 保存对话到 _conversation_history（只存 user + assistant 文本，不存 tool 消息）
     _conversation_history.append({"role": "user", "content": prompt})
     _conversation_history.append({"role": "assistant", "content": final_text})
 
-    # 后台压缩检查（基于 Token 占比，使用累计 prompt_tokens）
+    # 后台压缩检查 + token 用量记录（取最后一轮）
+    logger.info(f"[loop] compress: check with last_prompt_tokens={last_prompt_tokens}")
     try:
         from .compression.context_compress import try_spawn_compress
-        try_spawn_compress(_conversation_history, total_prompt_tokens)
+        try_spawn_compress(_conversation_history, last_prompt_tokens)
+        from .chat_mod import ChatManager
+        ChatManager.get_instance().set_token_usage(last_prompt_tokens, last_completion_tokens)
     except Exception as e:
         logger.warning(f"[loop] compress spawn failed: {e}")
 

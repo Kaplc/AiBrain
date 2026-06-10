@@ -434,6 +434,25 @@ class StatsDB:
 
     # ── Token Usage（LLM 调用用量记录）─────────────────────
 
+    def get_last_token_usage(self) -> dict:
+        """查询最近一次 LLM 调用的 Token 用量
+
+        Returns:
+            {"prompt_tokens": int, "completion_tokens": int} 或空字典
+        """
+        try:
+            db = self._get_conn()
+            row = db.execute(
+                "SELECT prompt_tokens, completion_tokens FROM token_usage "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            db.close()
+            if row:
+                return {"prompt_tokens": row[0], "completion_tokens": row[1]}
+        except Exception as e:
+            _db_logger.warning(f"[token_usage] get_last failed: {e}")
+        return {}
+
     def record_token_usage(self, prompt_tokens=0, completion_tokens=0,
                            cache_hit_tokens=0, cache_miss_tokens=0,
                            model='', source='chat'):

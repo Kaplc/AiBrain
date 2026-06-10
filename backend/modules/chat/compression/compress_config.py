@@ -6,7 +6,7 @@
 """
 
 # 上下文最大 Token 数（近似模型上下文窗口大小）
-MAX_CONTEXT_TOKENS = 4000
+MAX_CONTEXT_TOKENS = 100000
 
 # 压缩触发比例（实际 prompt_tokens / MAX_CONTEXT_TOKENS 超过此值时触发压缩）
 COMPRESS_TRIGGER_RATIO = 0.7

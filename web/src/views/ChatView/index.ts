@@ -38,6 +38,9 @@ export class ChatViewModel {
     is_busy: false,
     consecutive_failures: 0,
     current_status: '',
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    max_context_tokens: 400000,
   })
 
   private _abortCtl: AbortController | null = null
@@ -176,6 +179,8 @@ export class ChatViewModel {
                 arguments: payload.arguments || {},
               })
               this._scrollToBottom()
+            } else if (payload.type === 'token_estimate') {
+              this.loopState.prompt_tokens = payload.prompt_tokens || 0
             } else if (payload.type === 'done') {
               this.messages[idx].isStreaming = false
               this.messages[idx].duration = parseFloat(((performance.now() - startTime) / 1000).toFixed(1))

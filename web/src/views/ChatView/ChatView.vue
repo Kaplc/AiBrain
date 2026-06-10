@@ -210,6 +210,20 @@ const stateLabel = computed(() => {
   return { icon: '⚪', text: '意识流已暂停', cls: 'paused' }
 })
 
+/* Token 用量 */
+const tokenPercent = computed(() => {
+  const max = chatViewModel.loopState.max_context_tokens || 400000
+  const used = chatViewModel.loopState.prompt_tokens || 0
+  return Math.min((used / max) * 100, 100)
+})
+
+const tokenColor = computed(() => {
+  const p = tokenPercent.value / 100
+  // HSL 插值：0% → 绿(120°)  50% → 黄(60°)  100% → 红(0°)
+  const hue = Math.round(120 - p * 120)
+  return `hsl(${hue}, 80%, 45%)`
+})
+
 /* 时间格式化 */
 function timeAgo(ts: number | null): string {
   if (!ts) return ''
@@ -365,6 +379,14 @@ function formatMsgTime(time: string): string {
         :disabled="!inputText.trim()"
         title="发送"
       >➤</button>
+    </div>
+
+    <!-- Token 用量 -->
+    <div class="token-bar">
+      <div class="token-bar-track">
+        <div class="token-bar-fill" :style="{ width: tokenPercent + '%', background: tokenColor }"></div>
+      </div>
+      <span class="token-label">{{ (chatViewModel.loopState.prompt_tokens / 1000).toFixed(1) || 0 }}k / {{ (chatViewModel.loopState.max_context_tokens / 1000).toFixed(1) || '400' }}k ({{ tokenPercent.toFixed(1) }}%)</span>
     </div>
 
     <!-- 系统提示词设置弹窗 -->
@@ -660,6 +682,36 @@ function formatMsgTime(time: string): string {
 .quote-preview-close:hover {
   color: #e2e8f0;
   background: #2d3149;
+}
+
+/* ── Token 用量 ── */
+.token-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  background: #0f1117;
+  border-top: 1px solid #1a1d27;
+  flex-shrink: 0;
+}
+.token-bar-track {
+  flex: 1;
+  height: 4px;
+  background: #1e293b;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.token-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease, background 0.5s ease;
+}
+.token-label {
+  font-size: 10px;
+  color: #e2e8f0;
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: right;
 }
 
 /* ── 输入区 ── */
