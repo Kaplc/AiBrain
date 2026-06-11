@@ -94,7 +94,15 @@ export class TokenCard {
       xAxis: {
         type: 'category',
         data: dates,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 3 },
+        axisLabel: {
+          color: '#64748b', fontSize: 10,
+          interval: 3,
+          formatter: (val: string) => {
+            if (val.length <= 5) return val  // 7d/30d: "06-12" → 直接返回
+            const t = val.slice(6)           // "14:00"
+            return t === '00:00' ? val.slice(0, 5) : t  // 0点显示日期，其他只显示小时
+          },
+        },
         axisLine: { lineStyle: { color: '#2d3149' } },
       },
       yAxis: {

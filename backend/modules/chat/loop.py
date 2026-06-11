@@ -142,7 +142,12 @@ def send_message(
             msgs.extend(_tool_memory)
             logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
         if memory_ref:
-            msgs.append({"role": "user", "content": f"参考信息：\n{memory_ref}"})
+            # 记忆检索视为工具调用，与 Hermes/OpenAI 规范一致
+            msgs.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{"id": "mem_ctx", "type": "function", "function": {"name": "memory_search", "arguments": "{}"}}],
+            })
+            msgs.append({"role": "tool", "name": "memory_search", "tool_call_id": "mem_ctx", "content": memory_ref})
         msgs.append({"role": "user", "content": prompt})
 
         # 4. LLM 配置
@@ -176,7 +181,7 @@ def send_message(
             n_sys = 1 if msgs and msgs[0].get("role") == "system" else 0
             n_hist = sum(1 for m in msgs if m.get("role") in ("user", "assistant") and not m.get("tool_calls"))
             n_tool = sum(1 for m in msgs if m.get("role") == "tool" or m.get("tool_calls"))
-            n_ref = sum(1 for m in msgs if m.get("role") == "user" and "参考信息" in (m.get("content") or ""))
+            n_ref = sum(1 for m in msgs if m.get("tool_call_id") == "mem_ctx")
             logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
             pre_tool_len = len(msgs)
             yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
@@ -186,7 +191,7 @@ def send_message(
         # 流式路径（tools_enabled=False 或无工具注册）
         # ════════════════════════════════════════════════════════
         if _tool_memory:
-            logger.info(f"[loop] stream path with {len(_tool_memory)} tool memory msgs (ignored)")
+            logger.info(f"[loop] stream path with {len(_tool_memory)} tool memory msgs injected")
         _set_status("生成回复")
         full_response: list[str] = []
         token_count = 0
@@ -335,9 +340,10 @@ def _tool_loop(
                     "result": result_str[:500],
                 })
 
-                # 追加 tool result message
+                # 追加 tool result message（Hermes 风格：name=函数名）
                 msgs.append({
                     "role": "tool",
+                    "name": fn_name,
                     "tool_call_id": tool_call_id,
                     "content": result_str,
                 })

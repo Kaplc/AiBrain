@@ -509,9 +509,9 @@ class StatsDB:
             "cache_hit_rate": round(row[2] / (row[2] + row[3]), 4) if (row[2] + row[3]) > 0 else 0,
         }
 
-        # 时序分组：24h → 按15分钟, 7d/30d → 按天
+        # 时序分组：24h → 按整点小时, 7d/30d → 按天
         if hours <= 24:
-            period_expr = "strftime('%H:', created_at) || printf('%02d', cast(strftime('%M', created_at) as integer) / 15 * 15)"
+            period_expr = "strftime('%m-%d %H:00', created_at)"
         else:
             period_expr = "strftime('%m-%d', created_at)"
 
@@ -524,16 +524,44 @@ class StatsDB:
             (cutoff,)
         ).fetchall()
 
-        data = [
-            {
-                "date": r[0],
-                "prompt_tokens": r[1],
-                "completion_tokens": r[2],
-                "cache_hit_tokens": r[3],
-                "total_tokens": r[4],
-            }
-            for r in rows
-        ]
+        row_map = {r[0]: r for r in rows}
+
+        # 补全空时段：24h 补全 24 个整点（带日期），7d/30d 不补
+        data = []
+        if hours <= 24:
+            import datetime as _dt
+            _now = _dt.datetime.now().replace(minute=0, second=0, microsecond=0)
+            for i in range(24):
+                dt = _now - _dt.timedelta(hours=23 - i)
+                label = dt.strftime('%m-%d %H:00')
+                if label in row_map:
+                    r = row_map[label]
+                    data.append({
+                        "date": label,
+                        "prompt_tokens": r[1],
+                        "completion_tokens": r[2],
+                        "cache_hit_tokens": r[3],
+                        "total_tokens": r[4],
+                    })
+                else:
+                    data.append({
+                        "date": label,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "cache_hit_tokens": 0,
+                        "total_tokens": 0,
+                    })
+        else:
+            data = [
+                {
+                    "date": r[0],
+                    "prompt_tokens": r[1],
+                    "completion_tokens": r[2],
+                    "cache_hit_tokens": r[3],
+                    "total_tokens": r[4],
+                }
+                for r in rows
+            ]
 
         db.close()
         return {"summary": summary, "data": data}
