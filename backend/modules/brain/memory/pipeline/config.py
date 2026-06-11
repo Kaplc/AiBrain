@@ -19,12 +19,14 @@ DEFAULT_CONFIG = {
         {"name": "entity_extract", "enabled": True, "required": False},
         {"name": "graph_link", "enabled": True, "required": False},
         {"name": "event_extract", "enabled": True, "required": False},
+        {"name": "narrative_significance", "enabled": True, "required": False},
     ],
     "search": [
         {"name": "vector_search", "enabled": True, "required": True},
         {"name": "event_recall", "enabled": True, "required": False},
         {"name": "graph_recall", "enabled": True, "required": False},
         {"name": "time_decay", "enabled": True, "required": False},
+        {"name": "narrative_warmth", "enabled": True, "required": False},
     ],
 }
 

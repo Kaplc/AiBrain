@@ -142,12 +142,7 @@ def send_message(
             msgs.extend(_tool_memory)
             logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
         if memory_ref:
-            # 记忆检索视为工具调用，与 Hermes/OpenAI 规范一致
-            msgs.append({
-                "role": "assistant", "content": "",
-                "tool_calls": [{"id": "mem_ctx", "type": "function", "function": {"name": "memory_search", "arguments": "{}"}}],
-            })
-            msgs.append({"role": "tool", "name": "memory_search", "tool_call_id": "mem_ctx", "content": memory_ref})
+            msgs.append({"role": "system", "content": f"参考信息：\n{memory_ref}"})
         msgs.append({"role": "user", "content": prompt})
 
         # 4. LLM 配置
@@ -181,7 +176,7 @@ def send_message(
             n_sys = 1 if msgs and msgs[0].get("role") == "system" else 0
             n_hist = sum(1 for m in msgs if m.get("role") in ("user", "assistant") and not m.get("tool_calls"))
             n_tool = sum(1 for m in msgs if m.get("role") == "tool" or m.get("tool_calls"))
-            n_ref = sum(1 for m in msgs if m.get("tool_call_id") == "mem_ctx")
+            n_ref = sum(1 for m in msgs if m.get("role") == "user" and "参考信息" in (m.get("content") or ""))
             logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
             pre_tool_len = len(msgs)
             yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
@@ -237,6 +232,16 @@ def send_message(
             logger.info("[loop] assistant reply written to workmemory output.md")
         except Exception as e:
             logger.warning(f"[loop] output_mem_write failed: {e}")
+
+        # 后台触发叙事反思
+        try:
+            from modules.brain.memory.self_narrative import get_self_narrative
+            _sn = get_self_narrative()
+            if _sn:
+                import threading as _th
+                _th.Thread(target=_sn.reflect_on_conversation, args=(prompt, assistant_text), daemon=True).start()
+        except Exception as e:
+            logger.warning(f"[loop] narrative reflection spawn failed: {e}")
 
         logger.info(f"[loop] LLM done: tokens={token_count} total_chars={len(assistant_text)}")
         yield {"type": "done"}
@@ -408,6 +413,16 @@ def _tool_loop(
         logger.info("[loop] tool loop output written to workmemory")
     except Exception as e:
         logger.warning(f"[loop] output_mem_write failed: {e}")
+
+    # 后台触发叙事反思
+    try:
+        from modules.brain.memory.self_narrative import get_self_narrative
+        _sn = get_self_narrative()
+        if _sn:
+            import threading as _th
+            _th.Thread(target=_sn.reflect_on_conversation, args=(prompt, final_text), daemon=True).start()
+    except Exception as e:
+        logger.warning(f"[loop] narrative reflection spawn failed: {e}")
 
     logger.info(f"[loop] tool loop done: {len(tool_history)} tool calls, chars={len(final_text)}")
     yield {"type": "done"}

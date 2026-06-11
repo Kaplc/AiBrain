@@ -88,6 +88,7 @@ from routes.settings_routes import register as reg_settings
 from routes.wiki_routes import register as reg_wiki
 from routes.stats_routes import register as reg_stats
 from routes.chat_routes import register as reg_chat
+from routes.narrative_routes import register as reg_narrative
 
 reg_overview(app, _ready, logger, stats_db)
 reg_memory(app, _ready, logger, stats_db)
@@ -98,6 +99,7 @@ reg_settings(app, _ready, logger, stats_db, settings_mgr, model_mgr)
 reg_wiki(app, _ready, logger, stats_db)
 reg_stats(app, _ready, logger, stats_db)
 reg_chat(app, _ready, logger, stats_db)
+reg_narrative(app, _ready, logger, stats_db)
 
 # 初始化 RebuildService（实体网络重建）单例
 from core.rebuild_service import RebuildService
@@ -415,6 +417,18 @@ def _preload():
         logger.info("LightRAG preloaded successfully")
     except Exception as e:
         logger.warning(f"LightRAG preload failed (will lazy-init on first search): {e}")
+
+    # ── 初始化自我叙事模块 ──────────────────────────────────
+    try:
+        from modules.brain.memory.self_narrative import init_self_narrative
+        from modules.brain.graph import get_graph
+        _graph = get_graph()
+        if _graph:
+            init_self_narrative(_graph)
+        else:
+            logger.warning("SelfNarrativeStore init skipped (graph unavailable)")
+    except Exception as e:
+        logger.warning(f"SelfNarrativeStore init failed (non-fatal): {e}")
 
     logger.info("=== AiBrain 系统初始化完成 ===")
 

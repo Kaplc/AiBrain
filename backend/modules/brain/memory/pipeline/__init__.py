@@ -32,6 +32,13 @@ def init_pipelines() -> PipelineEngine:
     from .steps import register_all_steps
     register_all_steps(engine)
 
+    # 1.1 注册自我叙事管线步骤（必须在配置加载之前，否则会被 validated 过滤掉）
+    try:
+        from modules.brain.memory.self_narrative.pipeline_steps import register_narrative_steps
+        register_narrative_steps(engine)
+    except Exception as e:
+        logger.warning(f"[pipeline] narrative steps registration failed (non-fatal): {e}")
+
     # 2. 加载默认配置（从 config.py 的 DEFAULT_CONFIG）
     config = get_default_config()
 
@@ -59,6 +66,7 @@ def init_pipelines() -> PipelineEngine:
         f"store={[s['name'] for s in engine.get_pipeline('store')]} | "
         f"search={[s['name'] for s in engine.get_pipeline('search')]}"
     )
+
     return engine
 
 
