@@ -61,3 +61,6 @@ playwright
 # LLM SDKs（backend.modules.LLM 调用）
 openai>=1.50.0          # OpenAI 兼容协议（openai/deepseek/ollama/lmstudio/minimax/...）
 anthropic>=0.40.0       # Anthropic 原生协议（Claude 系列）
+
+# YAML（SKILL.md frontmatter 解析）
+pyyaml>=6.0
