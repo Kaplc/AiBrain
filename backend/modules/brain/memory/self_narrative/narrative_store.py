@@ -1,13 +1,19 @@
 """
 SelfNarrativeStore 单例 — 自传文档 + 叙事锚点 + 身份预算
 复用 GraphMemory 的 SQLite 连接（memory_graph.db）
+每次更新自传时同步写入 self_narrative.json 文件供可视化查看。
 """
 import json
 import logging
+import os
 import threading
 from datetime import datetime
 
 logger = logging.getLogger('self_narrative')
+
+# ── JSON 副本文件路径（放在 data/ 目录，方便直接打开查看）──
+_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+_SELF_NARRATIVE_FILE = os.path.join(_FILE_DIR, "data", "self_narrative.json")
 
 # ── 身份预算常量 ──────────────────────────────────────────
 IDENTITY_BUDGET = {
@@ -102,7 +108,14 @@ class SelfNarrativeStore:
         # 加载或初始化自传
         self._ensure_autobiography()
 
-        logger.info("[narrative_store] tables created, autobiography loaded")
+        # 启动时同步一次 JSON 文件副本
+        try:
+            bio = self.get_autobiography()
+            self._sync_to_file(bio)
+        except Exception as e:
+            logger.warning(f"[narrative_store] initial file sync failed: {e}")
+
+        logger.info(f"[narrative_store] tables created, autobiography loaded ({_SELF_NARRATIVE_FILE})")
 
     # ── 自传文档 CRUD ────────────────────────────────────────
 
@@ -168,13 +181,14 @@ class SelfNarrativeStore:
         return dict(_INITIAL_AUTOBIOGRAPHY)
 
     def update_autobiography(self, data: dict):
-        """写入完整自传 JSON"""
+        """写入完整自传 JSON（DB + JSON 文件同步）"""
         with self._lock:
             self._exec(
                 "INSERT OR REPLACE INTO autobiography (id, data, updated_at) VALUES (1, ?, ?)",
                 (json.dumps(data, ensure_ascii=False, indent=2), datetime.utcnow().isoformat())
             )
             self._conn.commit()
+            self._sync_to_file(data)
         logger.info("[narrative_store] autobiography updated")
 
     def update_current_state(self, **kwargs):
@@ -525,4 +539,28 @@ class SelfNarrativeStore:
             (json.dumps(data, ensure_ascii=False, indent=2), datetime.utcnow().isoformat())
         )
         self._conn.commit()
+        self._sync_to_file(data)
         logger.info("[narrative_store] autobiography updated")
+
+    def _sync_to_file(self, data: dict):
+        """同步写入 JSON 文件副本，方便直接打开查看
+
+        文件放在项目根目录 self_narrative.json，只用于可视化浏览。
+        数据库（memory_graph.db）才是源数据，JSON 文件为只读副本。
+        """
+        try:
+            # 给文件加一个锚点统计，方便浏览
+            output = dict(data)
+            try:
+                output["_stats"] = {
+                    "anchors": self.total_anchor_count(),
+                    "core_memories": self.core_memory_count(),
+                }
+            except Exception:
+                pass
+            os.makedirs(os.path.dirname(_SELF_NARRATIVE_FILE), exist_ok=True)
+            with open(_SELF_NARRATIVE_FILE, "w", encoding="utf-8") as f:
+                json.dump(output, f, ensure_ascii=False, indent=2)
+            logger.debug(f"[narrative_store] synced to {_SELF_NARRATIVE_FILE}")
+        except Exception as e:
+            logger.warning(f"[narrative_store] sync to file failed: {e}")
