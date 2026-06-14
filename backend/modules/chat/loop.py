@@ -105,8 +105,7 @@ def send_message(
             from modules.brain.memory.workmemory import get_work_memory
             wm = get_work_memory()
             wm.input_mem_write(prompt)
-            if not tools_enabled:
-                wm.handle_packagemem()
+            wm.handle_packagemem()
             logger.info("[loop] workmemory updated")
         except Exception as e:
             logger.warning(f"[loop] workmemory update failed: {e}")

@@ -54,6 +54,7 @@ def execute(ctx) -> None:
                 root_entity=root_entity
             )
             graph.increment_entity_counts(entities)
+            graph.increment_co_activation(entities)
             all_entity_names.extend(entities)
             logger.info(f"[step:graph_link] done | mem0_id={mem0_id[:8]} | count={len(entities)}")
         except Exception as e:

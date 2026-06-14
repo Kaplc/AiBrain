@@ -284,26 +284,6 @@ def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
         except Exception as e:
             logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
 
-    if use_infer and events:
-        try:
-            def _bg_event_extract(events_list, original_text):
-                from modules.brain.memory.events import get_event_store
-                es = get_event_store()
-                if not es:
-                    return
-                for ev in events_list:
-                    if ev.get("event") == "ADD" and ev.get("id"):
-                        try:
-                            new_ids = es.extract_events_from_memory(ev["id"], ev.get("memory", ""))
-                            if new_ids:
-                                es.infer_event_chains(new_ids)
-                        except Exception as e:
-                            logger.warning(f"[store:event] failed for {ev['id'][:8]}: {e}")
-
-            threading.Thread(target=_bg_event_extract, args=(events, text), daemon=True).start()
-        except Exception as e:
-            logger.warning(f"[store:event] async start failed (non-fatal): {e}")
-
     return {
         "result": msg,
         "stored_texts": stored_texts,
@@ -416,48 +396,6 @@ def _search_memory_legacy(query: str) -> list[dict]:
 
     use_infer = _memory_settings.get("infer", True)
 
-    # Phase 2: 事件反查
-    if use_infer:
-        try:
-            from modules.brain.memory.events import get_event_store
-            event_store = get_event_store()
-            if event_store:
-                matched_events = event_store.search_events_by_query(query, max_results=15)
-                if matched_events:
-                    chain_event_ids = set()
-                    for ev in matched_events:
-                        chain_event_ids.add(ev["id"])
-                        for chain_ev in event_store.get_chain_for_event(ev["id"], max_depth=1):
-                            chain_event_ids.add(chain_ev["id"])
-                    chain_memory_ids = event_store.get_memories_for_events(list(chain_event_ids))
-                    seen_ids = {m["id"] for m in memories}
-                    new_mem_ids = [mid for mid in chain_memory_ids if mid not in seen_ids]
-                    if new_mem_ids:
-                        event_results = []
-                        try:
-                            from modules.brain.graph import get_graph
-                            _g = get_graph()
-                            if _g:
-                                for mid in new_mem_ids[:10]:
-                                    rows = _g._exec("SELECT mem0_id, text FROM memory_nodes WHERE mem0_id = ?", (mid,))
-                                    if rows:
-                                        event_results.append({
-                                            "id": mid,
-                                            "text": rows[0][1],
-                                            "score": 0.5,
-                                            "source": "event",
-                                        })
-                        except Exception:
-                            pass
-                        if event_results:
-                            semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
-                            base = min(semantic_scores) * 0.85 if semantic_scores else 0.5
-                            for i, er in enumerate(event_results):
-                                er["score"] = round(base - i * 0.001, 4)
-                            memories.extend(event_results)
-        except Exception as e:
-            logger.warning(f"[search] Phase2 event recall failed (non-fatal): {e}")
-
     # Phase 3: 图增强
     if use_infer:
         try:
@@ -493,20 +431,6 @@ def _search_memory_legacy(query: str) -> list[dict]:
         for m in memories:
             m["entities"] = []
 
-    # Phase 4: 时间衰减
-    if use_infer:
-        try:
-            from modules.brain.memory.events import get_event_store
-            event_store = get_event_store()
-            if event_store:
-                all_mem_ids = [m["id"] for m in memories if m.get("id")]
-                if all_mem_ids:
-                    event_map = event_store.get_events_for_memories(all_mem_ids)
-                    has_events = sum(1 for v in event_map.values() if v)
-                    if has_events:
-                        memories = event_store.apply_decay_to_results(memories, event_map)
-        except Exception as e:
-            logger.warning(f"[search] Phase4 time decay failed (non-fatal): {e}")
 
     logger.info(f"[search] DONE (legacy) | 返回 {len(memories)} 条结果")
     return memories

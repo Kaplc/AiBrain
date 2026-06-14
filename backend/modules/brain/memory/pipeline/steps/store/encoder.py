@@ -1,0 +1,201 @@
+"""
+Encoder Step - 情景记忆编码（infer）
+在 vector_store 之前运行，用一次 LLM 调用提取完整情景结构：
+  display_text / episodic{what,why,result,lesson} / concepts / affect / importance
+并拼接 embedding_text（供向量库索引整段情景，而非仅标题）。
+全部写入 ctx.metadata["memory_meta"]，由 vector_store 自动并入 Qdrant payload。
+
+所有新记忆都走情景格式（infer=True 时）。失败降级 SAFE_DEFAULTS，绝不阻塞存储。
+"""
+import logging
+
+logger = logging.getLogger('memory.pipeline')
+
+# 解析/调用失败时的兜底情景
+SAFE_DEFAULTS = {
+    "display_text": "",
+    "episodic": {"what": "", "why": "", "result": "", "lesson": []},
+    "concepts": [],
+    "affect": {"intensity": 0.0},
+    "importance": 0.3,
+}
+
+ENCODER_PROMPT = """你是记忆编码助手。给定一条记忆文本，提取完整的情景结构，输出严格的 JSON。
+
+【输出维度】
+1. display_text: 一句话标题，概括这次经历（给人看，10-20字）
+2. episodic:
+   - what: 发生了什么（一句话）
+   - why: 为什么发生/触发原因（文本无法推断则为空字符串 ""）
+   - result: 结果如何（一句话）
+   - lesson: 学到了什么/经验（数组，0-3 条，每条≤30字，无则空数组 []）
+3. concepts: 抽象概念标签（技术/心理/哲学/关系等，2-5 个，如"联想记忆""扩散激活"）
+4. affect: 情感分布。给出文本中体现的情感维度（每个 0-1，不必全填，有才给）+ intensity（情感烈度 -3.0~3.0，0 为中性）
+   常见维度：warmth(温暖)/joy(喜悦)/gratitude(感激)/curiosity(好奇)/frustration(挫败)/sadness(难过)/pride(自豪)
+5. importance: 这条记忆的重要性 0.0-1.0（里程碑/重大事件高分，日常低分）
+
+【规则】
+- 只输出一个 JSON 对象，禁止解释文字、禁止 markdown 代码块
+- display_text / episodic / concepts / affect / importance 五个字段不可缺失
+- affect 至少包含 intensity
+- lesson 可为空数组
+
+【输出格式】
+{"display_text":"理解entity_relations工作原理","episodic":{"what":"志远解释了entity_relations如何工作","why":"此前无法理解网状记忆实现","result":"理解了关系激活机制","lesson":["entity_relations的价值在于激活关系","边被遍历时才产生意义"]},"concepts":["联想记忆","扩散激活","知识图谱"],"affect":{"warmth":0.8,"gratitude":0.7,"intensity":2.0},"importance":0.85}"""
+
+
+def _clamp_float(v, lo, hi, default):
+    """安全转 float 并钳制到 [lo, hi]"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, f))
+
+
+def _normalize(obj: dict, fallback_text: str) -> dict:
+    """校验并规范化 LLM 返回的情景对象，任何字段异常都用 SAFE_DEFAULTS 兜底"""
+    if not isinstance(obj, dict):
+        return _defaults_with_text(fallback_text)
+
+    # display_text
+    display = obj.get("display_text")
+    if not isinstance(display, str) or not display.strip():
+        display = fallback_text[:30]
+
+    # episodic
+    raw_epi = obj.get("episodic") or {}
+    if not isinstance(raw_epi, dict):
+        raw_epi = {}
+    def _str(v):
+        return v.strip() if isinstance(v, str) else ""
+    what = _str(raw_epi.get("what"))
+    why = _str(raw_epi.get("why"))
+    result = _str(raw_epi.get("result"))
+    raw_lesson = raw_epi.get("lesson") or []
+    if not isinstance(raw_lesson, list):
+        raw_lesson = []
+    lesson = [_str(x)[:30] for x in raw_lesson if isinstance(x, str) and x.strip()][:3]
+
+    # concepts
+    raw_concepts = obj.get("concepts") or []
+    if not isinstance(raw_concepts, list):
+        raw_concepts = []
+    concepts = [_str(c)[:20] for c in raw_concepts if isinstance(c, str) and c.strip()][:5]
+
+    # affect
+    raw_affect = obj.get("affect") or {}
+    if not isinstance(raw_affect, dict):
+        raw_affect = {}
+    affect = {}
+    for k, v in raw_affect.items():
+        if k == "intensity":
+            affect["intensity"] = round(_clamp_float(v, -3.0, 3.0, 0.0), 3)
+        elif isinstance(k, str) and k.replace("_", "").isalpha():
+            affect[k] = round(_clamp_float(v, 0.0, 1.0, 0.0), 3)
+    affect.setdefault("intensity", 0.0)
+
+    # importance
+    importance = round(_clamp_float(obj.get("importance", 0.3), 0.0, 1.0, 0.3), 3)
+
+    return {
+        "display_text": display,
+        "episodic": {"what": what, "why": why, "result": result, "lesson": lesson},
+        "concepts": concepts,
+        "affect": affect,
+        "importance": importance,
+    }
+
+
+def _defaults_with_text(text: str) -> dict:
+    """兜底情景：display_text 用原文截断，其余空"""
+    d = {
+        "display_text": text[:30] if text else "",
+        "episodic": dict(SAFE_DEFAULTS["episodic"]),
+        "concepts": [],
+        "affect": {"intensity": 0.0},
+        "importance": 0.3,
+    }
+    return d
+
+
+def _build_embedding_text(display: str, epi: dict) -> str:
+    """拼接情景为嵌入源文本：display + what + why + result + lesson"""
+    parts = [display] if display else []
+    for key in ("what", "why", "result"):
+        v = epi.get(key, "")
+        if v:
+            parts.append(v)
+    for lesson in epi.get("lesson", []):
+        if lesson:
+            parts.append(lesson)
+    return "\n".join(parts) if parts else (display or "")
+
+
+def execute(ctx) -> None:
+    """执行 Encoder 步骤：LLM 提取情景结构，写入 memory_meta
+
+    Args:
+        ctx: PipelineContext
+            input_data: str (记忆文本，vector_store 之前的原文)
+            metadata: {"infer": bool, ...}
+    """
+    meta = ctx.metadata or {}
+    use_infer = meta.get("infer", True)
+    if not use_infer:
+        logger.info("[step:encoder] infer=false, skip")
+        return
+
+    text = ctx.input_data
+    if not text or not str(text).strip():
+        logger.info("[step:encoder] empty text, skip")
+        return
+
+    from modules.brain.llm import call_llm
+    from modules.brain.memory.self_narrative.utils import parse_json
+
+    try:
+        logger.info(f"[step:encoder] encoding | text={str(text)[:60]!r}")
+        raw = call_llm(ENCODER_PROMPT, f"记忆文本：{text}", timeout=30)
+        obj = parse_json(raw)
+        if obj is None:
+            logger.warning(f"[step:encoder] parse_json failed, using SAFE_DEFAULTS | raw={str(raw)[:120]!r}")
+            encoded = _defaults_with_text(str(text))
+        else:
+            encoded = _normalize(obj, str(text))
+    except Exception as e:
+        logger.warning(f"[step:encoder] LLM call failed, using SAFE_DEFAULTS: {e}")
+        encoded = _defaults_with_text(str(text))
+
+    # 拼接 embedding_text（向量库索引整段情景）
+    embedding_text = _build_embedding_text(encoded["display_text"], encoded["episodic"])
+
+    # 写入 memory_meta，由 vector_store 自动并入 payload
+    mem_meta = ctx.metadata.get("memory_meta") or {}
+    ctx.metadata["memory_meta"] = mem_meta
+    mem_meta["display_text"] = encoded["display_text"]
+    mem_meta["embedding_text"] = embedding_text
+    mem_meta["episodic"] = encoded["episodic"]
+    mem_meta["concepts"] = encoded["concepts"]
+    mem_meta["affect"] = encoded["affect"]
+    mem_meta["importance"] = encoded["importance"]
+
+    logger.info(
+        f"[step:encoder] DONE | display={encoded['display_text'][:20]!r} "
+        f"importance={encoded['importance']} intensity={encoded['affect'].get('intensity')} "
+        f"concepts={len(encoded['concepts'])} lessons={len(encoded['episodic']['lesson'])}"
+    )
+
+
+def _make_step():
+    """创建 Encoder StepDef"""
+    from ...context import StepDef
+    return StepDef(
+        name="encoder",
+        description="情景记忆编码（标题/情景/概念/情感/重要性）",
+        execute=execute,
+        enabled=True,
+        required=False,
+        pipeline="store",
+        timeout=35.0,
+    )

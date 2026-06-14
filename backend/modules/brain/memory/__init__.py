@@ -1,6 +1,6 @@
 """记忆模块 - 统一导出入口
 
-将 memory.py (现为 core.py) 的公开函数和 events 子模块统一导出，
+将 memory.py (现为 core.py) 的公开函数统一导出，
 外部 `from modules.brain.memory import store_memory` 等调用保持不变。
 """
 from .core import (
@@ -26,8 +26,6 @@ from .core import (
     DEFAULT_USER_ID,
 )
 
-from .events import get_event_store
-
 __all__ = [
     "get_memory_settings", "update_memory_settings",
     "warmup_memory_count", "get_client", "get_memory_count",
@@ -35,5 +33,4 @@ __all__ = [
     "delete_memory", "update_memory",
     "organize_memories", "dedup_memories", "refine_memories", "apply_organize",
     "DEFAULT_USER_ID",
-    "get_event_store",
 ]

@@ -189,7 +189,21 @@ class GraphMemory:
         try:
             self._conn.execute("ALTER TABLE entity_nodes ADD COLUMN pending_count INT DEFAULT 0")
         except Exception:
-            pass        # Phase 3: NetworkX in-memory graph
+            pass
+        # Phase 2: 共现计数（Hebbian，存储时维护）
+        try:
+            self._conn.execute(
+                "ALTER TABLE typed_entity_relations ADD COLUMN co_activation_count INTEGER DEFAULT 1"
+            )
+        except Exception:
+            pass
+        try:
+            self._conn.execute(
+                "ALTER TABLE typed_entity_relations ADD COLUMN last_co_activated TEXT"
+            )
+        except Exception:
+            pass
+        # Phase 3: NetworkX in-memory graph
         self._graph = nx.Graph() if HAS_NETWORKX else None
         # Entity embedding cache for auto-dedup
         self._entity_embedding_cache = {}  # {entity_name: list[float]}
@@ -755,6 +769,80 @@ class GraphMemory:
         if total_pending >= 20:
             logger.info(f"[graph:increment] pending_count={total_pending} >= 20，触发全量重建")
             self.rebuild_entity_counts()
+
+    # ── Phase 2: Hebbian 共现统计（存储时维护）──────────────────────
+    # 设计不变量：co_occurrence 配对用 sorted() 规范化为 (lo, hi) 单向存储。
+    # 因此查询（get_related_entities）必须 UNION from/to 两个方向，否则漏一半。
+    def increment_co_activation(self, entity_names: list[str]):
+        """同一条记忆里的实体两两共现 → co_occurrence 关系计数 +1（存储时调用）
+
+        配对经 sorted() 规范化后只存一行（lo, hi），避免 (A,B)/(B,A) 重复。
+        """
+        import datetime
+        import itertools
+
+        names = [n.strip() for n in (entity_names or []) if n and n.strip()]
+        names = list(dict.fromkeys(names))  # 去重保序
+        if len(names) < 2:
+            return
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        for a, b in itertools.combinations(names, 2):
+            lo, hi = sorted([a, b])  # 规范化配对顺序
+            self._conn.execute(
+                "INSERT INTO typed_entity_relations "
+                "(from_entity, to_entity, relation_type, weight, co_activation_count, last_co_activated) "
+                "VALUES (?, ?, 'co_occurrence', 1.0, 1, ?) "
+                "ON CONFLICT(from_entity, to_entity, relation_type) DO UPDATE SET "
+                "co_activation_count = COALESCE(co_activation_count, 1) + 1, "
+                "last_co_activated = ?",
+                (lo, hi, now, now),
+            )
+            if self._graph is not None:
+                self._graph.add_edge(lo, hi, weight=1.0, relation_type="co_occurrence")
+        self._conn.commit()
+        logger.info(f"[graph:co_activation] +{len(list(itertools.combinations(names, 2)))} pairs from {len(names)} entities")
+
+    def get_related_entities(self, entity_names: list[str], top_k: int = 5) -> list[tuple]:
+        """返回与给定实体共现的关联实体，按 co_activation_count 降序
+
+        Returns: [(other_entity, count), ...]
+        注意：配对单向规范化存储，故必须 UNION from/to 双向查询。
+        """
+        names = [n for n in (entity_names or []) if n]
+        if not names:
+            return []
+        ph = ",".join("?" * len(names))
+        rows = self._exec(
+            f"SELECT to_entity AS other, co_activation_count AS cnt "
+            f"FROM typed_entity_relations "
+            f"WHERE relation_type='co_occurrence' AND from_entity IN ({ph}) AND to_entity NOT IN ({ph}) "
+            f"UNION ALL "
+            f"SELECT from_entity AS other, co_activation_count AS cnt "
+            f"FROM typed_entity_relations "
+            f"WHERE relation_type='co_occurrence' AND to_entity IN ({ph}) AND from_entity NOT IN ({ph})",
+            (*names, *names, *names, *names),
+        )
+        agg = {}
+        for other, cnt in rows:
+            agg[other] = agg.get(other, 0) + (cnt or 1)
+        ranked = sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+        return ranked[:top_k]
+
+    def get_related_memories(self, entity_names: list[str], top_k: int = 5) -> list[str]:
+        """返回与关联实体相关的记忆 id（经 mentions 表）
+
+        先 get_related_entities 取关联实体，再查 mentions 得记忆 id。
+        """
+        related = self.get_related_entities(entity_names, top_k=top_k * 2)
+        if not related:
+            return []
+        ent_names = [e for e, _ in related]
+        ph = ",".join("?" * len(ent_names))
+        rows = self._exec(
+            f"SELECT DISTINCT mem0_id FROM mentions WHERE entity_name IN ({ph})",
+            ent_names,
+        )
+        return [r[0] for r in rows][:top_k]
 
     def get_entities_for_memories(self, mem0_ids: list[str]) -> dict[str, list[str]]:
         """批量查询记忆关联的实体名"""

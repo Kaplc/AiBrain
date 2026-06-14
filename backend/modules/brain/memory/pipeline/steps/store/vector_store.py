@@ -1,58 +1,39 @@
 """
-VectorStore Step - mem0 向量存储（required）
-封装 mem0.add() 调用，处理 infer 降级重试
+VectorStore Step - 向量存储（required）
+通过统一接口层 memory_store() 写入 Qdrant（aibrain_memories）
 
 写入 ctx.intermediate:
-  - mem0_result: mem0.add() 返回的原始结果
-  - mem0_ids: 提取的 ID 列表
+  - mem0_result: memory_store() 返回的原始结果
+  - mem0_ids: 提取的 ID 列表（字段名不变，下游无感）
   - mem_texts: 对应记忆文本列表
 """
 import logging
 
-from modules.brain.mem0_adapter import get_mem0_client
+from modules.brain.memory.store import memory_store
 
 logger = logging.getLogger('memory.pipeline')
 
 
 def execute(ctx) -> None:
-    """执行 VectorStore 步骤：调用 mem0.add() 存储记忆
+    """执行 VectorStore 步骤：通过统一接口存储记忆
 
     Args:
         ctx: PipelineContext
             input_data: str (记忆文本)
-            metadata: {"infer": bool, "metadata": dict, ...}
+            metadata: {"infer": bool, "memory_meta": dict, ...}
     """
     text = ctx.input_data
     meta = ctx.metadata or {}
-    use_infer = meta.get("infer", True)
     memory_meta = meta.get("memory_meta")
 
-    client = get_mem0_client()
-
-    add_kwargs = {
-        "user_id": "default",
-        "infer": use_infer,
-    }
-
-    # 合并 metadata
-    metadata = {"category": "user"}
+    # 组装 payload（完整元数据，未来 Phase 0 会注入 emotion/scene/temperature/hooks）
+    payload = {"category": "user"}
     if memory_meta:
-        metadata.update(memory_meta)
-    add_kwargs["metadata"] = metadata
+        payload.update(memory_meta)
 
-    try:
-        logger.info("[step:vector_store] calling mem0.add...")
-        result = client.add(text, **add_kwargs)
-        logger.info("[step:vector_store] mem0.add DONE")
-    except Exception as e:
-        if use_infer:
-            logger.warning(f"[step:vector_store] failed (infer=True): {e}, fallback infer=False")
-            add_kwargs["infer"] = False
-            result = client.add(text, **add_kwargs)
-        else:
-            raise
-
-    logger.info(f"[step:vector_store] mem0 raw result: {result}")
+    logger.info("[step:vector_store] calling memory_store...")
+    result = memory_store(text, payload=payload)
+    logger.info("[step:vector_store] memory_store DONE")
 
     events = result.get("results", [])
     added = [e["memory"] for e in events if e.get("event") == "ADD"]
@@ -88,7 +69,7 @@ def _make_step():
     from ...context import StepDef
     return StepDef(
         name="vector_store",
-        description="mem0 向量存储（required）",
+        description="向量存储（required）",
         execute=execute,
         enabled=True,
         required=True,

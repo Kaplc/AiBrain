@@ -344,13 +344,6 @@ def _preload():
     except Exception as e:
         logger.warning(f"graph init failed (non-fatal): {e}")
 
-    # 初始化事件记忆层
-    try:
-        from modules.brain.memory.events import get_event_store
-        get_event_store()
-        logger.info("EventStore initialized")
-    except Exception as e:
-        logger.warning(f"EventStore init failed (non-fatal): {e}")
 
     # 初始化记忆流水线引擎（步骤注册 + 配置加载）
     try:

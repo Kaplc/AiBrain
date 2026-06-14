@@ -1,6 +1,6 @@
 """
 VectorSearch Step - 语义向量搜索（required）
-封装 mem0.search() 自适应搜索逻辑
+通过统一接口层 memory_search() 自适应搜索（新库 aibrain_memories + 老库 mem0_memories 合并）
 
 写入 ctx.intermediate:
   - semantic_results: 语义搜索结果列表 [{id, text, score, source: "semantic"}]
@@ -8,7 +8,7 @@ VectorSearch Step - 语义向量搜索（required）
 """
 import logging
 
-from modules.brain.mem0_adapter import get_mem0_client
+from modules.brain.memory.store import memory_search
 
 
 def _set_status(s: str):
@@ -17,7 +17,7 @@ def _set_status(s: str):
         ChatManager.get_instance().set_status(s)
     except Exception:
         pass
-from modules.brain.memory.core import DEFAULT_USER_ID, _get_search_options
+from modules.brain.memory.core import _get_search_options
 
 logger = logging.getLogger('memory.pipeline')
 
@@ -31,55 +31,22 @@ def execute(ctx) -> None:
     """
     _set_status("向量搜索")
     query = ctx.input_data
-    client = get_mem0_client()
     opts = _get_search_options()
 
     threshold = opts.get("threshold", 0.55)
-    rerank = opts.get("rerank", False)
     MIN_COUNT = 15
 
-    filters = {"user_id": DEFAULT_USER_ID}
-
-    # 第一次请求：只拿高于阈值的
-    kwargs = {
-        "query": query,
-        "filters": filters,
-        "top_k": 75,
-        "threshold": threshold,
-    }
-    if rerank:
-        kwargs["rerank"] = rerank
-
-    result = client.search(**kwargs)
-    memories = []
-    for r in result.get("results", []):
-        memories.append({
-            "id": r.get("id"),
-            "text": r["memory"],
-            "score": round(r.get("score", 0), 4),
-            "source": "semantic",
-        })
+    # 第一次请求：只拿高于阈值的（memory_search 内部合并新库 aibrain_memories + 老库 mem0_memories）
+    memories = memory_search(query, top_k=75, threshold=threshold)
     memories.sort(key=lambda x: x["score"], reverse=True)
 
     # 不足 MIN_COUNT 时，去掉阈值再请求补足
     if len(memories) < MIN_COUNT:
-        kwargs_no_thresh = {
-            "query": query,
-            "filters": filters,
-            "top_k": MIN_COUNT,
-        }
-        if rerank:
-            kwargs_no_thresh["rerank"] = rerank
-        result2 = client.search(**kwargs_no_thresh)
+        result2 = memory_search(query, top_k=MIN_COUNT, threshold=0.0)
         seen_ids = {m["id"] for m in memories}
-        for r in result2.get("results", []):
+        for r in result2:
             if r.get("id") not in seen_ids:
-                memories.append({
-                    "id": r.get("id"),
-                    "text": r["memory"],
-                    "score": round(r.get("score", 0), 4),
-                    "source": "semantic",
-                })
+                memories.append(r)
                 seen_ids.add(r.get("id"))
         memories.sort(key=lambda x: x["score"], reverse=True)
         memories = memories[:MIN_COUNT]
