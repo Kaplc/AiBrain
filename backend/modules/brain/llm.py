@@ -46,13 +46,14 @@ RELATION_INFER_PROMPT = """你是一个实体关系分析助手。根据给定�
 输出格式（严格遵守JSON数组）：
 [{"from": "实体A", "to": "实体B", "relation_type": "关系类型", "confidence": 0.8}]"""
 
-ENTITY_EXTRACT_PROMPT = """从文本中提取核心实体（1-5个），并判断记忆归属。
+ENTITY_EXTRACT_PROMPT = """从文本中提取核心节点（1-5个），并判断记忆归属。
 
-实体类型：
-- 参与者：人名、机构名、项目名
-- 动作/事件：做的事、发生的事件
-- 结果/影响：产生的变化、影响的事物
-- 概念：技术栈、工具、框架
+节点类型（必填，只选一个）：
+- person: 人物、参与者
+- concept: 技术、框架、概念、知识
+- project: 项目、系统、工具
+- emotion: 情绪、感受（激动、成就感、挫败、温暖）
+- goal: 目标、意图、方向
 
 归属分类（必填，只选一个）：
 - 用户：用户个人的经历、偏好、计划、感受
@@ -61,20 +62,28 @@ ENTITY_EXTRACT_PROMPT = """从文本中提取核心实体（1-5个），并判�
 - 经验：经验教训、最佳实践、踩坑记录
 
 规则：
-1. 最多提取5个实体，少了更好，没有可返回空数组
-2. 只提取名词性实体，不提取形容词或状态描述
+1. 最多提取5个节点，少了更好，没有可返回空数组
+2. 只提取名词性节点，不提取形容词或状态描述
 3. 不提取泛化词（如：一致性、维度、状态、生命周期、属性、标签、计数、写入、渲染、解析、进展、方面、事情、东西）
 4. 不提取字段名/变量名（如：entities、stats、store、config）
-5. 每个实体2-8个字，不要拆分复合词
+5. 每个节点名 2-8个字，不要拆分复合词
+6. emotion 类型只用于有明显情绪色彩的节点（如"成就感""挫败""温暖"）
 
 输出格式（严格遵守JSON，不要其他内容）：
-{"entities": ["实体1", "实体2"], "root": "用户"}"""
+{"nodes": [{"name": "志远", "type": "person"}, {"name": "entity_relations", "type": "concept"}], "root": "用户"}"""
 
 
 def _load_llm_config() -> dict:
-    """从 mem0.json 读取 LLM 配置"""
-    from modules.brain.mem0_adapter import load_mem0_config
-    cfg = load_mem0_config()
+    """从 ~/.aibrain/config/mem0.json 读取 LLM 配置"""
+    import json, os
+    path = os.path.expanduser("~/.aibrain/config/mem0.json")
+    cfg = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
     return {
         "provider": cfg.get("llm_provider", "openai"),
         "model": cfg.get("llm_model", "gpt-4o-mini"),
@@ -269,24 +278,52 @@ def infer_relations(entities: list[str], memory_text: str) -> list[dict]:
 
 
 def _parse_extract_response(raw: str) -> dict | None:
-    """解析 LLM 实体提取响应，成功返回 dict，失败返回 None"""
-    # 解析 JSON 对象
+    """解析 LLM 实体提取响应，返回 dict，失败返回 None
+
+    新格式："nodes": [{"name": "...", "type": "person|concept|project|emotion|goal"}]
+    旧格式（向后兼容）："entities": ["实体1", "实体2"]
+    """
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if m:
         result = json.loads(m.group(0))
         if isinstance(result, dict):
-            entities = result.get("entities", [])
-            entities = list(dict.fromkeys(e for e in entities if isinstance(e, str) and 2 <= len(e) <= 10))
             root = result.get("root", "用户")
             if root not in ("用户", "自己", "事实", "经验"):
                 root = "用户"
-            return {"entities": entities, "root": root}
-    # fallback: 尝试解析纯数组
+
+            # 新格式：nodes
+            raw_nodes = result.get("nodes", [])
+            if raw_nodes and isinstance(raw_nodes, list):
+                allowed_types = {"person", "concept", "project", "emotion", "goal"}
+                nodes = []
+                entities = []
+                for n in raw_nodes:
+                    if not isinstance(n, dict):
+                        continue
+                    name = str(n.get("name", "")).strip()
+                    typ = str(n.get("type", "")).strip()
+                    if len(name) < 2 or len(name) > 10:
+                        continue
+                    if typ not in allowed_types:
+                        typ = "concept"
+                    nodes.append({"name": name, "type": typ})
+                    entities.append(name)
+                entities = list(dict.fromkeys(entities))
+                if nodes:
+                    return {"nodes": nodes, "entities": entities, "root": root}
+
+            # 旧格式回退：entities
+            entities = result.get("entities", [])
+            entities = list(dict.fromkeys(e for e in entities if isinstance(e, str) and 2 <= len(e) <= 10))
+            if entities:
+                return {"entities": entities, "root": root}
+    # fallback: 纯数组
     m = re.search(r"\[.*?\]", raw, re.DOTALL)
     if m:
         result = json.loads(m.group(0))
         if isinstance(result, list):
-            return {"entities": list(dict.fromkeys(e for e in result if isinstance(e, str) and 2 <= len(e) <= 10)), "root": "用户"}
+            names = [e for e in result if isinstance(e, str) and 2 <= len(e) <= 10]
+            return {"entities": list(dict.fromkeys(names)), "root": "用户"}
     return None
 
 

@@ -276,7 +276,7 @@ def clear_console_queue():
 # ── 预加载（模型 + Qdrant）────────────────────────────────
 
 def _preload():
-    """后台预加载：Qdrant 连接、mem0 初始化、模型加载、LightRAG 预热"""
+    """后台预加载：Qdrant 连接、模型加载、LightRAG 预热"""
     import time, urllib.request
 
     # ── 初始化用户配置目录 ─────────────────────────────────
@@ -369,6 +369,39 @@ def _preload():
     except Exception as e:
         logger.warning(f"PromptPipeline init failed (non-fatal): {e}")
 
+    # 每日反思调度器（启动时检查 + 每 24h 自动触发）
+    try:
+        from modules.brain.memory.self_narrative import get_self_narrative
+        _sn_ref = get_self_narrative()
+        if _sn_ref:
+            import threading as _th
+            import time as _time
+            import datetime as _dt
+
+            def _reflect_loop():
+                while True:
+                    try:
+                        _bio_ref = _sn_ref.get_autobiography()
+                        _last_ref = (_bio_ref.get("current_state") or {}).get("last_reflection_at", "")
+                        _due = True
+                        if _last_ref:
+                            try:
+                                _last_dt = _dt.datetime.fromisoformat(_last_ref)
+                                if _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None) - _last_dt < _dt.timedelta(hours=24):
+                                    _due = False
+                            except Exception:
+                                pass
+                        if _due:
+                            _sn_ref.daily_reflect()
+                    except Exception:
+                        pass
+                    _time.sleep(86400)  # 每 24h 跑一次
+
+            _th.Thread(target=_reflect_loop, daemon=True).start()
+            logger.info("[daily_reflect] scheduler started (24h interval)")
+    except Exception as e:
+        logger.warning(f"[daily_reflect] scheduler failed (non-fatal): {e}")
+
     # 初始化 Chat 工具注册表
     try:
         from modules.LLM.tools.memory_tools import register_memory_tools
@@ -390,15 +423,7 @@ def _preload():
         mgr.load_config(chat_cfg)
         # 启动空闲思绪后台线程
         mgr.init_agentloop(stats_db, chat_cfg)
-        # 注入 mem0 add 函数（供空闲思绪写回用）
-        try:
-            from modules.brain.mem0_adapter import get_mem0_client
-            m = get_mem0_client()
-            if m:
-                mgr.set_mem0_add_fn(lambda **kw: m.add(**kw))
-                logger.info("ChatManager: mem0 add injected")
-        except Exception as e:
-            logger.warning(f"ChatManager: mem0 add injection failed (non-fatal): {e}")
+
         logger.info("ChatManager initialized")
     except Exception as e:
         logger.warning(f"ChatManager init failed (non-fatal): {e}")

@@ -444,15 +444,20 @@ class SelfNarrativeStore:
     # ── 反思入口（委托 reflection 模块）────────────────────
 
     def reflect_on_conversation(self, user_msg: str, assistant_msg: str):
-        """对话后反思，更新自传和锚点
+        """(已废弃) 每轮对话反思不再使用"""
+        pass
 
-        由 loop.py 在后台线程中调用。
+    def daily_reflect(self):
+        """每日反思：从近期重要记忆中提炼认知状态
+
+        由 app.py 的后台调度器触发，每 24h 运行一次。
         """
         try:
-            from .reflection import reflect_on_conversation
-            reflect_on_conversation(self, user_msg, assistant_msg)
+            from .reflection import daily_reflect
+            return daily_reflect(self)
         except Exception as e:
-            logger.warning(f"[narrative_store] reflect_on_conversation failed: {e}")
+            logger.warning(f"[narrative_store] daily_reflect failed: {e}")
+            return False
 
     # ── Phase 3 涌现预留 stub ────────────────────────────────
 

@@ -1,4 +1,4 @@
-"""自我叙事片段 — 注入猫猫的当前自我认知、心情、里程碑"""
+"""自我叙事片段 — 注入猫猫的心情、反思摘要、信念/兴趣/目标/未解问题/领悟"""
 from ..context import PromptContext
 
 
@@ -36,30 +36,33 @@ def execute(ctx: PromptContext) -> None:
         parts.append(f"当前心情：{mood_cn}")
         if thinking:
             parts.append(f"最近在想：{thinking}")
+        # 反思摘要（what_this_means）
+        summary = state.get("last_reflection_summary", "")
+        if summary:
+            parts.append(f"上次反思：{summary}")
+        # 情感影响
+        emo = state.get("last_emotional_impact", "")
+        if emo and emo != "neutral":
+            emo_map = {"positive": "积极", "negative": "低落", "warm": "温暖",
+                       "sad": "难过", "excited": "兴奋"}
+            parts.append(f"情绪倾向：{emo_map.get(emo, emo)}")
         parts.append(f"和志远的对话次数：{conv_count}")
 
-        # ── 里程碑（最近 3 条） ──
-        milestones = bio.get("milestones", [])
-        if milestones:
-            parts.append("")
-            parts.append("重要里程碑：")
-            for m in milestones[-3:]:
-                title = m.get("title", m.get("description", ""))
-                if title:
-                    parts.append(f"  - {title}")
-
-        # ── 当前人生章节 ──
-        chapters = bio.get("life_story", {}).get("chapters", [])
-        chapter_idx = bio.get("life_story", {}).get("current_chapter_index", 0)
-        if chapters and 0 <= chapter_idx < len(chapters):
-            ch = chapters[chapter_idx]
-            ch_title = ch.get("title", "")
-            ch_summary = ch.get("summary", "")
-            if ch_title:
+        # ── 认知状态 ──
+        labels = {
+            "beliefs": "我逐渐相信",
+            "interests": "我在意的事",
+            "goals": "我想实现的目标",
+            "open_questions": "我还没想明白的",
+            "recent_realizations": "我最近的领悟",
+        }
+        for field, label in labels.items():
+            items = bio.get(field, [])
+            if items:
                 parts.append("")
-                parts.append(f"当前人生章节：{ch_title}")
-                if ch_summary:
-                    parts.append(f"  章节概要：{ch_summary}")
+                parts.append(f"{label}：")
+                for item in items[-3:]:
+                    parts.append(f"  · {item}")
 
         if len(parts) > 3:
             ctx.add_section("自我叙事", "\n".join(parts))

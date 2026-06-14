@@ -53,16 +53,26 @@ def execute(ctx: PromptContext) -> None:
     if not related_mem_ids:
         return
 
-    ph = ",".join("?" * len(related_mem_ids))
-    rows = graph._exec(
-        f"SELECT mem0_id, text FROM memory_nodes WHERE mem0_id IN ({ph})",
-        related_mem_ids,
-    )
-    mem_texts = [t for _, t in rows if t]
-    if not mem_texts:
+    # 从 Qdrant 取 display_text（图不再存文本）
+    try:
+        from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
+        client = get_qdrant_client()
+        points = client.retrieve(collection_name=NEW_COLLECTION, ids=related_mem_ids)
+    except Exception:
+        return
+    mem_lines = []
+    for p in points:
+        pay = p.payload or {}
+        text = pay.get("display_text") or pay.get("text", "")
+        if not text:
+            continue
+        raw = pay.get("created_at") or ""
+        date = f"{raw[:10]} {raw[11:16]}" if len(raw) >= 16 else raw[:10]
+        mem_lines.append(f"• {date} {text}" if date else f"• {text}")
+    if not mem_lines:
         return
 
-    parts = [f"• {t}" for t in mem_texts[:5]]
+    parts = mem_lines[:5]
     ctx.add_section("浮现的记忆", "\n".join(parts))
 
 

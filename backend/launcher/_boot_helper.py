@@ -152,6 +152,7 @@ def check_deps():
                 'fastembed': 'fastembed',
                 'spacy': 'spacy',
                 'watchdog': 'watchdog',
+                'pyyaml': 'yaml',
             }
             imp_name = alias_map.get(pkg, pkg.replace('-', '_'))
             spec = importlib.util.find_spec(imp_name)

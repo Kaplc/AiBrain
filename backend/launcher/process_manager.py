@@ -43,7 +43,6 @@ def _load_ports():
         'flask': ports[0] if len(ports) > 0 else 18980,
         'qdrant_http': ports[1] if len(ports) > 1 else 18981,
         'qdrant_grpc': ports[2] if len(ports) > 2 else 18982,
-        'mem0_server': ports[3] if len(ports) > 3 else 19401,
         'embed_server': ports[4] if len(ports) > 4 else 19402,
     }
 
@@ -214,36 +213,8 @@ class ProcessManager:
         return ret
 
     def start_mem0_server(self):
-        """启动 mem0 独立服务（BGE-M3 + Qdrant 连接）"""
-        mem0_port = self.ports.get('mem0_server', 19401)
-        if self._is_port_listening(mem0_port):
-            print(f"  [mem0] Already running on port {mem0_port}")
-            return True
+        pass
 
-        env = {
-            **os.environ,
-            'PYTHONPATH': f'{_PROJECT_ROOT};{_BACKEND}',
-            'HF_HUB_OFFLINE': '1',
-            'TRANSFORMERS_OFFLINE': '1',
-        }
-        server_script = os.path.join(_BACKEND, 'mem0_server', 'server.py')
-        print(f"  [mem0] Starting on port {mem0_port}...")
-        proc = subprocess.Popen(
-            [_PYTHON, server_script, '--port', str(mem0_port)],
-            cwd=_PROJECT_ROOT,
-            env=env,
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
-        self.procs['mem0'] = proc
-
-        # 等待就绪（需要加载 BGE-M3，可能需要 40-60s）
-        url = f'http://127.0.0.1:{mem0_port}/health'
-        if self._wait_url(url, timeout=120, label='mem0'):
-            print(f"  [mem0] Ready (PID {proc.pid})")
-            return True
-        else:
-            print(f"  [mem0] WARNING: not ready after 120s")
-            return False
 
     def start_embed_server(self):
         """启动 Embedding 独立服务（BGE-M3 语义模型）"""
@@ -318,7 +289,7 @@ class ProcessManager:
         self._running = False
         print("\n=== Shutting down ===")
         # 顺序: Flask → WebView → mem0 → Embed → Qdrant
-        for name in ['flask', 'webview', 'mem0', 'embed', 'qdrant']:
+        for name in ['flask', 'webview', 'embed', 'qdrant']:
             proc = self.procs.get(name)
             if proc and proc.poll() is None:
                 print(f"  [{name}] Stopping (PID {proc.pid})...")
@@ -514,7 +485,7 @@ def main():
 
     print("=" * 50)
     print("  AiBrain Process Manager")
-    print(f"  Flask: {pm.ports['flask']}  Qdrant: {pm.ports['qdrant_http']}/{pm.ports['qdrant_grpc']}  mem0: {pm.ports.get('mem0_server', 19401)}  Embed: {pm.ports.get('embed_server', 19402)}")
+    print(f"  Flask: {pm.ports['flask']}  Qdrant: {pm.ports['qdrant_http']}/{pm.ports['qdrant_grpc']}  Embed: {pm.ports.get('embed_server', 19402)}")
     print("=" * 50)
 
     # 1. 清理旧进程（由 start.py 负责调用 kill_old.py）
@@ -530,7 +501,6 @@ def main():
             print("  [mgr] FATAL: Qdrant failed to start after retry, aborting.")
             sys.exit(1)
     pm.start_embed_server()
-    pm.start_mem0_server()
     pm.start_flask()
     pm.start_webview()
 

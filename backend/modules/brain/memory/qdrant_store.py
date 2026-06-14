@@ -119,6 +119,83 @@ def collection_exists(name: str) -> bool:
     return name in _list_collections()
 
 
+# ── 语义节点集合（aibrain_nodes）───────────────────────────────
+NODE_COLLECTION = "aibrain_nodes"
+_NODE_DEDUP_THRESHOLD = 0.85
+
+
+def ensure_node_collection():
+    """确保 aibrain_nodes collection 存在（懒创建，幂等）
+
+    存储每个节点的 name 向量，用于 LLM 生成节点名的语义去重。
+    """
+    if NODE_COLLECTION in _list_collections():
+        return
+    try:
+        from qdrant_client.http import models as qmodels
+        client = get_qdrant_client()
+        client.create_collection(
+            collection_name=NODE_COLLECTION,
+            vectors_config=qmodels.VectorParams(
+                size=_get_dim(),
+                distance=qmodels.Distance.COSINE,
+            ),
+        )
+        _invalidate_collection_cache()
+        logger.info(f"[qdrant_store] created collection '{NODE_COLLECTION}'")
+    except Exception as e:
+        _invalidate_collection_cache()
+        if NODE_COLLECTION not in _list_collections():
+            logger.error(f"[qdrant_store] ensure_node_collection failed: {e}")
+            raise
+
+
+def dedup_node_name(name: str, nd_type: str) -> str:
+    """向量比对同类型已有节点，去重返回规范名；不存在则插入新节点
+
+    先按 type 过滤（person/concept/emotion/goal），再向量比对，
+    避免跨类型误合并（如名为"成长"的人 vs 概念"成长"）。
+
+    Args:
+        name: LLM 生成的节点名
+        nd_type: 节点类型
+
+    Returns:
+        去重后的规范节点名
+    """
+    client = get_qdrant_client()
+    ensure_node_collection()
+
+    from qdrant_client.http import models as qmodels
+
+    vector = embed_texts([name])[0]
+    hits = client.query_points(
+        collection_name=NODE_COLLECTION,
+        query=vector,
+        query_filter=qmodels.Filter(
+            must=[qmodels.FieldCondition(key="type", match=qmodels.MatchValue(value=nd_type))]
+        ),
+        limit=1,
+        score_threshold=_NODE_DEDUP_THRESHOLD,
+    )
+    if hits.points:
+        matched = (hits.points[0].payload or {}).get("name", name)
+        logger.info(f"[node:dedup] {name} → {matched} (score={hits.points[0].score:.3f})")
+        return matched
+
+    # 未匹配 → 插入新节点（Qdrant 需要 UUID 格式 ID，用 UUID5 确定性映射）
+    import uuid
+    node_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{nd_type}:{name}"))
+    client.upsert(
+        collection_name=NODE_COLLECTION,
+        points=[qmodels.PointStruct(
+            id=node_id, vector=vector, payload={"name": name, "type": nd_type}
+        )],
+        wait=True,
+    )
+    return name
+
+
 def store_vector(text: str, payload: dict | None = None) -> str:
     """嵌入 → upsert 到 aibrain_memories → 返回 point id
 
@@ -151,6 +228,8 @@ def store_vector(text: str, payload: dict | None = None) -> str:
     if payload:
         full_payload.update(payload)
     full_payload["text"] = display_text if display_text else text
+    # display_text 已冗余（text 字段已覆盖），去除避免 payload 重复
+    full_payload.pop("display_text", None)
     full_payload.setdefault("user_id", DEFAULT_USER_ID)
     full_payload.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
@@ -175,5 +254,11 @@ def store_vector(text: str, payload: dict | None = None) -> str:
         else:
             # collection 仍在，是其它错误，向上抛出
             raise
-    logger.info(f"[qdrant_store] stored point={point_id[:8]} | text={full_payload['text'][:60]!r}")
+    import json as _j
+    _log_payload = {k: v for k, v in full_payload.items() if k != 'embedding_text'}
+    logger.info(
+        f"[qdrant_store] stored point={point_id[:8]}\n"
+        f"{_j.dumps(_log_payload, ensure_ascii=False, indent=2)}\n"
+        f"---"
+    )
     return point_id

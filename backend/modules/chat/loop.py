@@ -142,7 +142,9 @@ def send_message(
             logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
         if memory_ref:
             msgs.append({"role": "system", "content": f"参考信息：\n{memory_ref}"})
-        msgs.append({"role": "user", "content": prompt})
+        from datetime import datetime
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        msgs.append({"role": "user", "content": f"[{now_str}] {prompt}"})
 
         # 4. LLM 配置
         cfg = LLMConfig(
@@ -231,16 +233,6 @@ def send_message(
             logger.info("[loop] assistant reply written to workmemory output.md")
         except Exception as e:
             logger.warning(f"[loop] output_mem_write failed: {e}")
-
-        # 后台触发叙事反思
-        try:
-            from modules.brain.memory.self_narrative import get_self_narrative
-            _sn = get_self_narrative()
-            if _sn:
-                import threading as _th
-                _th.Thread(target=_sn.reflect_on_conversation, args=(prompt, assistant_text), daemon=True).start()
-        except Exception as e:
-            logger.warning(f"[loop] narrative reflection spawn failed: {e}")
 
         logger.info(f"[loop] LLM done: tokens={token_count} total_chars={len(assistant_text)}")
         yield {"type": "done"}
@@ -412,16 +404,6 @@ def _tool_loop(
         logger.info("[loop] tool loop output written to workmemory")
     except Exception as e:
         logger.warning(f"[loop] output_mem_write failed: {e}")
-
-    # 后台触发叙事反思
-    try:
-        from modules.brain.memory.self_narrative import get_self_narrative
-        _sn = get_self_narrative()
-        if _sn:
-            import threading as _th
-            _th.Thread(target=_sn.reflect_on_conversation, args=(prompt, final_text), daemon=True).start()
-    except Exception as e:
-        logger.warning(f"[loop] narrative reflection spawn failed: {e}")
 
     logger.info(f"[loop] tool loop done: {len(tool_history)} tool calls, chars={len(final_text)}")
     yield {"type": "done"}

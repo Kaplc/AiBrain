@@ -1,8 +1,15 @@
 """记忆模块 - 统一导出入口
 
-将 memory.py (现为 core.py) 的公开函数统一导出，
+将 core.py 的公开函数统一导出，
 外部 `from modules.brain.memory import store_memory` 等调用保持不变。
 """
+
+# mem0 兼容存根（旧代码仍 import get_mem0_client 时不会崩溃）
+def get_mem0_client():
+    """mem0 已移除，返回 Qdrant 客户端"""
+    from .qdrant_store import get_qdrant_client
+    return get_qdrant_client()
+
 from .core import (
     # 设置
     get_memory_settings,

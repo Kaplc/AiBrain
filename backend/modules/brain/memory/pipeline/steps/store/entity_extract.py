@@ -48,10 +48,14 @@ def execute(ctx) -> None:
             logger.info(f"[step:entity_extract] extracting entities | mem0_id={mem0_id[:8]}")
             result = extract_entities_llm(mem_text)
             auto_entity_names = result.get("entities", [])
+            auto_nodes = result.get("nodes") or [
+                {"name": n, "type": "concept"} for n in auto_entity_names
+            ]
             root_entity = result.get("root", "用户")
             logger.info(f"[step:entity_extract] entities={auto_entity_names} | root={root_entity}")
         except Exception:
             auto_entity_names = []
+            auto_nodes = []
             root_entity = "用户"
             logger.warning(f"[step:entity_extract] LLM failed for {mem0_id[:8]}")
 
@@ -63,6 +67,7 @@ def execute(ctx) -> None:
             "mem0_id": mem0_id,
             "mem_text": mem_text,
             "entities": auto_entity_names,
+            "nodes": auto_nodes,
             "root_entity": root_entity,
         })
         all_entity_names.extend(auto_entity_names)

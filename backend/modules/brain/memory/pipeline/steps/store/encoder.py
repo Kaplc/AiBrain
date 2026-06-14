@@ -15,10 +15,12 @@ logger = logging.getLogger('memory.pipeline')
 SAFE_DEFAULTS = {
     "display_text": "",
     "episodic": {"what": "", "why": "", "result": "", "lesson": []},
-    "concepts": [],
+    "nodes": [],
     "affect": {"intensity": 0.0},
     "importance": 0.3,
 }
+
+ALLOWED_NODE_TYPES = {"person", "concept", "emotion", "goal"}
 
 ENCODER_PROMPT = """你是记忆编码助手。给定一条记忆文本，提取完整的情景结构，输出严格的 JSON。
 
@@ -29,19 +31,25 @@ ENCODER_PROMPT = """你是记忆编码助手。给定一条记忆文本，提取
    - why: 为什么发生/触发原因（文本无法推断则为空字符串 ""）
    - result: 结果如何（一句话）
    - lesson: 学到了什么/经验（数组，0-3 条，每条≤30字，无则空数组 []）
-3. concepts: 抽象概念标签（技术/心理/哲学/关系等，2-5 个，如"联想记忆""扩散激活"）
+3. nodes: 核心语义节点（2-5 个），每个包含 name 和 type。
+   type 取值（只选一个）：
+   - person: 人物、参与者
+   - concept: 技术、框架、概念、知识
+   - emotion: 情绪、感受（成就感、挫败、温暖）
+   - goal: 目标、意图、方向
 4. affect: 情感分布。给出文本中体现的情感维度（每个 0-1，不必全填，有才给）+ intensity（情感烈度 -3.0~3.0，0 为中性）
    常见维度：warmth(温暖)/joy(喜悦)/gratitude(感激)/curiosity(好奇)/frustration(挫败)/sadness(难过)/pride(自豪)
 5. importance: 这条记忆的重要性 0.0-1.0（里程碑/重大事件高分，日常低分）
 
 【规则】
 - 只输出一个 JSON 对象，禁止解释文字、禁止 markdown 代码块
-- display_text / episodic / concepts / affect / importance 五个字段不可缺失
+- display_text / episodic / nodes / affect / importance 五个字段不可缺失
+- nodes 至少包含 1 个节点，name 2-10 字
 - affect 至少包含 intensity
 - lesson 可为空数组
 
 【输出格式】
-{"display_text":"理解entity_relations工作原理","episodic":{"what":"志远解释了entity_relations如何工作","why":"此前无法理解网状记忆实现","result":"理解了关系激活机制","lesson":["entity_relations的价值在于激活关系","边被遍历时才产生意义"]},"concepts":["联想记忆","扩散激活","知识图谱"],"affect":{"warmth":0.8,"gratitude":0.7,"intensity":2.0},"importance":0.85}"""
+{"display_text":"理解entity_relations工作原理","episodic":{"what":"志远解释了entity_relations如何工作","why":"此前无法理解网状记忆实现","result":"理解了关系激活机制","lesson":["entity_relations的价值在于激活关系","边被遍历时才产生意义"]},"nodes":[{"name":"志远","type":"person"},{"name":"entity_relations","type":"concept"},{"name":"成就感","type":"emotion"},{"name":"AiBrain","type":"goal"}],"affect":{"warmth":0.8,"gratitude":0.7,"intensity":2.0},"importance":0.85}"""
 
 
 def _clamp_float(v, lo, hi, default):
@@ -77,11 +85,21 @@ def _normalize(obj: dict, fallback_text: str) -> dict:
         raw_lesson = []
     lesson = [_str(x)[:30] for x in raw_lesson if isinstance(x, str) and x.strip()][:3]
 
-    # concepts
-    raw_concepts = obj.get("concepts") or []
-    if not isinstance(raw_concepts, list):
-        raw_concepts = []
-    concepts = [_str(c)[:20] for c in raw_concepts if isinstance(c, str) and c.strip()][:5]
+    # nodes
+    raw_nodes = obj.get("nodes") or []
+    if not isinstance(raw_nodes, list):
+        raw_nodes = []
+    nodes = []
+    for n in raw_nodes:
+        if not isinstance(n, dict):
+            continue
+        name = str(n.get("name", "")).strip()
+        typ = str(n.get("type", "")).strip()
+        if len(name) < 2 or len(name) > 10:
+            continue
+        if typ not in ALLOWED_NODE_TYPES:
+            typ = "concept"
+        nodes.append({"name": name, "type": typ})
 
     # affect
     raw_affect = obj.get("affect") or {}
@@ -101,7 +119,7 @@ def _normalize(obj: dict, fallback_text: str) -> dict:
     return {
         "display_text": display,
         "episodic": {"what": what, "why": why, "result": result, "lesson": lesson},
-        "concepts": concepts,
+        "nodes": nodes,
         "affect": affect,
         "importance": importance,
     }
@@ -112,7 +130,7 @@ def _defaults_with_text(text: str) -> dict:
     d = {
         "display_text": text[:30] if text else "",
         "episodic": dict(SAFE_DEFAULTS["episodic"]),
-        "concepts": [],
+        "nodes": [],
         "affect": {"intensity": 0.0},
         "importance": 0.3,
     }
@@ -167,6 +185,27 @@ def execute(ctx) -> None:
         logger.warning(f"[step:encoder] LLM call failed, using SAFE_DEFAULTS: {e}")
         encoded = _defaults_with_text(str(text))
 
+    # 节点名称向量去重：与 aibrain_nodes 集合语义比对，避免 LLM 同一概念不同名
+    if encoded.get("nodes"):
+        from modules.brain.memory.qdrant_store import dedup_node_name
+        try:
+            deduped = []
+            for nd in encoded["nodes"]:
+                orig = nd["name"]
+                nd["name"] = dedup_node_name(orig, nd["type"])
+                deduped.append(nd)
+            # 去重后合并同名节点（type 冲突时保留更高权重的）
+            _TYPE_RANK = {"person": 4, "goal": 3, "concept": 2, "emotion": 1}
+            seen = {}
+            for nd in deduped:
+                key = nd["name"]
+                if key in seen and _TYPE_RANK.get(nd["type"], 0) <= _TYPE_RANK.get(seen[key]["type"], 0):
+                    continue
+                seen[key] = nd
+            encoded["nodes"] = list(seen.values())
+        except Exception as e:
+            logger.warning(f"[encoder:node] node dedup failed (non-fatal): {e}")
+
     # 拼接 embedding_text（向量库索引整段情景）
     embedding_text = _build_embedding_text(encoded["display_text"], encoded["episodic"])
 
@@ -176,14 +215,14 @@ def execute(ctx) -> None:
     mem_meta["display_text"] = encoded["display_text"]
     mem_meta["embedding_text"] = embedding_text
     mem_meta["episodic"] = encoded["episodic"]
-    mem_meta["concepts"] = encoded["concepts"]
+    mem_meta["nodes"] = encoded["nodes"]
     mem_meta["affect"] = encoded["affect"]
     mem_meta["importance"] = encoded["importance"]
 
     logger.info(
         f"[step:encoder] DONE | display={encoded['display_text'][:20]!r} "
         f"importance={encoded['importance']} intensity={encoded['affect'].get('intensity')} "
-        f"concepts={len(encoded['concepts'])} lessons={len(encoded['episodic']['lesson'])}"
+        f"nodes={len(encoded['nodes'])} lessons={len(encoded['episodic']['lesson'])}"
     )
 
 

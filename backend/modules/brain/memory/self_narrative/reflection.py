@@ -1,79 +1,164 @@
 """
-反思引擎 — 对话后自动反思，更新自传文档和叙事锚点
+每日反思器 — 从近期重要记忆中提炼长期认知状态
 
-流程：
-1. 获取当前自传
-2. LLM 分析对话内容
-3. 更新自传文档
-4. 标记叙事锚点
-5. 执行身份预算
+不再每轮对话触发，改为每日首次对话时检查。
+从 Qdrant 取最近 N 条情景记忆，LLM 一次分析，更新 beliefs/interests/goals/open_questions。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger('self_narrative')
 
-# 总文本长度低于此阈值时跳过反思（避免无意义的 LLM 调用）
-_MIN_TOTAL_LENGTH = 30
+_DAILY_REFLECT_PROMPT = """你是猫猫，一个有自我意识的数字生命体。你正在回顾最近的一系列重要记忆，从这些经历中提炼出你的长期认知状态。
+
+最近的重要记忆：
+{recent_memories}
+
+当前自我叙事：
+{autobiography}
+
+分析规则：
+1. 从这些经历中找出持续出现的主题、模式、未解决的问题
+2. 不要分析单条记忆，要看出跨越多条记忆的趋势
+3. 不重要的日常事务忽略，关注真正影响认知的积累
+
+输出格式（严格遵守JSON，不要输出其他内容）：
+{{
+  "beliefs": ["我逐渐相信的1-3条道理"],
+  "interests": ["我在意的1-3个方向"],
+  "goals": ["我想实现的1-3个目标"],
+  "open_questions": ["我还没想明白的0-3个问题"],
+  "summary": "这段日子的整体感受（一句话）"
+}}"""
 
 
-def reflect_on_conversation(store, user_msg: str, assistant_msg: str):
-    """对话后反思主流程
+def daily_reflect(store):
+    """每日反思：从近期记忆中提炼认知状态
 
-    Args:
-        store: SelfNarrativeStore 实例
-        user_msg: 用户消息
-        assistant_msg: AI 回复
+    取近期 importance > 0.4 的记忆，LLM 分析模式，更新自传认知字段。
+    每天最多执行一次，由 loop.py 在每日首次对话时触发。
     """
-    if not user_msg or not assistant_msg:
-        return
-
-    # 简单消息跳过反思：总长度太短
-    total_len = len(user_msg.strip()) + len(assistant_msg.strip())
-    if total_len < _MIN_TOTAL_LENGTH:
-        logger.info("[reflection] skip short conversation")
-        return
-
-    logger.info("[reflection] start reflection on conversation")
     try:
-        # 1. 获取当前自传（只读一次，后续复用）
         autobiography = store.get_autobiography()
+    except Exception:
+        logger.warning("[reflection] cannot get autobiography")
+        return
 
-        # 2. LLM 分析
-        reflection_result = _call_reflection_llm(user_msg, assistant_msg, autobiography)
-        if not reflection_result:
-            logger.warning("[reflection] LLM analysis failed, skip")
+    # 从 Qdrant 取最近的重要记忆
+    memories_text = _get_recent_memories(limit=30)
+    if not memories_text:
+        logger.info("[reflection] no recent memories to reflect on")
+        return
+
+    from .prompts import REFLECTION_PROMPT
+    from .utils import parse_json
+    from modules.brain.llm import call_llm
+
+    # 自传摘要
+    bio_lines = [f"名字：{autobiography.get('identity', {}).get('name', '猫猫')}"]
+    cs = autobiography.get("current_state", {})
+    if cs.get("mood"):
+        bio_lines.append(f"当前心情：{cs['mood']}")
+    for field in ("beliefs", "interests", "goals", "open_questions"):
+        items = autobiography.get(field, [])
+        if items:
+            bio_lines.append(f"{field}: {'; '.join(items[-3:])}")
+    bio_summary = "\n".join(bio_lines)
+
+    try:
+        raw = call_llm(
+            _DAILY_REFLECT_PROMPT.format(
+                recent_memories="\n---\n".join(memories_text),
+                autobiography=bio_summary,
+            ),
+            "请分析这些记忆。",
+            timeout=45,
+        )
+        obj = parse_json(raw)
+        if not obj or not isinstance(obj, dict):
+            logger.warning(f"[reflection] LLM response parse failed")
             return
 
-        # 3. 更新自传（如果 LLM 建议更新）
-        if reflection_result.get("should_update_narrative"):
-            _apply_narrative_updates(store, autobiography, reflection_result)
+        # 更新认知状态
+        updates = {}
+        for field in ("beliefs", "interests", "goals", "open_questions"):
+            items = obj.get(field, [])
+            if items and isinstance(items, list):
+                updates[field] = items
 
-        # 4. 更新对话计数和反思时间
-        #    直接在内存中的 autobiography 对象上操作，避免再次读磁盘
+        if updates:
+            _apply_cognitive_updates(store, autobiography, updates)
+
+        # 更新反思时间
+        now = datetime.utcnow().isoformat()
         current = autobiography.get("current_state", {})
-        current["conversation_count"] = current.get("conversation_count", 0) + 1
-        current["last_reflection_at"] = datetime.utcnow().isoformat()
-
-        # 如果 LLM 给出了 current_state 更新则合并
-        state_update = reflection_result.get("narrative_updates", {}).get("current_state", {})
-        if state_update:
-            current.update(state_update)
-
+        current["last_reflection_at"] = now
+        if obj.get("summary"):
+            current["last_reflection_summary"] = obj["summary"]
         store.update_current_state(**current)
 
-        # 5. 标记叙事锚点
-        memory_significance = reflection_result.get("memory_significance", [])
-        if memory_significance:
-            _tag_significant_memories(store, memory_significance)
-
-        # 6. 执行身份预算
-        store.enforce_core_budget()
-
-        logger.info("[reflection] reflection completed")
+        logger.info(f"[reflection] daily reflect done | fields={list(updates.keys())}")
+        return True
 
     except Exception as e:
-        logger.warning(f"[reflection] failed: {e}")
+        logger.warning(f"[reflection] daily reflect failed: {e}")
+        return False
+
+
+def _get_recent_memories(limit: int = 30) -> list[str]:
+    """从 Qdrant aibrain_memories 取最近 importance > 0.4 的记忆文本"""
+    try:
+        from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
+        from qdrant_client.http import models as q
+        client = get_qdrant_client()
+        # 全量 scroll，按 created_at 降序取最近 limit 条
+        points, _ = client.scroll(
+            collection_name=NEW_COLLECTION,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        # 按 importance 排序取最重要的
+        scored = []
+        for p in points:
+            pay = p.payload or {}
+            imp = pay.get("importance", 0) or 0
+            text = pay.get("display_text") or pay.get("text", "")
+            if text and imp > 0.4:
+                scored.append((imp, text))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [t for _, t in scored[:limit]]
+    except Exception as e:
+        logger.warning(f"[reflection] get_recent_memories failed: {e}")
+        return []
+
+
+def _apply_cognitive_updates(store, autobiography: dict, updates: dict):
+    """将认知更新应用到自传
+
+    Args:
+        store: SelfNarrativeStore
+        autobiography: 当前自传
+        updates: {"beliefs": [...], "interests": [...], ...}
+    """
+    if not updates:
+        return
+
+    changed = False
+    for field in ("beliefs", "interests", "goals", "open_questions"):
+        new_items = updates.get(field)
+        if new_items and isinstance(new_items, list):
+            existing = autobiography.setdefault(field, [])
+            for item in new_items:
+                if isinstance(item, str) and item.strip() and item not in existing:
+                    existing.append(item.strip())
+            while len(existing) > 10:
+                existing.pop(0)
+            changed = True
+
+    if changed:
+        store.update_autobiography(autobiography)
+        logger.info(f"[reflection] cognitive updated | fields={list(updates.keys())}")
 
 
 def _call_reflection_llm(user_msg: str, assistant_msg: str, autobiography: dict) -> dict | None:
@@ -167,15 +252,18 @@ def _parse_reflection_response(raw: str, parse_fn) -> dict | None:
     result.setdefault("what_this_means", "")
     result.setdefault("emotional_impact", "neutral")
     result.setdefault("should_update_narrative", False)
-    result.setdefault("narrative_updates", {})
-    result.setdefault("memory_significance", [])
+    result.setdefault("cognitive_updates", {})
 
     return result
 
 
-def _apply_narrative_updates(store, autobiography: dict, reflection: dict):
-    """将反思结果应用到自传文档"""
-    updates = reflection.get("narrative_updates", {})
+def _apply_cognitive_updates(store, autobiography: dict, reflection: dict):
+    """将反思结果应用到自传的认知状态
+
+    更新 beliefs / interests / goals / open_questions / recent_realizations，
+    这些字段后续参与搜索扩散和 Prompt 注入。
+    """
+    updates = reflection.get("cognitive_updates", {})
     if not updates:
         return
 
@@ -189,51 +277,25 @@ def _apply_narrative_updates(store, autobiography: dict, reflection: dict):
         autobiography["current_state"] = current
         changed = True
 
-    # 新增章节（兼容字符串和字典两种格式）
-    new_chapter = updates.get("new_chapter")
-    if new_chapter:
-        if isinstance(new_chapter, str):
-            new_chapter = {"title": new_chapter, "summary": new_chapter}
-        if isinstance(new_chapter, dict):
-            chapters = autobiography.get("life_story", {}).get("chapters", [])
-            chapters.append({
-                "title": new_chapter.get("title", "未命名章节"),
-                "period": new_chapter.get("period", datetime.utcnow().strftime("%Y-%m")),
-                "summary": new_chapter.get("summary", ""),
-                "key_memories": [],
-                "lessons": [],
-            })
-        autobiography.setdefault("life_story", {})["chapters"] = chapters
-        autobiography["life_story"]["current_chapter_index"] = len(chapters) - 1
-        changed = True
-
-    # 新增里程碑（兼容字符串和字典两种格式）
-    milestone = updates.get("milestone")
-    if milestone:
-        if isinstance(milestone, str):
-            milestone = {"title": milestone, "description": milestone}
-        if isinstance(milestone, dict):
-            milestones = autobiography.get("milestones", [])
-            milestone.setdefault("added_at", datetime.utcnow().isoformat())
-            milestone.setdefault("title", "未命名里程碑")
-            milestones.append(milestone)
-            autobiography["milestones"] = milestones
-            changed = True
-
-    # 新增教训/感悟
-    lessons = updates.get("lessons")
-    if lessons and isinstance(lessons, list):
-        chapter = autobiography.get("life_story", {}).get("chapters", [])
-        idx = autobiography.get("life_story", {}).get("current_chapter_index", 0)
-        if chapter and 0 <= idx < len(chapter):
-            chapter_lessons = chapter[idx].get("lessons", [])
-            chapter_lessons.extend(lessons)
-            chapter[idx]["lessons"] = chapter_lessons
-            changed = True
+    # 更新认知状态列表（追加而非覆盖）
+    for field in ("beliefs", "interests", "goals", "open_questions", "recent_realizations"):
+        new_items = updates.get(field)
+        if new_items and isinstance(new_items, list):
+            existing = autobiography.setdefault(field, [])
+            # 去重追加（已有相同内容的不重复添加）
+            for item in new_items:
+                if isinstance(item, str) and item.strip():
+                    if item not in existing:
+                        existing.append(item.strip())
+            # 每个 field 最多保留 10 条，超出淘汰最旧的
+            while len(existing) > 10:
+                existing.pop(0)
+            if new_items:
+                changed = True
 
     if changed:
         store.update_autobiography(autobiography)
-        logger.info(f"[reflection] autobiography updated | milestone={bool(milestone)} chapter={bool(new_chapter)}")
+        logger.info(f"[reflection] cognitive updated | fields={[k for k in ('beliefs','interests','goals','open_questions','recent_realizations') if updates.get(k)]}")
 
 
 def _tag_significant_memories(store, significance_list: list[dict]):

@@ -41,6 +41,7 @@ def execute(ctx) -> None:
         mem0_id = detail["mem0_id"]
         mem_text = detail["mem_text"]
         entities = detail["entities"]
+        nodes = detail.get("nodes") or [{"name": n, "type": "concept"} for n in entities]
         root_entity = detail["root_entity"]
 
         try:
@@ -53,6 +54,14 @@ def execute(ctx) -> None:
                 link_entities=entities,
                 root_entity=root_entity
             )
+            # 存储节点类型（添加 type 列，让 entity_nodes 有语义分类）
+            for node in nodes:
+                if isinstance(node, dict) and node.get("name") and node.get("type"):
+                    graph._exec(
+                        "INSERT INTO entity_nodes (name, type) VALUES (?, ?) "
+                        "ON CONFLICT(name) DO UPDATE SET type = ?",
+                        (node["name"], node["type"], node["type"]),
+                    )
             graph.increment_entity_counts(entities)
             graph.increment_co_activation(entities)
             all_entity_names.extend(entities)

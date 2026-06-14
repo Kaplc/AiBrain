@@ -1,19 +1,16 @@
 """
-记忆核心逻辑 - 基于 mem0 + PipelineEngine 实现
-mem0 全权管理：存储、去重、自动更新、自适应搜索。
-MCP 只暴露 store + search，其余给前端 UI 用。
-PipelineEngine 统一编排 store/search 的处理步骤。
+记忆核心逻辑 - PipelineEngine 编排 store/search 的处理步骤。
 """
 import json
 import logging
 import os
 import threading
 
-from modules.brain.mem0_adapter import get_mem0_client
+from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION, LEGACY_COLLECTION
 
 logger = logging.getLogger('memory')
 
-# 默认 user_id，mem0 需要至少一个 entity id
+# 默认 user_id
 DEFAULT_USER_ID = "default"
 
 # ── 记忆设置持久化路径：~/.aibrain/config/memory_settings.json ──
@@ -87,12 +84,14 @@ _memory_count_cache = None
 
 
 def warmup_memory_count():
-    """预热记忆数量缓存（在 _preload 中调用）"""
+    """预热记忆数量缓存"""
     global _memory_count_cache
     try:
-        client = get_mem0_client()
-        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
-        _memory_count_cache = len(result.get("results", []))
+        from qdrant_client.http import models as q
+        c = get_qdrant_client()
+        cnt = c.count(collection_name=NEW_COLLECTION, exact=True).count
+        cnt += c.count(collection_name=LEGACY_COLLECTION, exact=True).count
+        _memory_count_cache = cnt
         logger.info(f"[memory] 记忆数量缓存已预热: {_memory_count_cache} 条")
     except Exception as e:
         logger.warning(f"[memory] 预热记忆数量失败: {e}")
@@ -100,20 +99,21 @@ def warmup_memory_count():
 
 
 def get_client():
-    """兼容接口：返回 mem0 客户端"""
-    return get_mem0_client()
+    """兼容接口：返回 Qdrant 客户端"""
+    return get_qdrant_client()
 
 
 def get_memory_count() -> int:
-    """从 mem0 获取真实记忆数量"""
+    """获取真实记忆数量"""
     global _memory_count_cache
     if _memory_count_cache is not None:
         return _memory_count_cache
-    # 缓存未初始化时直接查询
     try:
-        client = get_mem0_client()
-        result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
-        return len(result.get("results", []))
+        from qdrant_client.http import models as q
+        c = get_qdrant_client()
+        cnt = c.count(collection_name=NEW_COLLECTION, exact=True).count
+        cnt += c.count(collection_name=LEGACY_COLLECTION, exact=True).count
+        return cnt
     except Exception:
         return 0
 
@@ -122,11 +122,10 @@ def _get_search_options():
     """根据数据量自适应返回最优搜索参数（使用缓存，避免每次 get_all）"""
     global _memory_count_cache
     if _memory_count_cache is None:
-        # 缓存未预热时临时查询一次
         try:
-            client = get_mem0_client()
-            result = client.get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=10000)
-            _memory_count_cache = len(result.get("results", []))
+            from qdrant_client.http import models as q
+            c = get_qdrant_client()
+            _memory_count_cache = c.count(collection_name=NEW_COLLECTION, exact=True).count
         except Exception:
             _memory_count_cache = 0
     total = _memory_count_cache
@@ -214,29 +213,11 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
 
 def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
     """旧版 store_memory 逻辑（引擎不可用时的 fallback）"""
-    client = get_mem0_client()
-
-    use_infer = _memory_settings.get("infer", True)
-    add_kwargs = {
-        "user_id": "default",
-        "infer": use_infer,
-    }
-
-    metadata = {"category": "user"}
+    from .store import memory_store
+    payload = {"category": "user"}
     if memory_meta:
-        metadata.update(memory_meta)
-    add_kwargs["metadata"] = metadata
-
-    try:
-        result = client.add(text, **add_kwargs)
-    except Exception as e:
-        if use_infer:
-            logger.warning(f"store_memory failed (infer=True): {e}, fallback infer=False")
-            add_kwargs["infer"] = False
-            result = client.add(text, **add_kwargs)
-        else:
-            raise
-
+        payload.update(memory_meta)
+    result = memory_store(text, payload=payload)
     events = result.get("results", [])
     added = [e["memory"] for e in events if e.get("event") == "ADD"]
     updated = [e["memory"] for e in events if e.get("event") == "UPDATE"]
@@ -343,53 +324,20 @@ def search_memory(query: str) -> list[dict]:
 
 def _search_memory_legacy(query: str) -> list[dict]:
     """旧版 search_memory 逻辑（引擎不可用时的 fallback）"""
-    client = get_mem0_client()
+    from .store import memory_search
     opts = _get_search_options()
-
     threshold = opts.get("threshold", 0.55)
-    rerank = opts.get("rerank", False)
     MIN_COUNT = 15
 
-    filters = {"user_id": DEFAULT_USER_ID}
-
-    kwargs = {
-        "query": query,
-        "filters": filters,
-        "top_k": 75,
-        "threshold": threshold,
-    }
-    if rerank:
-        kwargs["rerank"] = rerank
-
-    result = client.search(**kwargs)
-    memories = []
-    for r in result.get("results", []):
-        memories.append({
-            "id": r.get("id"),
-            "text": r["memory"],
-            "score": round(r.get("score", 0), 4),
-            "source": "semantic",
-        })
+    memories = memory_search(query, top_k=75, threshold=threshold)
     memories.sort(key=lambda x: x["score"], reverse=True)
 
     if len(memories) < MIN_COUNT:
-        kwargs_no_thresh = {
-            "query": query,
-            "filters": filters,
-            "top_k": MIN_COUNT,
-        }
-        if rerank:
-            kwargs_no_thresh["rerank"] = rerank
-        result2 = client.search(**kwargs_no_thresh)
+        extra = memory_search(query, top_k=MIN_COUNT, threshold=0.0)
         seen_ids = {m["id"] for m in memories}
-        for r in result2.get("results", []):
+        for r in extra:
             if r.get("id") not in seen_ids:
-                memories.append({
-                    "id": r.get("id"),
-                    "text": r["memory"],
-                    "score": round(r.get("score", 0), 4),
-                    "source": "semantic",
-                })
+                memories.append(r)
                 seen_ids.add(r.get("id"))
         memories.sort(key=lambda x: x["score"], reverse=True)
         memories = memories[:MIN_COUNT]
@@ -444,43 +392,44 @@ def list_memories(offset: int = 0, limit: int = 200, source: str = None) -> list
         limit: 每页数量限制（默认200）
         source: 可选过滤来源，如 "user"（用户保存）或 "mcp"（MCP工具保存）
     """
-    client = get_mem0_client()
-    filters = {"user_id": DEFAULT_USER_ID}
-    if source:
-        filters["metadata.source"] = source
-
-    result = client.get_all(
-        filters=filters,
-        top_k=10000,
+    from qdrant_client.http import models as q
+    c = get_qdrant_client()
+    all_points, _ = c.scroll(
+        collection_name=NEW_COLLECTION,
+        limit=10000,
+        with_payload=True,
+        with_vectors=False,
     )
-    all_memories = result.get("results", [])
-    all_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+    all_memories = []
+    for p in all_points:
+        pay = p.payload or {}
+        all_memories.append({
+            "id": str(p.id),
+            "text": pay.get("display_text") or pay.get("text", ""),
+            "timestamp": pay.get("created_at", ""),
+        })
+    all_memories.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
     if source == "user":
         paged = all_memories[:20]
     else:
         paged = all_memories[offset:offset + limit]
-    return [
-        {
-            "id": m["id"],
-            "text": m["memory"],
-            "timestamp": m.get("created_at"),
-        }
-        for m in paged
-    ]
+    return paged
 
 
 def delete_memory(memory_id: str) -> dict:
-    """删除记忆（前端 UI 用），删前先取回文本内容"""
-    client = get_mem0_client()
-    memory_text = ''
+    """删除记忆（前端 UI 用）"""
+    from qdrant_client.http import models as q
+    c = get_qdrant_client()
+    # 尝试从新集合删除
     try:
-        result = client.get(memory_id)
-        if result:
-            memory_text = result.get('memory', '') or result.get('text', '')
-    except Exception as e:
-        logger.warning(f"[delete_memory] get text failed for {memory_id}: {e}")
-    client.delete(memory_id)
-
+        c.delete(collection_name=NEW_COLLECTION, points_selector=q.PointIdsList(points=[memory_id]))
+    except Exception:
+        pass
+    # 尝试从旧集合删除
+    try:
+        c.delete(collection_name=LEGACY_COLLECTION, points_selector=q.PointIdsList(points=[memory_id]))
+    except Exception:
+        pass
     try:
         from modules.brain.graph import get_graph
         graph = get_graph()
@@ -488,17 +437,23 @@ def delete_memory(memory_id: str) -> dict:
             graph.delete_memory(memory_id)
     except Exception as e:
         logger.warning(f"[graph] delete_memory failed (non-fatal): {e}")
-
     global _memory_count_cache
     if _memory_count_cache is not None:
         _memory_count_cache = max(0, _memory_count_cache - 1)
-    return {"result": f"已删除记忆: {memory_id}", "text": memory_text}
+    return {"result": f"已删除记忆: {memory_id}"}
 
 
 def update_memory(memory_id: str, new_text: str) -> str:
     """更新记忆（前端 UI 用，用户手动编辑时调用）"""
-    client = get_mem0_client()
-    client.update(memory_id, new_text)
+    from .qdrant_store import get_qdrant_client, embed_texts, NEW_COLLECTION
+    from qdrant_client.http import models as q
+    c = get_qdrant_client()
+    vector = embed_texts([new_text])[0]
+    c.upsert(
+        collection_name=NEW_COLLECTION,
+        points=[q.PointStruct(id=memory_id, vector=vector, payload={"text": new_text, "updated_at": datetime.now(timezone.utc).isoformat()})],
+        wait=True,
+    )
     return f"已更新记忆: {new_text}"
 
 

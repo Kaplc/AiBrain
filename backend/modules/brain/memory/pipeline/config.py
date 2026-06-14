@@ -19,12 +19,10 @@ DEFAULT_CONFIG = {
         {"name": "vector_store", "enabled": True, "required": True},
         {"name": "entity_extract", "enabled": True, "required": False},
         {"name": "graph_link", "enabled": True, "required": False},
-        {"name": "narrative_significance", "enabled": True, "required": False},
     ],
     "search": [
         {"name": "vector_search", "enabled": True, "required": True},
         {"name": "graph_recall", "enabled": True, "required": False},
-        {"name": "narrative_warmth", "enabled": True, "required": False},
     ],
 }
 

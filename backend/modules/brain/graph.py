@@ -292,7 +292,7 @@ class GraphMemory:
             try:
                 self._exec(
                     "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                    (mem0_id, text),
+                    (mem0_id, mem0_id[:20]),
                 )
                 self._conn.commit()
                 logger.info(f"[graph:link] {mem0_id[:8]} → 0 entities (no link)")
@@ -304,7 +304,7 @@ class GraphMemory:
         try:
             self._exec(
                 "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                (mem0_id, text),
+                (mem0_id, mem0_id[:20]),
             )
             resolved_entities = []  # Track deduped entity names
             for new_entity in link_entities:
@@ -506,7 +506,7 @@ class GraphMemory:
         try:
             self._exec(
                 "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                (mem0_id, text),
+                (mem0_id, mem0_id[:20]),
             )
             self._exec(
                 "INSERT OR IGNORE INTO mentions (mem0_id, entity_name) VALUES (?, '用户')",
@@ -707,24 +707,43 @@ class GraphMemory:
             logger.info(f"[graph:search_related_new] 所有实体都是泛化实体，跳过 | generic={list(generic_entities)}")
             return []
 
-        logger.info(f"[graph:search_related_new] 过滤泛化实体 | total={total} | generic={len(generic_entities)} | specific={len(specific_entities)} | specific_entities={specific_entities}")
+        logger.info(f"[graph:search_related_new] 过滤泛化实体 | total={total} | generic={len(generic_entities)} | specific={len(specific_entities)} | specific={specific_entities}")
 
         # 共现召回：在 mentions 表里找也提到这些实体的记忆
+        # ── 多跳扩散预留位 ──
+        # 后续从 specific_entities 通过 typed_entity_relations 逐层扩展到 N 跳关联实体
+        # entities_for_search = _multi_hop_expand(specific_entities, max_hops=N)
+        # 然后替换下方 ent_placeholders 为 entities_for_search 的占位符
         ent_placeholders = ','.join('?' * len(specific_entities))
         mem_id_placeholders = ','.join('?' * len(initial_mem_ids))
         rows = self._exec(
-            f"""SELECT m.mem0_id, m.text, COUNT(DISTINCT mn.entity_name) as co_count
+            f"""SELECT m.mem0_id, m.text,
+                SUM(
+                  CASE WHEN en.type = 'person' THEN 1.0
+                       WHEN en.type = 'goal' THEN 0.9
+                       WHEN en.type = 'concept' THEN 0.7
+                       WHEN en.type = 'emotion' THEN 0.5
+                       ELSE 0.5
+                  END
+                  / LOG(COALESCE(ec.cnt, 1) + 1)
+                ) as spread_score
                 FROM mentions mn
                 JOIN memory_nodes m ON m.mem0_id = mn.mem0_id
+                LEFT JOIN entity_nodes en ON en.name = mn.entity_name
+                LEFT JOIN (
+                  SELECT entity_name, COUNT(DISTINCT mem0_id) as cnt
+                  FROM mentions
+                  GROUP BY entity_name
+                ) ec ON ec.entity_name = mn.entity_name
                 WHERE mn.entity_name IN ({ent_placeholders})
                 AND m.mem0_id NOT IN ({mem_id_placeholders})
                 GROUP BY m.mem0_id
-                ORDER BY co_count DESC
+                ORDER BY spread_score DESC
                 LIMIT {max_candidates}""",
             specific_entities + list(initial_mem_ids)
         )
         result = [
-            {"id": r[0], "text": r[1], "co_count": r[2]}
+            {"id": r[0], "text": r[1], "spread_score": r[2]}
             for r in rows
         ]
         logger.info(f"[graph:search_related_new] 共现召回完成 | 候选={len(result)} 条")
