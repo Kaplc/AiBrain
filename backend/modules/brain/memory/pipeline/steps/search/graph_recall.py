@@ -102,18 +102,14 @@ def execute(ctx) -> None:
     min_semantic = ctx.intermediate.get("min_semantic_score", 0.5)
     graph_base_score = min_semantic * 0.8
 
-    # 认知状态命中加持：记忆的实体匹配 goals/interests/beliefs 时加分
-    _cognitive_nodes = set()
+    # 内部状态层偏置：concern_bias(0.005) + goal_bias(priority x 0.01)
+    # 替换旧的 self_narrative goals/interests 认知加持；权重小，不会压过语义分
+    _concerns_mgr = None
+    _goals_mgr = None
     try:
-        from modules.brain.memory.self_narrative import get_self_narrative
-        _sn = get_self_narrative()
-        if _sn:
-            _bio = _sn.get_autobiography()
-            for field in ("goals", "interests", "beliefs"):
-                for item in _bio.get(field, []):
-                    # 把认知条目拆成可能的节点名（取前 10 个字）
-                    if isinstance(item, str) and len(item) >= 2:
-                        _cognitive_nodes.add(item[:10])
+        from modules.brain.state import get_concerns, get_goals
+        _concerns_mgr = get_concerns()
+        _goals_mgr = get_goals()
     except Exception:
         pass
 
@@ -123,9 +119,13 @@ def execute(ctx) -> None:
         c["source"] = "graph"
         ents = entity_map.get(c["id"], [])
         c["entities"] = ents
-        # 认知加持：命中则 +0.02
-        if _cognitive_nodes and any(e in _cognitive_nodes for e in ents):
-            c["score"] = min(1.0, c["score"] + 0.02)
+        # concern + goal 偏置：命中高关注实体或目标相关概念时小幅加分
+        if _concerns_mgr and _goals_mgr and ents:
+            bias = _concerns_mgr.concern_bias_for_entities(ents) + _goals_mgr.goal_bias_for_entities(ents)
+            if bias > 0 and graph_base_score > 0:
+                # 封顶在 graph_base_score 的 15%，保证低分场景也不压语义分（决策 #4）
+                bias = min(bias, graph_base_score * 0.15)
+                c["score"] = min(1.0, c["score"] + bias)
         added.append(c)
 
     ctx.intermediate["graph_results"] = added

@@ -24,8 +24,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# 工作记忆文件存储根目录
-_BASE_DIR = Path(__file__).parent / "data"
+# 工作记忆文件存储根目录（统一放在 backend/modules/brain/data/，上三级到 brain）
+_BASE_DIR = Path(__file__).parent.parent.parent / "data"
 
 # 默认文件（input/package 用 JSON，output 保留 Markdown 供前端读取）
 DEFAULT_FILES = ["input.json", "output.json", "package.json"]

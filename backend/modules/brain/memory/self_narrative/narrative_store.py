@@ -13,7 +13,9 @@ logger = logging.getLogger('self_narrative')
 
 # ── JSON 副本文件路径（放在 data/ 目录，方便直接打开查看）──
 _FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-_SELF_NARRATIVE_FILE = os.path.join(_FILE_DIR, "data", "self_narrative.json")
+# data 统一放在 backend/modules/brain/data/（_FILE_DIR 是 .../memory/self_narrative，上两级到 brain）
+_BRAIN_DATA_DIR = os.path.dirname(os.path.dirname(_FILE_DIR))
+_SELF_NARRATIVE_FILE = os.path.join(_BRAIN_DATA_DIR, "data", "self_narrative.json")
 
 # ── 身份预算常量 ──────────────────────────────────────────
 IDENTITY_BUDGET = {

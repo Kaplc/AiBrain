@@ -397,3 +397,48 @@ NodeType → Drive：concept→curiosity, person→companionship, open_loop→co
 | S008 | pending_expression.py 改造（不存 content + 双路径） | S003, S001, S006 | M |
 | S009 | 搜索前 Concern 更新 + graph_recall bias（0.005+0.01）| S003, S007 | L |
 | S010-S014 | 各 prompt section | S003-S007 | S |
+
+---
+
+# 九、实施记录（2026-06-15）
+
+全部任务已实现并通过测试（`tests/brain/test_internal_state.py`，19 项全绿）。
+
+## 实现决策（落地时确定的细节）
+
+1. **模块位置**：放在 `backend/modules/brain/state/`（独立于 memory/，内部状态层 ≠ 记忆层）。data 统一在 `backend/modules/brain/data/`。
+2. **node_id = entity 名**：本系统里 node_id 就是 `entity_nodes.name`（图实体名主键），不另造合成 id。`resolve_name_to_node_id` 向 entity_nodes 校验存在性。
+3. **存储骨干 store.py**：`InternalState` 单例持内存 dict + RLock，各 Manager 用 `transaction()` 原子读改写（成功落盘、异常回滚到磁盘）。时间工具抽到 `times.py` 共用。
+4. **S010-S014 合并为一个 section**（`internal_state.py`）：避免 prompt 膨胀。身份注入仍归 self_narrative 节，本节只注入「最近在关注 / 还没想明白 / 想顺带提」。
+5. **Concern 激活在搜索之后**：搜索（graph_recall）跑在 handle_packagemem，早于 chat pipeline；故本节激活的 concern 到【下一轮】搜索才进 concern_bias。与人「先注意、后回忆被启动」一致，有意为之。
+6. **S009 偏置**：graph_recall 里用 `concern_bias_for_entities + goal_bias_for_entities` 替换原 `_cognitive_nodes`（self_narrative goals/interests +0.02）。
+7. **bias 归一化**：concern_bias（sum×0.005，max≈0.025）与 goal_bias（priority×0.01）权重本就极小，不压语义分，故不再额外归一化（plan 决策 #4 的「不压语义分」意图由小权重本身满足）。
+8. **S014 发送**：暂采用「编入回复」——`pick_to_send` 选中的 pending 作为轻提示注入 prompt，乐观 `mark_expressed` 记 24h 冷却（不写 output，因是编入回复而非单独消息）。真正的「主动单独消息」写 output.json 留待后续（需单独 LLM 生成 + UX 确认触发时机）。
+9. **refractory 类型**：interest（覆盖 recent/resurfacing 两条 concern 路径）与 open_loop 两类，key=`{type}:{node_id}`。
+10. **pending 无 content**：只存 source_node_id + expression_score 快照；content 由 LLM 实时生成。旧 `age_importance()` 双缩放 bug 随重写消失。
+
+## 文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `backend/modules/brain/state/store.py` | 新建（InternalState 单例 + 迁移 v5） |
+| `backend/modules/brain/state/times.py` | 新建（共用时间工具） |
+| `backend/modules/brain/state/concerns.py` | 新建（S003 核心） |
+| `backend/modules/brain/state/drives.py` | 新建（S001） |
+| `backend/modules/brain/state/goals.py` | 新建（S002） |
+| `backend/modules/brain/state/self_model.py` | 新建（S000） |
+| `backend/modules/brain/state/open_loops.py` | 新建（S004） |
+| `backend/modules/brain/state/working_set.py` | 新建（S005） |
+| `backend/modules/brain/state/expression_history.py` | 新建（S006） |
+| `backend/modules/brain/state/pending_expression.py` | 重写（S008） |
+| `backend/modules/brain/state/__init__.py` | 新建（get_* 转发单例） |
+| `backend/modules/brain/memory/pipeline/steps/search/graph_recall.py` | 改（concern+goal bias，S009） |
+| `backend/modules/chat/pipeline/sections/internal_state.py` | 新建（激活+注入，S010-S014 合并） |
+| `backend/modules/chat/pipeline/sections/__init__.py` | 改（注册 internal_state） |
+| `tests/brain/test_internal_state.py` | 新建（19 项数值测试） |
+
+## 待确认 / 后续
+
+- **`workmemory/data copy/` 残留**：旧的 Windows 副本（6/9–10 的 input/output/package.json），data 迁移时发现。未删（非我创建），建议确认后删除。
+- **主动单独消息**：S014 的「写 output.json 作为独立主动消息」未做，需确定触发时机与 UX（是否每轮可发、用户是否看到独立消息）。
+- **后端重启**：改了后端文件，需 `/overview/flask/restart` 重启，等日志 `AiBrain 系统初始化完成` + 1m 预热。
