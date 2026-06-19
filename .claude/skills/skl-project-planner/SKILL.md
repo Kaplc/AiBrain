@@ -23,7 +23,7 @@ description: 为新项目或新功能生成完整的项目计划文档（单个 
 
 ### 第二步：生成文档
 
-在 `.claude/plan/` 目录下生成**一个 Markdown 文件**，文件名根据项目内容取一个简短的英文名（如 `.claude/plan/user-auth-system.md`）。
+在 `plan/` 目录下生成**一个 Markdown 文件**，文件名根据项目内容取一个简短的英文名（如 `plan/user-auth-system.md`）。
 
 文件内部按以下 10 个章节组织，顺序固定，用 `# 一、项目目标` 这样的二级标题分隔：
 

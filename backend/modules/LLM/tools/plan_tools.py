@@ -1,7 +1,7 @@
 """
 plan_tools — 计划文件管理工具
 
-所有操作限制在 .claude/plan/ 目录下，不允许越权访问。
+所有操作限制在 plan/ 目录下，不允许越权访问。
 """
 import logging
 import os
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
-_PLAN_DIR = os.path.join(_PROJECT_ROOT, ".claude", "plan")
+_PLAN_DIR = os.path.join(_PROJECT_ROOT, "plan")
 
 
 def _vp(subpath: str) -> str | None:

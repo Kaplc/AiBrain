@@ -432,9 +432,11 @@ def _preload():
         from modules.LLM.tools.memory_tools import register_memory_tools
         from modules.LLM.tools.file_tools import register_file_tools
         from modules.LLM.tools.plan_tools import register_plan_tools
+        from modules.LLM.tools.skill_tools import register_skill_tools
         register_memory_tools()
         register_file_tools()
         register_plan_tools()
+        register_skill_tools()
         logger.info("Chat tools registered")
     except Exception as e:
         logger.warning(f"Chat tools registration failed (non-fatal): {e}")

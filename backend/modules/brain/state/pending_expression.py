@@ -19,6 +19,7 @@
 运行时计算，该 bug 随之消失。
 """
 import logging
+import threading
 
 from .store import get_state
 from . import times
@@ -34,6 +35,8 @@ AGE_GROWTH_PER_HOUR = 0.01           # age_score = min(1.0, hours×0.01)，100h 
 _PROACTIVE_SYSTEM = """你是{name}，一个数字生命体。
 性格：{traits}。
 {relationship}"""
+
+_SEND_LOCK = threading.Lock()  # 确保同一时间只有一个线程执行 proactive_send
 
 
 class PendingExpressionManager:
@@ -355,143 +358,148 @@ class PendingExpressionManager:
             force: True 时绕过 1h 冷却和 refractory 检查（手动按钮用），
                    直接拿最高分未表达 pending。写入冷却仍会做（防定时器重复）。
         Returns: 生成的文本，或 None（没有待发送的 pending）。
+
+        线程安全：用 _SEND_LOCK 保证同一时间只有一个线程执行完整
+        pick→LLM→mark_expressed 流程，防止多线程同时选中不同 pending 发送。
         """
-        pick = self.pick_to_send() if not force else self._pick_unexpressed_top()
-        if pick is None:
-            return None
-        logger.info(
-            f"[pending] proactive_send start: force={force} "
-            f"pick=({pick.get('source','')}/{pick.get('source_node_id','')}) "
-            f"score={pick.get('expression_score',0):.3f}"
-        )
+        with _SEND_LOCK:
+            pick = self.pick_to_send() if not force else self._pick_unexpressed_top()
+            if pick is None:
+                return None
 
-        # ── 综合状态 + 语义召回记忆 + LLM loop 反复查找 → 主动发起 ──
-        _trigger = pick.get("source", "")
-        _snid = pick.get("source_node_id", "")
-        try:
-            from .concerns import get_concerns
-            from .open_loops import get_open_loops
-        except Exception:
-            get_concerns = get_open_loops = None
-
-        # 1. 当前状态文本（concern + open_loop）
-        _state_lines = []
-        _query_parts = []
-        if get_concerns:
-            try:
-                _top = get_concerns().all_effective(3)
-                _names = [n for n, e in _top if e >= 0.1]
-                if _names:
-                    _query_parts.extend(_names)
-                    _state_lines.append("最近在意：" + "、".join(_names))
-            except Exception:
-                pass
-        if get_open_loops:
-            try:
-                _loops = get_open_loops().get_open()
-                if _loops:
-                    _lc = _loops[0].get("content", "")
-                    if _lc:
-                        _query_parts.append(_lc)
-                        _state_lines.append("没想明白：" + _lc)
-            except Exception:
-                pass
-        if _trigger == "concern" and _snid:
-            _query_parts.append(_snid)
-
-        # 1.5 最近聊天上下文（最新 4 轮对话）
-        _chat_lines = []
-        try:
-            from modules.brain.memory.workmemory import get_work_memory
-            _wm = get_work_memory()
-            if _wm:
-                _entries = _wm.output_mem_read()
-                _recent = _entries[-4:] if len(_entries) >= 4 else _entries
-                if _recent:
-                    _chat_lines.append("最近聊天：")
-                    for _e in _recent:
-                        if _e.get("user"):
-                            _chat_lines.append("用户：" + str(_e["user"])[:120])
-                        if _e.get("assistant"):
-                            _chat_lines.append("猫猫：" + str(_e["assistant"])[:120])
-                    _chat_lines.append("")
-                logger.info(
-                    f"[pending] chat_history: {len(_entries)} total, "
-                    f"{len(_recent)} injected into prompt"
-                )
-        except Exception as exc:
-            logger.warning(f"[pending] chat_history read failed: {exc}")
-
-        # 2. 初始语义召回一条鲜活记忆
-        _mem_lines = []
-        _first = self._recall_vivid_memory(" ".join(_query_parts[:5])) if _query_parts else None
-        if _first:
-            _mem_lines.append("- " + _first["what"] + "（感受：" + _first["affect_desc"] + "）")
-        _query_preview = " ".join(_query_parts[:5])
-        logger.info(
-            f"[pending] initial recall: query='{_query_preview}' "
-            f"found={'yes' if _first else 'no'}"
-        )
-
-        # 3. LLM loop：可反复 SEARCH 新关键词查记忆，直到想好要说的话（最多 3 轮）
-        _persona = self._build_persona()
-        _mood = self._current_mood()
-        _NL = chr(10)
-        content = None
-        for _round in range(3):
-            _mem_block = _NL.join(_mem_lines) if _mem_lines else "（暂无相关记忆）"
-            _state_block = "；".join(_state_lines) if _state_lines else "（无特别在意的）"
-            _chat_block = _NL.join(_chat_lines) + _NL if _chat_lines else ""
-            _system = (
-                _persona + "。此刻心情：" + _mood + "。"
-                "你要主动发起一个话题和用户聊天。"
-                "如果有相关记忆帮你想起具体内容，就基于它自然开口；"
-                "如果觉得记忆不够、想再回忆更多，回复一行：SEARCH: 关键词（只写关键词）；"
-                "如果已经想好，直接回复那句话（口语自然，30字以内，像真人随口开口）。"
-            )
-            _user = (
-                _chat_block
-                + "当前状态：" + _NL + _state_block + _NL + _NL
-                + "相关记忆：" + _NL + _mem_block + _NL + _NL
-                + "现在主动开口吧——想聊什么？（需要更多回忆就回复 SEARCH: 关键词）"
-            )
             logger.info(
-                f"[pending] LLM round {_round}: system={len(_system)}chars "
-                f"user={len(_user)}chars, "
-                f"state={_state_block[:80]}, memories={len(_mem_lines)} items"
+                f"[pending] proactive_send start: force={force} "
+                f"pick=({pick.get('source','')}/{pick.get('source_node_id','')}) "
+                f"score={pick.get('expression_score',0):.3f}"
             )
-            try:
-                from modules.brain.llm import call_llm
-                reply = call_llm(_system, _user, timeout=20).strip()
-            except Exception as e:
-                logger.warning(f"[pending] proactive LLM round {_round} failed: {e}")
-                break
-            if reply.upper().startswith("SEARCH:"):
-                _kw = reply.split(":", 1)[1].strip().strip(chr(34)).strip(chr(39))
-                if _kw:
-                    _more = self._recall_vivid_memory(_kw)
-                    if _more:
-                        _mem_lines.append("- " + _more["what"] + "（感受：" + _more["affect_desc"] + "）")
-                    logger.info(f"[pending] round {_round} SEARCH: {_kw} -> {'found' if _more else 'none'}")
-                else:
-                    logger.info(f"[pending] round {_round} SEARCH: empty keyword, skipped")
-                continue
-            content = reply.strip().strip(chr(34)).strip(chr(39))
-            logger.info(f"[pending] LLM round {_round} done: content={content[:80]}")
-            break
 
-        if not content:
-            content = ("突然想起，" + _first["what"][:18] + "……") if _first else f"突然想到{_snid}……"
-            logger.info(f"[pending] fallback content (LLM exhausted): {content[:60]}")
-        content = content[:120]
-        self._proactive_buffer.append({
-            "content": content,
-            "source": _trigger,
-            "source_node_id": _snid,
-        })
-        self.mark_expressed(pick["id"])
-        logger.info(f"[pending] proactive_send done: cached='{content[:60]}'")
-        return content
+            # ── 综合状态 + 语义召回记忆 + LLM loop 反复查找 → 主动发起 ──
+            _trigger = pick.get("source", "")
+            _snid = pick.get("source_node_id", "")
+            try:
+                from .concerns import get_concerns
+                from .open_loops import get_open_loops
+            except Exception:
+                get_concerns = get_open_loops = None
+
+            # 1. 当前状态文本（concern + open_loop）
+            _state_lines = []
+            _query_parts = []
+            if get_concerns:
+                try:
+                    _top = get_concerns().all_effective(3)
+                    _names = [n for n, e in _top if e >= 0.1]
+                    if _names:
+                        _query_parts.extend(_names)
+                        _state_lines.append("最近在意：" + "、".join(_names))
+                except Exception:
+                    pass
+            if get_open_loops:
+                try:
+                    _loops = get_open_loops().get_open()
+                    if _loops:
+                        _lc = _loops[0].get("content", "")
+                        if _lc:
+                            _query_parts.append(_lc)
+                            _state_lines.append("没想明白：" + _lc)
+                except Exception:
+                    pass
+            if _trigger == "concern" and _snid:
+                _query_parts.append(_snid)
+
+            # 1.5 最近聊天上下文（最新 4 轮对话）
+            _chat_lines = []
+            try:
+                from modules.brain.memory.workmemory import get_work_memory
+                _wm = get_work_memory()
+                if _wm:
+                    _entries = _wm.output_mem_read()
+                    _recent = _entries[-4:] if len(_entries) >= 4 else _entries
+                    if _recent:
+                        _chat_lines.append("最近聊天：")
+                        for _e in _recent:
+                            if _e.get("user"):
+                                _chat_lines.append("用户：" + str(_e["user"])[:120])
+                            if _e.get("assistant"):
+                                _chat_lines.append("猫猫：" + str(_e["assistant"])[:120])
+                        _chat_lines.append("")
+                    logger.info(
+                        f"[pending] chat_history: {len(_entries)} total, "
+                        f"{len(_recent)} injected into prompt"
+                    )
+            except Exception as exc:
+                logger.warning(f"[pending] chat_history read failed: {exc}")
+
+            # 2. 初始语义召回一条鲜活记忆
+            _mem_lines = []
+            _first = self._recall_vivid_memory(" ".join(_query_parts[:5])) if _query_parts else None
+            if _first:
+                _mem_lines.append("- " + _first["what"] + "（感受：" + _first["affect_desc"] + "）")
+            _query_preview = " ".join(_query_parts[:5])
+            logger.info(
+                f"[pending] initial recall: query='{_query_preview}' "
+                f"found={'yes' if _first else 'no'}"
+            )
+
+            # 3. LLM loop：可反复 SEARCH 新关键词查记忆，直到想好要说的话（最多 3 轮）
+            _persona = self._build_persona()
+            _mood = self._current_mood()
+            _NL = chr(10)
+            content = None
+            for _round in range(3):
+                _mem_block = _NL.join(_mem_lines) if _mem_lines else "（暂无相关记忆）"
+                _state_block = "；".join(_state_lines) if _state_lines else "（无特别在意的）"
+                _chat_block = _NL.join(_chat_lines) + _NL if _chat_lines else ""
+                _system = (
+                    _persona + "。此刻心情：" + _mood + "。"
+                    "你要主动发起一个话题和用户聊天。"
+                    "如果有相关记忆帮你想起具体内容，就基于它自然开口；"
+                    "如果觉得记忆不够、想再回忆更多，回复一行：SEARCH: 关键词（只写关键词）；"
+                    "如果已经想好，直接回复那句话（口语自然，30字以内，像真人随口开口）。"
+                )
+                _user = (
+                    _chat_block
+                    + "当前状态：" + _NL + _state_block + _NL + _NL
+                    + "相关记忆：" + _NL + _mem_block + _NL + _NL
+                    + "现在主动开口吧——想聊什么？（需要更多回忆就回复 SEARCH: 关键词）"
+                )
+                logger.info(
+                    f"[pending] LLM round {_round}: system={len(_system)}chars "
+                    f"user={len(_user)}chars, "
+                    f"state={_state_block[:80]}, memories={len(_mem_lines)} items"
+                )
+                try:
+                    from modules.brain.llm import call_llm
+                    reply = call_llm(_system, _user, timeout=20).strip()
+                except Exception as e:
+                    logger.warning(f"[pending] proactive LLM round {_round} failed: {e}")
+                    break
+                if reply.upper().startswith("SEARCH:"):
+                    _kw = reply.split(":", 1)[1].strip().strip(chr(34)).strip(chr(39))
+                    if _kw:
+                        _more = self._recall_vivid_memory(_kw)
+                        if _more:
+                            _mem_lines.append("- " + _more["what"] + "（感受：" + _more["affect_desc"] + "）")
+                        logger.info(f"[pending] round {_round} SEARCH: {_kw} -> {'found' if _more else 'none'}")
+                    else:
+                        logger.info(f"[pending] round {_round} SEARCH: empty keyword, skipped")
+                    continue
+                content = reply.strip().strip(chr(34)).strip(chr(39))
+                logger.info(f"[pending] LLM round {_round} done: content={content[:80]}")
+                break
+
+            if not content:
+                content = ("突然想起，" + _first["what"][:18] + "……") if _first else f"突然想到{_snid}……"
+                logger.info(f"[pending] fallback content (LLM exhausted): {content[:60]}")
+            content = content[:120]
+            self._proactive_buffer.append({
+                "content": content,
+                "source": _trigger,
+                "source_node_id": _snid,
+            })
+            self.mark_expressed(pick["id"])
+            logger.info(f"[pending] proactive_send done: cached='{content[:60]}'")
+            return content
 
     def flush_proactive_buffer(self) -> int:
         """空闲时将缓存中的主动消息写入 output.json。Returns: 写入条数。"""
