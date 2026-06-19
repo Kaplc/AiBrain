@@ -21,7 +21,8 @@ except ImportError:
 logger = logging.getLogger('graph')
 
 _GRAPH_DB_PATH = os.path.join(
-    os.path.expanduser("~"), ".aibrain", "data", "memory_graph.db"
+    os.path.dirname(os.path.abspath(__file__)),
+    "data", "memory_graph.db"
 )
 
 _INSTANCE = None

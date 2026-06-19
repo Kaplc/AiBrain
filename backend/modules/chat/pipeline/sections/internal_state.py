@@ -34,14 +34,14 @@ def _collect_entities(ctx: PromptContext) -> list[str]:
     return list(dict.fromkeys(ents))
 
 
-def _activate_and_collect(top_entities: list[str]) -> tuple[list, list, dict | None]:
-    """激活 concern、刷 working_set、生成 pending；返回 (top_concerns, open_loops, pick)。"""
+def _activate_and_collect(top_entities: list[str]) -> tuple[list, list]:
+    """激活 concern、刷 working_set、生成 pending；返回 (top_concerns, open_loops)。"""
     try:
         from modules.brain.state import (
             get_concerns, get_working_set, get_open_loops, get_pending,
         )
     except Exception:
-        return ([], [], None)
+        return ([], [])
 
     concerns = get_concerns()
     for ent in top_entities[:8]:
@@ -51,34 +51,16 @@ def _activate_and_collect(top_entities: list[str]) -> tuple[list, list, dict | N
     for ent in top_entities[:5]:
         ws.upsert("node", ent, score=0.6, source="search_hit")
 
+    # 生成 pending（但不在这里发送；proactive_send 在回复后的后台线程里处理）
     get_pending().evaluate_and_generate()
-    pick = get_pending().pick_to_send()
-    if pick:
-        # 注入提示后乐观标记已表达（记录 24h 冷却），不写 output（编入回复而非单独消息）
-        get_pending().mark_expressed(pick["id"])
 
-    return (concerns.all_effective(5), get_open_loops().summary_lines(3), pick)
-
-
-def _build_hint(pick: dict) -> str:
-    """把选中的 pending 意图转成给 LLM 的轻提示。"""
-    try:
-        from modules.brain.state import get_open_loops
-    except Exception:
-        get_open_loops = None
-    if pick.get("source") == "open_loop" and get_open_loops:
-        for loop in get_open_loops().get_open():
-            if loop.get("id") == pick.get("source_node_id") and loop.get("content"):
-                return f"有个一直没想明白的问题想顺带聊聊：{loop['content']}"
-        return "有个一直没想明白的问题想顺带聊聊。"
-    node = pick.get("source_node_id", "")
-    return f"最近一直在意「{node}」，回复时可以自然地提一下。" if node else ""
+    return (concerns.all_effective(5), get_open_loops().summary_lines(3))
 
 
 def execute(ctx: PromptContext) -> None:
     try:
         top_ents = _collect_entities(ctx)
-        top_concerns, loop_lines, pick = _activate_and_collect(top_ents)
+        top_concerns, loop_lines = _activate_and_collect(top_ents)
 
         lines = []
         # top concerns：只列有效激活值 >=0.1 的（身份/自我由 self_narrative 节负责，不重复）
@@ -88,11 +70,6 @@ def execute(ctx: PromptContext) -> None:
 
         if loop_lines:
             lines.append("还没想明白：\n" + "\n".join(loop_lines))
-
-        if pick:
-            hint = _build_hint(pick)
-            if hint:
-                lines.append(hint)
 
         if lines:
             ctx.add_section("内心状态", "\n".join(lines))

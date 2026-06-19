@@ -50,7 +50,10 @@ models.zip
 backend/qdrant/config/config.yaml
 .claude/settings.local.json
 .mem0_migrated
-.codebuddy/scheduled_tasks.lockrag/lightrag_data/
+.codebuddy/scheduled_tasks.lock
+rag/lightrag_data/
+# 运行时数据（对话历史、搜索结果、状态文件、图数据库）
+backend/modules/brain/data/
 rag/lightrag_data/
 .claude\settings.local.jsonmem0/
 .claude/hookmd

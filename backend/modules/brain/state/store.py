@@ -24,7 +24,8 @@ from contextlib import contextmanager
 logger = logging.getLogger('state')
 
 _STATE_PATH = os.path.join(
-    os.path.expanduser("~"), ".aibrain", "data", "internal_state.json"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "internal_state.json"
 )
 CURRENT_VERSION = 5
 

@@ -9,6 +9,7 @@ tools_enabled=False 时走原有流式路径（行为完全不变）。
 from __future__ import annotations
 import json
 import logging
+import threading
 import time
 from typing import Iterator
 
@@ -23,6 +24,18 @@ _conversation_history: list[dict] = []
 _tool_memory: list[dict] = []  # 最近一轮 Tool Loop 的工具消息，不落盘
 
 logger = logging.getLogger(__name__)
+
+
+def _try_proactive_send():
+    """回复结束后闲时触发：不阻塞、不等待、不抛异常。"""
+    try:
+        from modules.brain.state import get_pending
+        p = get_pending()
+        sent = p.proactive_send()
+        logger.info(f"[chat_loop] _try_proactive_send: {'sent' if sent else 'nothing to send'}")
+    except Exception as e:
+        logger.warning(f"[chat_loop] _try_proactive_send error: {e}")
+
 
 
 def _set_status(s: str):
@@ -99,13 +112,12 @@ def send_message(
         except Exception as e:
             logger.warning(f"[loop] history load failed: {e}")
 
-        # 0.1 写入工作记忆 + (非工具模式时) 触发 package 搜索
+        # 0.1 写入工作记忆 + 触发 package 搜索
         _set_status("分析记忆")
         try:
             from modules.brain.memory.workmemory import get_work_memory
             wm = get_work_memory()
-            wm.input_mem_write(prompt)
-            wm.handle_packagemem()
+            wm.handle_packagemem(query=prompt)
             logger.info("[loop] workmemory updated")
         except Exception as e:
             logger.warning(f"[loop] workmemory update failed: {e}")
@@ -181,6 +193,7 @@ def send_message(
             logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
             pre_tool_len = len(msgs)
             yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
+            threading.Thread(target=_try_proactive_send, daemon=True).start()
             return
 
         # ════════════════════════════════════════════════════════
@@ -235,6 +248,7 @@ def send_message(
             logger.warning(f"[loop] output_mem_write failed: {e}")
 
         logger.info(f"[loop] LLM done: tokens={token_count} total_chars={len(assistant_text)}")
+        threading.Thread(target=_try_proactive_send, daemon=True).start()
         yield {"type": "done"}
 
     except Exception as e:

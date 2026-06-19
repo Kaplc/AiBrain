@@ -62,6 +62,15 @@ function scrollToBottom() {
   })
 }
 
+const proactiveLoading = ref(false)
+
+async function handleProactive() {
+  if (proactiveLoading.value) return
+  proactiveLoading.value = true
+  await chatViewModel.triggerProactive()
+  proactiveLoading.value = false
+}
+
 async function handleSend() {
   let text = inputText.value.trim()
   if (!text || chatViewModel.sending.value) return
@@ -379,6 +388,12 @@ function formatMsgTime(time: string): string {
         :disabled="!inputText.trim()"
         title="发送"
       >➤</button>
+      <button
+        class="proactive-btn"
+        @click="handleProactive"
+        :disabled="proactiveLoading"
+        title="猫猫主动说一句"
+      >💬</button>
     </div>
 
     <!-- Token 用量 -->
@@ -767,6 +782,28 @@ function formatMsgTime(time: string): string {
   background: #dc2626;
 }
 .stop-btn:hover { background: #b91c1c; }
+
+.proactive-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.proactive-btn:hover:not(:disabled) {
+  background: #334155;
+  color: #e2e8f0;
+  border-color: #7c3aed;
+}
+.proactive-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── 滚动到底部按钮 ── */
 .scroll-bottom-btn {

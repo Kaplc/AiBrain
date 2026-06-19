@@ -1,21 +1,17 @@
 """
 WorkMemory - 工作记忆管理器（单例）
 管理 data/ 目录下的 .json / .md 文件作为工作记忆。
-- input.json：输入记忆（JSON 数组）
+- output.json：对话记录
 - package.json：搜索结果（JSON 对象）
-- output.md：对话历史（Markdown，供前端直接读取）
 
 外部访问：
     from modules.brain.memory.workmemory import get_work_memory
     wm = get_work_memory()
-    wm.input_mem_write("新的记忆")
-    entries = wm.input_mem_read()
 """
 from __future__ import annotations
 import json
 import logging
 import os
-import re
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -27,8 +23,8 @@ logger = logging.getLogger(__name__)
 # 工作记忆文件存储根目录（统一放在 backend/modules/brain/data/，上三级到 brain）
 _BASE_DIR = Path(__file__).parent.parent.parent / "data"
 
-# 默认文件（input/package 用 JSON，output 保留 Markdown 供前端读取）
-DEFAULT_FILES = ["input.json", "output.json", "package.json"]
+# 默认文件
+DEFAULT_FILES = ["output.json", "package.json"]
 
 
 @dataclass
@@ -233,73 +229,6 @@ class WorkMemoryManager:
                     continue
         return results
 
-    # ── input.json 专用方法 ─────────────────────────────
-
-    def input_mem_write(self, content: str) -> dict:
-        """向 input.json 滚动追加条目，超过 20 条自动删除最旧
-
-        Args:
-            content: 要追加的内容
-
-        Returns:
-            {"total": 条目数, "appended": content, "removed": 删除的条目数}
-        """
-        fpath = _BASE_DIR / "input.json"
-        entries = []
-        if fpath.exists():
-            try:
-                raw = fpath.read_text(encoding="utf-8")
-                if raw.strip():
-                    entries = json.loads(raw)
-            except (json.JSONDecodeError, Exception):
-                entries = []
-        if not isinstance(entries, list):
-            entries = []
-
-        # 计算最大序号
-        max_seq = max((e.get("seq", 0) for e in entries), default=0)
-        seq = max_seq + 1
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entries.append({"seq": seq, "content": content, "time": ts})
-
-        # 超出 20 条，删最旧
-        removed = 0
-        while len(entries) > 20:
-            entries.pop(0)
-            removed += 1
-
-        fpath.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._refresh_registry("input.json")
-        logger.info(f"[workmemory] input_mem_write: total={len(entries)} removed={removed}")
-
-        return {
-            "total": len(entries),
-            "appended": content,
-            "removed": removed,
-        }
-
-    def input_mem_read(self) -> list[dict]:
-        """读取 input.json 全部条目
-
-        Returns:
-            [{"seq": 1, "content": "...", "time": "..."}, ...]
-        """
-        fpath = _BASE_DIR / "input.json"
-        if not fpath.exists():
-            return []
-        try:
-            raw = fpath.read_text(encoding="utf-8")
-            if not raw.strip():
-                return []
-            entries = json.loads(raw)
-            if not isinstance(entries, list):
-                return []
-            return entries
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"[workmemory] input.json parse failed: {e}")
-            return []
-
     # ── output.json 专用方法 ──────────────────────────────
 
     def output_mem_write(self, content: str, user_prompt: str = "") -> dict:
@@ -418,23 +347,28 @@ class WorkMemoryManager:
             logger.warning(f"[workmemory] package.json parse failed: {e}")
             return {"results": [], "query": ""}
 
-    def handle_packagemem(self) -> dict:
+    def handle_packagemem(self, query: str = "") -> dict:
         """搜索长期记忆并写入 package.json
 
-        流程：读 input → 直接用用户原话向量搜索 → 写 package.json
+        流程：用用户原话向量搜索 → 写 package.json
+
+        Args:
+            query: 当前用户输入的文本，为空时从 output.json 取最新 user 消息
 
         Returns:
             {"query": str, "result_count": int, "package_size": int, "keyword_queries": [str]}
         """
-        # 1. 读 input 全部条目
-        entries = self.input_mem_read()
-        if not entries:
-            logger.info("[workmemory] handle_packagemem: input is empty")
-            return {"query": "", "result_count": 0, "package_size": 0, "keyword_queries": []}
+        # 1. 确定搜索词
+        if not query:
+            outputs = self.output_mem_read()
+            if outputs and outputs[-1].get("user"):
+                query = outputs[-1]["user"]
+            else:
+                logger.info("[workmemory] handle_packagemem: no input to search")
+                return {"query": "", "result_count": 0, "package_size": 0, "keyword_queries": []}
 
-        # 2. 直接用用户原话进行向量搜索
+        search_query = query
         all_results = []
-        search_query = entries[-1]["content"]
         from modules.brain.memory.core import search_memory
         try:
             results = search_memory(search_query)
@@ -454,7 +388,7 @@ class WorkMemoryManager:
 
         # 3. 判断搜索结果是否足够，不够则精炼后重搜
         try:
-            current = entries[-1]["content"]
+            current = search_query
             outputs = self.output_mem_read()
             conversation = []
             for o in outputs[-6:]:
@@ -544,13 +478,12 @@ class WorkMemoryManager:
     # ── 打包读取（占位） ─────────────────────────────────
 
     def get_workmem(self) -> dict:
-        """打包读取 input + output + package
+        """打包读取 output + package
 
         Returns:
-            {"input": [{seq, content, time}], "output": [{seq, content, time}], "package": {query, results}}
+            {"output": [{seq, content, time}], "package": {query, results}}
         """
         return {
-            "input": self.input_mem_read(),
             "output": self.output_mem_read(),
             "package": self.package_mem_read(),
         }

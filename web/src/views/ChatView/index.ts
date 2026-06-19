@@ -45,6 +45,8 @@ export class ChatViewModel {
 
   private _abortCtl: AbortController | null = null
   private _pollTimer: ReturnType<typeof setInterval> | null = null
+  private _pollMsgTimer: ReturnType<typeof setInterval> | null = null
+  private _msgCountOnLastLoad = 0
   private _toast = useToast()
   private _scrollFn: (() => void) | null = null
 
@@ -93,17 +95,66 @@ export class ChatViewModel {
     }
   }
 
-  /* startStatePolling：开启状态轮询（每 10s） */
+  /* startStatePolling：开启状态轮询（每 10s） + 消息轮询（每 30s） */
   startStatePolling(): void {
     this.loadState()
     this._pollTimer = setInterval(() => this.loadState(), 10000)
+    // 后台主动消息轮询——只在非 streaming 时刷新，避免冲掉流式回复
+    this._msgCountOnLastLoad = this.messages.length
+    this._pollMsgTimer = setInterval(() => {
+      if (this.messages.length > 0 && this.messages[this.messages.length - 1].isStreaming) {
+        return  // 正在流式回复中，不刷新
+      }
+      this._loadMessagesSilent()
+    }, 30000)
   }
 
-  /* stopStatePolling：停止状态轮询 */
+  private async _loadMessagesSilent(): Promise<void> {
+    try {
+      const resp = await fetch(`${API_BASE}/chat/history`)
+      const data = await resp.json()
+      if (!data.messages) return
+      // 只在消息条数或最后一条内容有变化时才更新
+      const last = data.messages[data.messages.length - 1]
+      const myLast = this.messages[this.messages.length - 1]
+      if (data.messages.length !== this.messages.length ||
+          last?.content !== myLast?.content) {
+        this.messages.splice(0, this.messages.length)
+        for (const m of data.messages) {
+          this.messages.push({
+            role: m.role,
+            content: m.content,
+            created_at: m.created_at,
+            isStreaming: false,
+          })
+        }
+        this._scrollToBottom()
+      }
+    } catch {
+      // 静默失败
+    }
+  }
+
+  /* stopStatePolling：停止所有轮询 */
   stopStatePolling(): void {
     if (this._pollTimer) {
       clearInterval(this._pollTimer)
       this._pollTimer = null
+    }
+    if (this._pollMsgTimer) {
+      clearInterval(this._pollMsgTimer)
+      this._pollMsgTimer = null
+    }
+  }
+
+  /* triggerProactive：触发猫猫主动消息 */
+  async triggerProactive(): Promise<void> {
+    try {
+      await fetch(`${API_BASE}/chat/proactive`, { method: 'POST' })
+      // 触发后立即刷新消息列表（轮询 30s 间隔太长）
+      await this._loadMessagesSilent()
+    } catch (e) {
+      console.error('[chat] proactive trigger failed:', e)
     }
   }
 

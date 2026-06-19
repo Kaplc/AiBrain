@@ -402,6 +402,31 @@ def _preload():
     except Exception as e:
         logger.warning(f"[daily_reflect] scheduler failed (non-fatal): {e}")
 
+    # 后台主动消息定时器（每 2 分钟检查一次 pending 表达）
+    # 先生成缓存，再刷入 output（proactive_send 内部有 1h 冷却守卫）
+    try:
+        def _proactive_loop():
+            import time as _t
+            import logging as _lg
+            _log = _lg.getLogger('app.proactive')
+            while True:
+                try:
+                    from modules.brain.state import get_pending
+                    p = get_pending()
+                    p.evaluate_and_generate()  # 定期扫描 concern/loop 生成 pending
+                    sent = p.proactive_send()
+                    flushed = p.flush_proactive_buffer()
+                    if sent or flushed:
+                        _log.info(f"[proactive_tick] sent={'yes' if sent else 'no'} flushed={flushed}")
+                except Exception as e:
+                    _log.warning(f"[proactive_tick] error: {e}", exc_info=True)
+                _t.sleep(120)
+
+        threading.Thread(target=_proactive_loop, daemon=True).start()
+        logger.info("[proactive_send] scheduler started (120s interval)")
+    except Exception as e:
+        logger.warning(f"[proactive_send] scheduler failed (non-fatal): {e}")
+
     # 初始化 Chat 工具注册表
     try:
         from modules.LLM.tools.memory_tools import register_memory_tools

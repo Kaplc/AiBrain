@@ -126,3 +126,31 @@ def register(app, ready_state, logger, stats_db):
         from modules.chat import ChatManager
         mgr = ChatManager.get_instance()
         return jsonify(mgr.get_loop_state())
+
+    @app.route('/chat/proactive', methods=['POST'])
+    def trigger_proactive():
+        """手动触发猫猫主动消息：生成 + 写 output.json 给用户（强制发送，不受冷却限制）"""
+        try:
+            from modules.brain.state import get_pending, get_concerns, get_drives
+            p = get_pending()
+            # 先生成 pending
+            p.evaluate_and_generate()
+            # 手动触发：强制发送，绕过 1h 冷却和 refractory
+            content = p.proactive_send(force=True)
+            # 如果没有未表达 pending，从最高 concern 临时建一个再发
+            if content is None:
+                top = get_concerns().all_effective(1)
+                if top:
+                    node_id, eff = top[0]
+                    drive = get_drives().drive_for_node(node_id)
+                    score = round(eff * drive, 4)
+                    p._create("recent_interest", node_id, score, source="concern")
+                    content = p.proactive_send(force=True)
+            if content is None:
+                return jsonify({"sent": False, "content": None, "reason": "nothing to say"})
+            # 立即刷入 output.json
+            flushed = p.flush_proactive_buffer()
+            return jsonify({"sent": flushed > 0, "content": content})
+        except Exception as e:
+            logger.warning(f"[chat] proactive trigger failed: {e}")
+            return jsonify({"sent": False, "error": str(e)})
