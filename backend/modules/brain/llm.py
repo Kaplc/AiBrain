@@ -74,19 +74,12 @@ ENTITY_EXTRACT_PROMPT = """从文本中提取核心节点（1-5个），并判�
 
 
 def _load_llm_config() -> dict:
-    """从 ~/.aibrain/config/mem0.json 读取 LLM 配置"""
-    import json, os
-    path = os.path.expanduser("~/.aibrain/config/mem0.json")
-    cfg = {}
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            pass
+    """从 llm.json 读取 LLM 配置（设置→LLM 页面配的）"""
+    from core.settings import ConfigManager
+    cfg = ConfigManager.get_instance().read_llm()
     return {
-        "provider": cfg.get("llm_provider", "openai"),
-        "model": cfg.get("llm_model", "gpt-4o-mini"),
+        "provider": cfg.get("provider", "openai"),
+        "model": cfg.get("model", "gpt-4o-mini"),
         "api_key": cfg.get("api_key", ""),
         "base_url": cfg.get("base_url", ""),
     }

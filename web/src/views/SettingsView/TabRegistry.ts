@@ -38,7 +38,8 @@ export function getAllTabs(): TabDef[] {
 
 // ===== 导入即注册 =====
 import './ModelTab/ModelTab'
-import './Mem0Tab/Mem0Tab'
-import './WikiTab/WikiTab'
+// import './Mem0Tab/Mem0Tab'
+// import './WikiTab/WikiTab'
 import './LLMTab/LLMTab'
-import './ChatTab/ChatTab'
+// import './ChatTab/ChatTab'
+// import './StatsTab/StatsTab'

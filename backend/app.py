@@ -85,10 +85,15 @@ from routes.stream_routes import register as reg_stream
 from routes.statusbar_routes import register as reg_statusbar
 from routes.logs_routes import register as reg_logs
 from routes.settings_routes import register as reg_settings
-from routes.wiki_routes import register as reg_wiki
+try:
+    from routes.wiki_routes import register as reg_wiki
+except Exception as _wiki_err:
+    logger.warning(f"[app] wiki_routes import failed (wiki disabled): {_wiki_err}")
+    reg_wiki = None
 from routes.stats_routes import register as reg_stats
 from routes.chat_routes import register as reg_chat
 from routes.narrative_routes import register as reg_narrative
+from routes.brain_routes import register as reg_brain
 
 reg_overview(app, _ready, logger, stats_db)
 reg_memory(app, _ready, logger, stats_db)
@@ -96,10 +101,15 @@ reg_stream(app, _ready, logger, stats_db)
 reg_statusbar(app, _ready, logger, stats_db)
 reg_logs(app, _ready, logger, stats_db)
 reg_settings(app, _ready, logger, stats_db, settings_mgr, model_mgr)
-reg_wiki(app, _ready, logger, stats_db)
+if reg_wiki:
+    try:
+        reg_wiki(app, _ready, logger, stats_db)
+    except Exception as _wiki_reg_err:
+        logger.warning(f"[app] wiki_routes register failed (wiki disabled): {_wiki_reg_err}")
 reg_stats(app, _ready, logger, stats_db)
 reg_chat(app, _ready, logger, stats_db)
 reg_narrative(app, _ready, logger, stats_db)
+reg_brain(app, _ready, logger, stats_db)
 
 # 初始化 RebuildService（实体网络重建）单例
 from core.rebuild_service import RebuildService
@@ -127,8 +137,10 @@ def index():
 @app.route('/wiki')
 @app.route('/console')
 @app.route('/memory')
+@app.route('/stats')
 @app.route('/settings')
 @app.route('/chat')
+@app.route('/brain')
 def spa_shortcut():
     """前端路由快捷方式：无 / 前缀时转发到 SPA"""
     from flask import request
@@ -308,14 +320,7 @@ def _preload():
         except Exception as e:
             logger.error(f"Failed to sync qdrant count: {e}")
 
-    # 等待 mem0 独立服务就绪
-        try:
-            from modules.brain.mem0_adapter import get_mem0_client
-            client = get_mem0_client()
-            health = client.health()
-            logger.info(f"mem0 service connected: {health}")
-        except Exception as e:
-            logger.warning(f"mem0 service not ready yet (non-fatal): {e}")
+    # mem0 已移除，跳过
 
         # 自动迁移旧记忆
         try:
@@ -402,30 +407,28 @@ def _preload():
     except Exception as e:
         logger.warning(f"[daily_reflect] scheduler failed (non-fatal): {e}")
 
-    # 后台主动消息定时器（每 2 分钟检查一次 pending 表达）
-    # 先生成缓存，再刷入 output（proactive_send 内部有 1h 冷却守卫）
-    try:
-        def _proactive_loop():
-            import time as _t
-            import logging as _lg
-            _log = _lg.getLogger('app.proactive')
-            while True:
-                try:
-                    from modules.brain.state import get_pending
-                    p = get_pending()
-                    p.evaluate_and_generate()  # 定期扫描 concern/loop 生成 pending
-                    sent = p.proactive_send()
-                    flushed = p.flush_proactive_buffer()
-                    if sent or flushed:
-                        _log.info(f"[proactive_tick] sent={'yes' if sent else 'no'} flushed={flushed}")
-                except Exception as e:
-                    _log.warning(f"[proactive_tick] error: {e}", exc_info=True)
-                _t.sleep(120)
-
-        threading.Thread(target=_proactive_loop, daemon=True).start()
-        logger.info("[proactive_send] scheduler started (120s interval)")
-    except Exception as e:
-        logger.warning(f"[proactive_send] scheduler failed (non-fatal): {e}")
+    # 旧后台主动消息定时器（已由 LifeLoopDaemon 替代，保留注释便于回滚）
+    # try:
+    #     def _proactive_loop():
+    #         import time as _t
+    #         import logging as _lg
+    #         _log = _lg.getLogger('app.proactive')
+    #         while True:
+    #             try:
+    #                 from modules.brain.state import get_pending
+    #                 p = get_pending()
+    #                 p.evaluate_and_generate()
+    #                 sent = p.proactive_send()
+    #                 flushed = p.flush_proactive_buffer()
+    #                 if sent or flushed:
+    #                     _log.info(f"[proactive_tick] sent={'yes' if sent else 'no'} flushed={flushed}")
+    #             except Exception as e:
+    #                 _log.warning(f"[proactive_tick] error: {e}", exc_info=True)
+    #             _t.sleep(120)
+    #     threading.Thread(target=_proactive_loop, daemon=True).start()
+    #     logger.info("[proactive_send] scheduler started (120s interval)")
+    # except Exception as e:
+    #     logger.warning(f"[proactive_send] scheduler failed (non-fatal): {e}")
 
     # 初始化 Chat 工具注册表
     try:
@@ -446,14 +449,33 @@ def _preload():
         from modules.chat import ChatManager
         from core.settings import ConfigManager
         mgr = ChatManager.get_instance()
-        chat_cfg = ConfigManager.get_instance().read_chat()
-        mgr.load_config(chat_cfg)
+        llm_cfg = ConfigManager.get_instance().read_llm()
+        mgr.load_config(llm_cfg)
         # 启动空闲思绪后台线程
-        mgr.init_agentloop(stats_db, chat_cfg)
+        mgr.init_agentloop(stats_db, llm_cfg)
 
         logger.info("ChatManager initialized")
     except Exception as e:
         logger.warning(f"ChatManager init failed (non-fatal): {e}")
+
+    # ── 初始化 main_brain 配置 + 可选启动常驻生命循环 ───────
+    try:
+        from main_brain.config import ensure_default_config, get_brain_config
+        ensure_default_config()
+        bcfg = get_brain_config()
+        bcfg.reload()
+        logger.info(
+            f"[main_brain] config ready: session={bcfg.session_enabled} "
+            f"life_loop={bcfg.life_loop_enabled} proactive={bcfg.proactive_enabled} "
+            f"autonomy={bcfg.autonomy_level}"
+        )
+        # 默认 life_loop_enabled=False，靠 /brain/life/start 手动启动
+        if bcfg.life_loop_enabled:
+            from main_brain import get_life_loop_daemon
+            get_life_loop_daemon().start()
+            logger.info("[main_brain] LifeLoopDaemon auto-started")
+    except Exception as e:
+        logger.warning(f"[main_brain] init failed (non-fatal): {e}")
 
     # 预加载 LightRAG 引擎（避免首次搜索请求时才初始化）
     try:

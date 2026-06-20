@@ -32,7 +32,7 @@ class PerceptionResult:
 | 能力 | 现有位置 | 用法 |
 |---|---|---|
 | 实体图谱 | `backend/modules/brain/graph.py` | 校验和规范化实体名 |
-| 记忆结果实体 | `chat/pipeline/sections/association_recall.py` | 复用实体收集思路 |
+| 记忆结果实体 | `backend/modules/chat/pipeline/sections/association_recall.py` | 复用实体收集思路 |
 | LLM 实体抽取 | `backend/modules/brain/llm.py` | P1 以后可作为可选增强 |
 
 ## 五、流程
@@ -49,7 +49,7 @@ BrainEvent
 ## 六、文件清单
 
 ```text
-backend/modules/brain/layers/perception/
+backend/main_brain/perception/
   __init__.py
   result.py
   intent.py

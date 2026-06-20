@@ -74,10 +74,9 @@ class LLMConfig:
 
     @classmethod
     def from_settings(cls) -> "LLMConfig":
-        """从全局设置加载 LLM 配置"""
+        """从全局设置加载 LLM 配置（llm.json，设置→LLM 页面配的）"""
         from core.settings import ConfigManager
-        cfg = ConfigManager.get_instance().read_mem0()
-        return cls.from_dict(cfg)
+        return cls.from_dict(ConfigManager.get_instance().read_llm())
 
     # ── 校验 ─────────────────────────────────────────
     def validate(self) -> tuple[bool, str]:
@@ -88,8 +87,8 @@ class LLMConfig:
             return False, "model 不能为空"
         if self.temperature < 0 or self.temperature > 2:
             return False, "temperature 应在 0~2 之间"
-        if self.max_tokens < 1 or self.max_tokens > 32000:
-            return False, "max_tokens 应在 1~32000 之间"
+        if self.max_tokens < 1 or self.max_tokens > 256000:
+            return False, "max_tokens 应在 1~256000 之间"
         # 本地 provider 允许空 api_key（其它检查通过后）
         if self.provider in ("ollama", "lmstudio"):
             return True, ""

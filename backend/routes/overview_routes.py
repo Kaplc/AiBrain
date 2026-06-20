@@ -157,9 +157,9 @@ def register(app, ready_state, logger, stats_db):
         """查询 DeepSeek 账户余额（转发官方 API）"""
         try:
             from core.settings import ConfigManager
-            cfg = ConfigManager.get_instance().read_chat()
-            api_key = cfg.get('chat_api_key', '')
-            base_url = cfg.get('chat_base_url', 'https://api.deepseek.com')
+            cfg = ConfigManager.get_instance().read_llm()
+            api_key = cfg.get('api_key', '')
+            base_url = cfg.get('base_url', 'https://api.deepseek.com')
 
             if not api_key:
                 logger.warning("[balance] API key not configured")

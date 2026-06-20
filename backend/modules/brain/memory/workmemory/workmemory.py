@@ -407,7 +407,7 @@ class WorkMemoryManager:
             if not verdict.get("enough") and all_results:
                 logger.info(f"[workmemory] results insufficient, refining query")
                 refined_agent = get_agent_manager().get("memory_search")
-                refined = refined_agent.run({"current": current})
+                refined = refined_agent.run({"current": current, "conversation": conversation})
                 refined_query = refined.get("query", "")
                 if refined_query and refined_query != current:
                     logger.info(f"[workmemory] refined query={refined_query!r}")

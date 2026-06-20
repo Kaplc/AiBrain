@@ -118,8 +118,11 @@ class PendingExpressionManager:
         return created
 
     def _create(self, type_: str, source_node_id: str, expression_score: float,
-                source: str) -> bool:
-        """去重入队（cap 5，超限淘汰 expression_score 最低）。成功返回 True。"""
+                source: str, note: str = "") -> bool:
+        """去重入队（cap 5，超限淘汰 expression_score 最低）。成功返回 True。
+
+        note: BrainJudge 想说的话或理由 hint，proactive_send 生成时参考。
+        """
         if not source_node_id:
             return False
         with self._state.transaction() as data:
@@ -131,8 +134,10 @@ class PendingExpressionManager:
                         and p.get("source_node_id") == source_node_id):
                     p["expression_score"] = max(float(p.get("expression_score", 0.0)), expression_score)
                     p["type"] = type_
+                    if note:
+                        p["note"] = note
                     return False  # 已存在，未新增
-            pendings.append({
+            entry = {
                 "id": f"pe_{times.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
                 "type": type_,
                 "source_node_id": source_node_id,
@@ -140,7 +145,10 @@ class PendingExpressionManager:
                 "source": source,
                 "created_at": times.now_iso(),
                 "expressed": False,
-            })
+            }
+            if note:
+                entry["note"] = note
+            pendings.append(entry)
             # 超 cap：淘汰未表达里 expression_score 最低的
             unexpressed = [p for p in pendings if not p.get("expressed")]
             if len(unexpressed) > PENDING_QUEUE_CAP:
@@ -227,23 +235,31 @@ class PendingExpressionManager:
         return best
 
     def mark_expressed(self, pending_id: str, content: str | None = None) -> bool:
-        """标记已表达 + 记录 refractory；若给 content 则写入 output（前端可见）。
+        """标记已表达 + 记录 refractory + 移除条目；若给 content 则写入 output。
 
         content 由调用方（send 决策）在发送时用 LLM 实时生成，本模块不生成。
+        表达后直接【移除】条目而非只标记 expressed=True，避免重复 topic 重入队列
+        时被同 source+source_node_id 的旧 expressed 条目占位，也避免 LLM 下次选
+        到同类 pending 时生成相似内容。
         """
         from . import get_expression_history
         refractory = get_expression_history()
         with self._state.transaction() as data:
+            pendings = data.get("pending_expressions", [])
+            target_idx = None
             target = None
-            for p in data.get("pending_expressions", []):
+            for i, p in enumerate(pendings):
                 if p.get("id") == pending_id:
-                    p["expressed"] = True
+                    target_idx = i
                     target = p
                     break
             if target is None:
                 return False
             rtype = "open_loop" if target.get("source") == "open_loop" else "interest"
             refractory.record(rtype, target.get("source_node_id", ""))
+            # 移除已表达条目（不保留 expressed=True 占位）
+            pendings.pop(target_idx)
+            data["pending_expressions"] = pendings
         if content:
             self._write_to_output(content)
             logger.info(f"[pending] expressed {pending_id} (rtype={rtype}, content='{content[:60]}')")
@@ -450,12 +466,15 @@ class PendingExpressionManager:
                 _mem_block = _NL.join(_mem_lines) if _mem_lines else "（暂无相关记忆）"
                 _state_block = "；".join(_state_lines) if _state_lines else "（无特别在意的）"
                 _chat_block = _NL.join(_chat_lines) + _NL if _chat_lines else ""
+                _hint = pick.get("note", "")
+                _hint_line = f"\n思路提示（可参考但不必局限）：{_hint}" if _hint else ""
                 _system = (
                     _persona + "。此刻心情：" + _mood + "。"
                     "你要主动发起一个话题和用户聊天。"
                     "如果有相关记忆帮你想起具体内容，就基于它自然开口；"
                     "如果觉得记忆不够、想再回忆更多，回复一行：SEARCH: 关键词（只写关键词）；"
                     "如果已经想好，直接回复那句话（口语自然，30字以内，像真人随口开口）。"
+                    + _hint_line
                 )
                 _user = (
                     _chat_block

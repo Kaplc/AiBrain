@@ -2,9 +2,9 @@ import { test, expect } from '@playwright/test'
 
 /* 全局导航和布局 */
 test.describe('Navigation', () => {
-  test('侧边栏有6个导航项', async ({ page }) => {
+  test('侧边栏有8个导航项', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })
-    await expect(page.locator('.nav-item')).toHaveCount(6)
+    await expect(page.locator('.nav-item')).toHaveCount(8)
   })
 
   test('默认加载总览页面', async ({ page }) => {

@@ -37,6 +37,17 @@ class MemorySearchAgent(BaseAgent):
         current = input_data.get("current", "") if isinstance(input_data, dict) else str(input_data)
         user_prompt = f"【当前消息】\n{current}"
 
+        # 将最近对话历史附加到提示词中
+        conversation = input_data.get("conversation", []) if isinstance(input_data, dict) else []
+        if conversation:
+            recent = conversation[-10:]
+            lines = []
+            for msg in recent:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                lines.append(f"{role}: {content}")
+            user_prompt += f"\n\n【最近对话】\n" + "\n".join(lines)
+
         config = kwargs.get("config") or LLMConfig.from_settings()
         if self.enable_thinking and config.provider == "deepseek":
             config = LLMConfig(

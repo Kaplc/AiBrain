@@ -36,6 +36,8 @@ class ChatManager:
         self._prompt_tokens = 0
         self._completion_tokens = 0
         self._stats_db = None
+        # Reactive BrainSession 最近一次内部思考（供 brain_context section 注入）
+        self._brain_context: dict = {}
 
     @classmethod
     def get_instance(cls) -> 'ChatManager':
@@ -62,15 +64,23 @@ class ChatManager:
         self._prompt_tokens = prompt
         self._completion_tokens = completion
 
+    def set_brain_context(self, ctx: dict) -> None:
+        """记录 Reactive BrainSession 最近一次内部思考（brain_context section 读取）。"""
+        self._brain_context = ctx or {}
+
+    def get_brain_context(self) -> dict:
+        return getattr(self, "_brain_context", {}) or {}
+
     # ── 配置 ──────────────────────────────────────────────
 
     def load_config(self, config: dict):
-        """加载 Chat 配置"""
-        self._provider = config.get('chat_provider', 'openai')
-        self._model = config.get('chat_model', 'gpt-4o-mini')
-        self._api_key = config.get('chat_api_key', '')
-        self._base_url = config.get('chat_base_url', '')
-        self._tools_enabled = config.get('tools_enabled', False)
+        """加载 LLM 配置（读 llm.json，设置→LLM 页面配的）"""
+        self._provider = config.get('provider', 'openai')
+        self._model = config.get('model', 'gpt-4o-mini')
+        self._api_key = config.get('api_key', '')
+        self._base_url = config.get('base_url', '')
+        # system_persona / tools_enabled 使用默认值（ChatTab 已移除）
+        self._tools_enabled = config.get('tools_enabled', True)
         self._system_persona = config.get('system_persona', '')
 
     # ── 用户交互（直接调 LLM，无线程） ─────────────────
@@ -100,7 +110,7 @@ class ChatManager:
         if self._loop is not None:
             return self._loop
         self._loop = ConsciousnessLoop(stats_db, config)
-        if config.get('chat_api_key'):
+        if config.get('api_key') or config.get('chat_api_key'):
             self._loop.start()
         return self._loop
 

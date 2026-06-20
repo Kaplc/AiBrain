@@ -2,14 +2,14 @@
 
 ## 一、目标
 
-记忆层提供统一的短期、工作、长期、图谱记忆访问接口。第一阶段只包装现有模块，不重写 Qdrant、graph 和 memory pipeline。
+记忆层提供统一的短期、工作、长期、图谱记忆访问接口。第一阶段只包装现有模块，不重写、不移动 Qdrant、graph 和 memory pipeline。
 
 ## 二、边界
 
 - 输入：`BrainEvent`、`PerceptionResult`、`AttentionResult`。
 - 输出：`MemoryContext`。
 - 不决定是否回复，不更新情绪。
-- 可以调用现有 `workmemory`、`search_memory`、`graph`。
+- 通过 adapter 调用现有 `workmemory`、`search_memory`、`graph`。
 
 ## 三、数据结构
 
@@ -41,16 +41,16 @@ class MemoryContext:
 ```text
 AttentionResult.focus
   -> 生成记忆查询 query
-  -> workmemory.handle_packagemem(query)
-  -> search_memory(query)
-  -> graph 关联实体和相关记忆
+  -> 调用 workmemory.handle_packagemem(query)
+  -> 调用 search_memory(query)
+  -> 调用 graph 关联实体和相关记忆
   -> build MemoryContext
 ```
 
 ## 六、文件清单
 
 ```text
-backend/modules/brain/layers/memory/
+backend/main_brain/memory/
   __init__.py
   context.py
   adapter.py
@@ -64,11 +64,11 @@ backend/modules/brain/layers/memory/
 def recall(event: BrainEvent, perception: PerceptionResult, attention: AttentionResult) -> MemoryContext
 ```
 
-## 八、迁移策略
+## 八、接入策略
 
-1. P0 不迁移 `backend/modules/brain/memory/`。
-2. P1 新增 adapter，让大脑层通过统一接口调用旧模块。
-3. P2 再视情况调整 import 路径，保留旧路径转发，避免测试大面积破坏。
+1. 不改变 `backend/modules/brain/memory/` 现有代码位置。
+2. 在 `backend/main_brain/memory/adapter.py` 中封装现有调用。
+3. 后续如需替换底层存储，只改 adapter，不改上层流程。
 
 ## 九、验收标准
 

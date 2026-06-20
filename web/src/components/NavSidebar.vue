@@ -8,8 +8,9 @@ const navItems = [
   { name: 'overview', label: '总览' },
   { name: 'memory', label: '记忆' },
   { name: 'chat', label: '对话' },
+  { name: 'brain', label: '大脑' },
   { name: 'stream', label: '流' },
-  { name: 'wiki', label: 'Wiki' },
+  { name: 'stats', label: '用量' },
   { name: 'logs', label: '日志' },
   { name: 'settings', label: '设置' },
 ]

@@ -193,7 +193,7 @@ def send_message(
             logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
             pre_tool_len = len(msgs)
             yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
-            threading.Thread(target=_try_proactive_send, daemon=True).start()
+            # _try_proactive_send 已由 LifeLoopDaemon 统一管理
             return
 
         # ════════════════════════════════════════════════════════
@@ -248,7 +248,7 @@ def send_message(
             logger.warning(f"[loop] output_mem_write failed: {e}")
 
         logger.info(f"[loop] LLM done: tokens={token_count} total_chars={len(assistant_text)}")
-        threading.Thread(target=_try_proactive_send, daemon=True).start()
+        # _try_proactive_send 已由 LifeLoopDaemon 统一管理
         yield {"type": "done"}
 
     except Exception as e:

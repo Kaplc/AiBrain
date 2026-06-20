@@ -23,9 +23,9 @@ const router = createRouter({
       component: () => import('@/views/StreamView/StreamView.vue'),
     },
     {
-      path: '/wiki',
-      name: 'wiki',
-      component: () => import('@/views/WikiView/WikiView.vue'),
+      path: '/stats',
+      name: 'stats',
+      component: () => import('@/views/StatsView/StatsView.vue'),
     },
     {
       path: '/logs',
@@ -41,6 +41,11 @@ const router = createRouter({
       path: '/chat',
       name: 'chat',
       component: () => import('@/views/ChatView/ChatView.vue'),
+    },
+    {
+      path: '/brain',
+      name: 'brain',
+      component: () => import('@/views/BrainView/BrainView.vue'),
     },
   ],
 })

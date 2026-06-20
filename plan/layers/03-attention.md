@@ -9,7 +9,7 @@
 - 输入：`BrainEvent`、`PerceptionResult`、当前 state。
 - 输出：`AttentionResult`。
 - 不做记忆检索，不生成回复。
-- 可以更新 `concerns`、`working_set` 和 `internal_state.attention`。
+- 可以通过 adapter 更新现有 `concerns`、`working_set` 和 `internal_state.attention`。
 
 ## 三、数据结构
 
@@ -54,13 +54,13 @@ PerceptionResult
   -> 读取 concerns / drives / emotion
   -> 计算 salience_map
   -> 选择 focus
-  -> 写入 working_set 和 internal_state.attention
+  -> 通过 adapter 写入 working_set 和 internal_state.attention
 ```
 
 ## 七、文件清单
 
 ```text
-backend/modules/brain/layers/attention/
+backend/main_brain/attention/
   __init__.py
   result.py
   scorer.py

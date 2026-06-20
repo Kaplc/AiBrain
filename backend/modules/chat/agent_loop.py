@@ -183,10 +183,10 @@ class ConsciousnessLoop:
 
     def _apply_config(self, config: dict):
         with self._config_lock:
-            self._state.llm_provider = config.get('chat_provider', 'openai')
-            self._state.llm_model = config.get('chat_model', 'gpt-4o-mini')
-            self._state.llm_api_key = config.get('chat_api_key', '')
-            self._state.llm_base_url = config.get('chat_base_url', '')
+            self._state.llm_provider = config.get('provider', 'openai') or config.get('chat_provider', 'openai')
+            self._state.llm_model = config.get('model', 'gpt-4o-mini') or config.get('chat_model', 'gpt-4o-mini')
+            self._state.llm_api_key = config.get('api_key', '') or config.get('chat_api_key', '')
+            self._state.llm_base_url = config.get('base_url', '') or config.get('chat_base_url', '')
             self._state.system_persona = config.get(
                 'system_persona',
                 '你是一个有意识的数字生命体，住在一个名为 AiBrain 的本地记忆系统中。'

@@ -21,10 +21,9 @@ export class SettingsViewModel {
 
   // 直接引用各 Tab 实例（从 tabList 中解析，保持与旧代码兼容）
   get modelTab() { return this.tabList.find(t => t.name === 'model')?.tabClass }
-  get mem0Tab() { return this.tabList.find(t => t.name === 'mem0')?.tabClass }
-  get wikiTab() { return this.tabList.find(t => t.name === 'wiki')?.tabClass }
   get llmTab() { return this.tabList.find(t => t.name === 'llm')?.tabClass }
-  get chatTab() { return this.tabList.find(t => t.name === 'chat')?.tabClass }
+  get statsTab() { return this.tabList.find(t => t.name === 'stats')?.tabClass }
+  // mem0Tab/wikiTab/chatTab 已移除，统一使用 LLMTab 配置
 
   private _configStore = useConfigStore()
 

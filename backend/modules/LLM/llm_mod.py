@@ -103,8 +103,8 @@ class LLMManager:
         )
 
     # ── 配置加载快捷方法 ─────────────────────────────────
-    def load_config_from_mem0(self) -> LLMConfig:
-        """从 ~/.aibrain/config/mem0.json 读 LLM 配置（兼容旧路径）"""
+    def load_config_from_chat(self) -> LLMConfig:
+        """从 ~/.aibrain/config/chat.json 读 LLM 配置（设置→Chat）"""
         return LLMConfig.from_settings()
 
     # ── 静态信息 ─────────────────────────────────────────

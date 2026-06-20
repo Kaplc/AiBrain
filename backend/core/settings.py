@@ -30,14 +30,6 @@ class SettingsManager:
 
 
 # ── 默认配置 ─────────────────────────────────────────────────
-DEFAULT_MEM0 = {
-    "llm_provider": "minimax",
-    "llm_model": "MiniMax-M2.7",
-    "api_key": "",
-    "base_url": "https://api.minimaxi.com/v1",
-    "collection_name": "mem0_memories"
-}
-
 DEFAULT_WIKI = {
     "wiki_dir": "wiki",
     "lightrag_dir": "rag/lightrag_data",
@@ -51,7 +43,7 @@ DEFAULT_WIKI = {
     "search_timeout": 30
 }
 
-# LLM 通用配置（独立于 mem0/wiki）—— 用于 chat 意识流、未来其他 LLM 调用
+# LLM 通用配置 — 用于 chat 意识流、未来其他 LLM 调用
 DEFAULT_LLM = {
     "provider": "openai",
     "model": "gpt-4o-mini",
@@ -84,7 +76,6 @@ class ConfigManager:
     def __init__(self):
         self._user_home = os.path.expanduser("~")
         self._config_dir = os.path.join(self._user_home, '.aibrain', 'config')
-        self._mem0_path = os.path.join(self._config_dir, 'mem0.json')
         self._wiki_path = os.path.join(self._config_dir, 'wiki.json')
         self._llm_path = os.path.join(self._config_dir, 'llm.json')
         self._chat_path = os.path.join(self._config_dir, 'chat.json')
@@ -104,9 +95,6 @@ class ConfigManager:
 
     def init_default_configs(self):
         self.ensure_config_dir()
-        if not os.path.exists(self._mem0_path):
-            with open(self._mem0_path, 'w', encoding='utf-8') as f:
-                json.dump(DEFAULT_MEM0, f, indent=2, ensure_ascii=False)
         if not os.path.exists(self._wiki_path):
             with open(self._wiki_path, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_WIKI, f, indent=2, ensure_ascii=False)
@@ -116,24 +104,6 @@ class ConfigManager:
         if not os.path.exists(self._chat_path):
             with open(self._chat_path, 'w', encoding='utf-8') as f:
                 json.dump(DEFAULT_CHAT, f, indent=2, ensure_ascii=False)
-
-    def read_mem0(self) -> dict:
-        if os.path.exists(self._mem0_path):
-            with open(self._mem0_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return DEFAULT_MEM0.copy()
-
-    def write_mem0(self, data: dict):
-        self.ensure_config_dir()
-        current = {}
-        for key, value in data.items():
-            if isinstance(value, dict):
-                for k, v in value.items():
-                    current[f'{key}_{k}'] = v
-            else:
-                current[key] = value
-        with open(self._mem0_path, 'w', encoding='utf-8') as f:
-            json.dump(current, f, indent=2, ensure_ascii=False)
 
     def read_wiki(self) -> dict:
         if os.path.exists(self._wiki_path):
@@ -152,9 +122,6 @@ class ConfigManager:
                 current[key] = value
         with open(self._wiki_path, 'w', encoding='utf-8') as f:
             json.dump(current, f, indent=2, ensure_ascii=False)
-
-    def get_default_mem0(self) -> dict:
-        return DEFAULT_MEM0.copy()
 
     def get_default_wiki(self) -> dict:
         return DEFAULT_WIKI.copy()

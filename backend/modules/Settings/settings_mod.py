@@ -153,14 +153,11 @@ class SettingsManager:
 
     def get_aibrain_config(self) -> dict:
         cfg_mgr = ConfigManager.get_instance()
-        mem0 = cfg_mgr.read_mem0()
         wiki = cfg_mgr.read_wiki()
         llm = cfg_mgr.read_llm()
-        defaults_mem0 = cfg_mgr.get_default_mem0()
         defaults_wiki = cfg_mgr.get_default_wiki()
         defaults_llm = cfg_mgr.get_default_llm()
         return {
-            'mem0': {'data': mem0, 'fields': build_fields(mem0, defaults_mem0)},
             'wiki': {'data': wiki, 'fields': build_fields(wiki, defaults_wiki)},
             'llm':  {'data': llm,  'fields': _llm_fields(llm, defaults_llm)},
         }
@@ -168,9 +165,6 @@ class SettingsManager:
     def save_aibrain_config(self, data: dict) -> dict:
         cfg_mgr = ConfigManager.get_instance()
         result = {}
-        if 'mem0' in data:
-            cfg_mgr.write_mem0(data['mem0'])
-            result['mem0'] = '已保存'
         if 'wiki' in data:
             cfg_mgr.write_wiki(data['wiki'])
             result['wiki'] = '已保存'
