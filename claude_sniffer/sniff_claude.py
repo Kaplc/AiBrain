@@ -22,8 +22,6 @@ import subprocess
 import sys
 import threading
 import time
-from openai import OpenAI
-
 PROXY_PORT = 9999
 FORWARD_URL = "https://opencode.ai/zen/go/v1/messages"
 
@@ -43,18 +41,22 @@ ENABLE_FILE_LOG = os.environ.get('CLAUDE_SNIFFER_FILE_LOG', str(CLAUDE_SNIFFER_F
 # OpenAI SDK config (for non-minimax/qwen models)
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://opencode.ai/zen/go/v1')
 # OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.deepseek.com')
+OPENAI_CHAT_URL = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', 'default-key')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', '')
+HTTP_TIMEOUT = int(os.environ.get('HTTP_TIMEOUT', '600'))
 
-_openai_clients = {}  # pid -> OpenAI(client)
-_openai_clients_lock = threading.Lock()
+_http_session = None
+_http_session_lock = threading.Lock()
 
-def _get_openai_client(api_key, pid=None):
-    key = pid if pid else 'default'
-    with _openai_clients_lock:
-        if key not in _openai_clients:
-            _openai_clients[key] = OpenAI(base_url=OPENAI_BASE_URL, api_key=api_key)
-    return _openai_clients[key]
+def _get_http_session():
+    global _http_session
+    if _http_session is None:
+        with _http_session_lock:
+            if _http_session is None:
+                _http_session = requests.Session()
+                _http_session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    return _http_session
 
 DIRECT_FORWARD_MODELS = ['minimax', 'qwen']
 
@@ -389,13 +391,11 @@ def anthropic_to_openai_request(anthropic_data):
     return result
 
 
-# --- OpenAI streaming -> Anthropic SSE --------------------------------------
+# --- OpenAI HTTP streaming -> Anthropic SSE ---------------------------------
 
-def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
-    """Call OpenAI SDK in streaming mode, translate chunks to Anthropic SSE format"""
+def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
+    """POST raw HTTP, parse SSE lines, translate chunks to Anthropic SSE format"""
     import json as _json
-
-    stream = openai_client.chat.completions.create(**openai_request)
 
     handler.send_response(200)
     handler.send_header('Content-Type', 'text/event-stream')
@@ -429,16 +429,48 @@ def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
 
     finish_reason = 'end_turn'
     tool_calls_acc = {}
+    input_tokens = 0
+    output_tokens = 0
+    cached_tokens = 0
 
     try:
-        for chunk in stream:
-            chunk_count += 1
-            if not chunk.choices:
+        for line in http_response.iter_lines():
+            if not line:
                 continue
-            delta = chunk.choices[0].delta
+            line = line.decode('utf-8') if isinstance(line, bytes) else line
+            if not line.startswith('data: '):
+                continue
+            data_str = line[6:].strip()
+            if data_str == '[DONE]':
+                break
+            chunk = _json.loads(data_str)
+
+            # Capture real usage from final chunk (some providers include it)
+            usage = chunk.get('usage')
+            if usage:
+                raw_input = usage.get('prompt_tokens', 0)
+                output_tokens = usage.get('completion_tokens', output_tokens)
+                prompt_details = usage.get('prompt_tokens_details')
+                if prompt_details:
+                    cached = prompt_details.get('cached_tokens', 0)
+                    if cached > 0:
+                        cached_tokens = cached
+                hit = usage.get('prompt_cache_hit_tokens', 0)
+                if hit > 0:
+                    cached_tokens = hit
+                input_tokens = raw_input - cached_tokens
+
+            choices = chunk.get('choices', [])
+            if not choices:
+                continue
+            delta = choices[0].get('delta', {})
+            finish = choices[0].get('finish_reason')
+
+            chunk_count += 1
 
             # Text content
-            if delta.content:
+            text = delta.get('content')
+            if text:
                 if not sent_content_start:
                     send_sse('content_block_start', {
                         'type': 'content_block_start',
@@ -449,22 +481,24 @@ def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
                 send_sse('content_block_delta', {
                     'type': 'content_block_delta',
                     'index': 0,
-                    'delta': {'type': 'text_delta', 'text': delta.content},
+                    'delta': {'type': 'text_delta', 'text': text},
                 })
 
             # Tool calls (accumulate then emit)
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
+            tool_calls = delta.get('tool_calls')
+            if tool_calls:
+                for tc in tool_calls:
+                    idx = tc.get('index', 0)
                     if idx not in tool_calls_acc:
                         if sent_content_start:
                             send_sse('content_block_stop', {
                                 'type': 'content_block_stop', 'index': 0,
                             })
                         block_idx = len(tool_calls_acc) + (1 if sent_content_start else 0)
+                        fn = tc.get('function', {})
                         tool_calls_acc[idx] = {
-                            'id': tc.id or f"toolu_{os.urandom(6).hex()}",
-                            'name': tc.function.name if tc.function and tc.function.name else '',
+                            'id': tc.get('id') or f"toolu_{os.urandom(6).hex()}",
+                            'name': fn.get('name', ''),
                             'args': '',
                             'block_idx': block_idx,
                         }
@@ -478,23 +512,25 @@ def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
                                 'input': {},
                             },
                         })
-                    if tc.function and tc.function.arguments:
-                        tool_calls_acc[idx]['args'] += tc.function.arguments
+                    fn = tc.get('function', {})
+                    args = fn.get('arguments')
+                    if args:
+                        tool_calls_acc[idx]['args'] += args
                         send_sse('content_block_delta', {
                             'type': 'content_block_delta',
                             'index': tool_calls_acc[idx]['block_idx'],
                             'delta': {
                                 'type': 'input_json_delta',
-                                'partial_json': tc.function.arguments,
+                                'partial_json': args,
                             },
                         })
 
-            if chunk.choices[0].finish_reason:
+            if finish:
                 finish_reason = {
                     'stop': 'end_turn',
                     'tool_calls': 'tool_use',
                     'length': 'max_tokens',
-                }.get(chunk.choices[0].finish_reason, 'end_turn')
+                }.get(finish, 'end_turn')
     except Exception as e:
         logger.error(f"[#{req_id}] Stream error: {e}")
 
@@ -507,14 +543,20 @@ def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
     elif sent_content_start:
         send_sse('content_block_stop', {'type': 'content_block_stop', 'index': 0})
 
+    usage_dict = {
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens or chunk_count,
+    }
+    if cached_tokens > 0:
+        usage_dict['cache_read_input_tokens'] = cached_tokens
+
     send_sse('message_delta', {
         'type': 'message_delta',
         'delta': {'stop_reason': finish_reason, 'stop_sequence': None},
-        'usage': {'output_tokens': chunk_count},
+        'usage': usage_dict,
     })
     send_sse('message_stop', {'type': 'message_stop'})
 
-    # Close the stream so client knows response is complete
     try:
         handler.wfile.flush()
         handler.close_connection = True
@@ -522,27 +564,42 @@ def stream_openai_to_anthropic(handler, openai_client, openai_request, req_id):
     except Exception:
         pass
 
-    print(f"Response: 200 (stream, {chunk_count} chunks)")
-    logger.info(f"[#{req_id}] SDK stream done: {chunk_count} chunks, finish={finish_reason}")
+    elapsed = time.perf_counter() - handler._req_t0
+    print(f"Response: 200 (stream, {chunk_count} chunks) | +{elapsed:.1f}s")
+    logger.info(f"[#{req_id}] HTTP stream done: {chunk_count} chunks, finish={finish_reason}")
 
 
 # --- Non-streaming OpenAI -> Anthropic --------------------------------------
 
 
-def call_security_classifier_to_anthropic(handler, openai_client, openai_request, req_id):
-    """Call an OpenAI-compatible model and return Claude Code classifier JSON."""
+def call_security_classifier_to_anthropic(handler, http_response, openai_request, req_id):
+    """Parse HTTP JSON response and return Claude Code classifier verdict."""
     import json as _json
 
-    openai_request = dict(openai_request)
-    openai_request['stream'] = False
-    response = openai_client.chat.completions.create(**openai_request)
-
+    data = http_response.json()
     raw_text = ''
-    if response.choices and response.choices[0].message:
-        msg = response.choices[0].message
-        raw_text = msg.content or ''
+    choices = data.get('choices', [])
+    if choices and choices[0].get('message'):
+        raw_text = choices[0]['message'].get('content', '')
+    usage = data.get('usage', {})
 
     verdict_text = normalize_security_classifier_text(raw_text)
+    prompt_details = usage.get('prompt_tokens_details') or {}
+    cached_tokens = 0
+    cached = prompt_details.get('cached_tokens', 0)
+    if cached > 0:
+        cached_tokens = cached
+    hit = usage.get('prompt_cache_hit_tokens', 0)
+    if hit > 0:
+        cached_tokens = hit
+    raw_input = usage.get('prompt_tokens', 0)
+    anthropic_usage = {
+        'input_tokens': raw_input - cached_tokens,
+        'output_tokens': usage.get('completion_tokens', 0),
+    }
+    if cached_tokens > 0:
+        anthropic_usage['cache_read_input_tokens'] = cached_tokens
+
     anthropic_response = {
         'id': f"msg_{os.urandom(12).hex()}",
         'type': 'message',
@@ -551,10 +608,7 @@ def call_security_classifier_to_anthropic(handler, openai_client, openai_request
         'content': [{'type': 'text', 'text': verdict_text}],
         'stop_reason': 'end_turn',
         'stop_sequence': None,
-        'usage': {
-            'input_tokens': response.usage.prompt_tokens if response.usage else 0,
-            'output_tokens': response.usage.completion_tokens if response.usage else 0,
-        },
+        'usage': anthropic_usage,
     }
 
     body = _json.dumps(anthropic_response, ensure_ascii=False).encode('utf-8')
@@ -576,36 +630,56 @@ def call_security_classifier_to_anthropic(handler, openai_client, openai_request
         ),
         max_entries=20,
     )
-    print(f"Response: 200 (classifier, {verdict_text})")
+    elapsed = time.perf_counter() - handler._req_t0
+    print(f"Response: 200 (classifier, {verdict_text}) | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] Security classifier done: {verdict_text}")
 
-def call_openai_to_anthropic(handler, openai_client, openai_request, req_id):
-    """Call OpenAI SDK (non-streaming), translate response to Anthropic format"""
+def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
+    """Parse HTTP JSON response, translate to Anthropic format"""
     import json as _json
 
-    response = openai_client.chat.completions.create(**openai_request)
-
+    data = http_response.json()
     content = []
-    if response.choices and response.choices[0].message:
-        msg = response.choices[0].message
-        if msg.content:
-            content.append({'type': 'text', 'text': msg.content})
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
+    choices = data.get('choices', [])
+    if choices and choices[0].get('message'):
+        msg = choices[0]['message']
+        text = msg.get('content')
+        if text:
+            content.append({'type': 'text', 'text': text})
+        tool_calls = msg.get('tool_calls')
+        if tool_calls:
+            for tc in tool_calls:
                 content.append({
                     'type': 'tool_use',
-                    'id': tc.id,
-                    'name': tc.function.name,
-                    'input': _json.loads(tc.function.arguments) if tc.function.arguments else {},
+                    'id': tc['id'],
+                    'name': tc['function']['name'],
+                    'input': _json.loads(tc['function']['arguments']) if tc['function'].get('arguments') else {},
                 })
 
     finish_reason = 'end_turn'
-    if response.choices and response.choices[0].finish_reason:
+    if choices and choices[0].get('finish_reason'):
         finish_reason = {
             'stop': 'end_turn',
             'tool_calls': 'tool_use',
             'length': 'max_tokens',
-        }.get(response.choices[0].finish_reason, 'end_turn')
+        }.get(choices[0]['finish_reason'], 'end_turn')
+
+    usage = data.get('usage', {})
+    prompt_details = usage.get('prompt_tokens_details') or {}
+    cached_tokens = 0
+    cached = prompt_details.get('cached_tokens', 0)
+    if cached > 0:
+        cached_tokens = cached
+    hit = usage.get('prompt_cache_hit_tokens', 0)
+    if hit > 0:
+        cached_tokens = hit
+    raw_input = usage.get('prompt_tokens', 0)
+    anthropic_usage = {
+        'input_tokens': raw_input - cached_tokens,
+        'output_tokens': usage.get('completion_tokens', 0),
+    }
+    if cached_tokens > 0:
+        anthropic_usage['cache_read_input_tokens'] = cached_tokens
 
     anthropic_response = {
         'id': f"msg_{os.urandom(12).hex()}",
@@ -615,10 +689,7 @@ def call_openai_to_anthropic(handler, openai_client, openai_request, req_id):
         'content': content,
         'stop_reason': finish_reason,
         'stop_sequence': None,
-        'usage': {
-            'input_tokens': response.usage.prompt_tokens if response.usage else 0,
-            'output_tokens': response.usage.completion_tokens if response.usage else 0,
-        },
+        'usage': anthropic_usage,
     }
 
     body = _json.dumps(anthropic_response, ensure_ascii=False).encode('utf-8')
@@ -628,8 +699,9 @@ def call_openai_to_anthropic(handler, openai_client, openai_request, req_id):
     handler.end_headers()
     handler.wfile.write(body)
 
-    print(f"Response: 200 ({len(content)} blocks)")
-    logger.info(f"[#{req_id}] SDK non-stream done: {len(content)} blocks")
+    elapsed = time.perf_counter() - handler._req_t0
+    print(f"Response: 200 ({len(content)} blocks) | +{elapsed:.1f}s")
+    logger.info(f"[#{req_id}] HTTP non-stream done: {len(content)} blocks")
 
 
 class ClaudeSniffer(BaseHTTPRequestHandler):
@@ -751,6 +823,7 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
         with ClaudeSniffer.count_lock:
             ClaudeSniffer.req_count += 1
             req_id = ClaudeSniffer.req_count
+        self._req_t0 = time.perf_counter()
         timestamp = datetime.now().isoformat()
 
         content_length = int(self.headers.get('Content-Length', 0))
@@ -859,8 +932,8 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
             logger.info(f"[#{req_id}] Model '{model}' -> direct forward")
             self._direct_forward(body, headers_dict, req_id)
         else:
-            logger.info(f"[#{req_id}] Model '{model}' -> OpenAI SDK forward")
-            self._sdk_forward(parsed_body, body, headers_dict, req_id)
+            logger.info(f"[#{req_id}] Model '{model}' -> HTTP forward")
+            self._http_forward(parsed_body, body, headers_dict, req_id)
 
     def _direct_forward(self, body, headers_dict, req_id):
         """Forward request directly (for minimax / qwen) with SSE streaming"""
@@ -881,7 +954,7 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
             FORWARD_URL,
             headers=forward_headers,
             data=body.encode('utf-8') if body else None,
-            timeout=120,
+            timeout=HTTP_TIMEOUT,
             verify=False,
             stream=True,
         )
@@ -889,7 +962,8 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
         content_type = response.headers.get('Content-Type', '')
         is_sse = 'text/event-stream' in content_type
 
-        print(f"Response: {response.status_code}")
+        elapsed = time.perf_counter() - self._req_t0
+        print(f"Response: {response.status_code} | +{elapsed:.1f}s")
         logger.info(f"[#{req_id}] Direct response: {response.status_code}")
         if response.status_code >= 400:
             self._record_error(
@@ -950,8 +1024,10 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
 
         self._write_log(self._req_path('resp', req_id), '\n'.join(res_lines) + '\n', max_entries=20)
 
-    def _sdk_forward(self, parsed_body, body, headers_dict, req_id):
-        """Convert to OpenAI format and forward via OpenAI SDK"""
+    def _http_forward(self, parsed_body, body, headers_dict, req_id):
+        """POST /chat/completions via raw HTTP, bypassing OpenAI SDK"""
+        import json as _json
+
         try:
             api_key = OPENAI_API_KEY
             auth_header = headers_dict.get('Authorization', '')
@@ -961,34 +1037,57 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
             if api_key_header and api_key == 'default-key':
                 api_key = api_key_header
 
-            pid = self._get_client_pid()
-            client = _get_openai_client(api_key, pid)
+            session = _get_http_session()
+            request_headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+            }
 
             if is_security_classifier_request(parsed_body):
                 openai_request = build_security_classifier_openai_request(parsed_body)
                 prompt_chars = sum(len(m.get('content', '')) for m in openai_request.get('messages', []))
                 logger.info(f"[#{req_id}] Security classifier -> compact LLM judge ({prompt_chars} chars)")
-                call_security_classifier_to_anthropic(self, client, openai_request, req_id)
+
+                http_response = session.post(
+                    OPENAI_CHAT_URL,
+                    headers=request_headers,
+                    json=openai_request,
+                    timeout=HTTP_TIMEOUT,
+                )
+                if http_response.status_code >= 400:
+                    raise RuntimeError(f"HTTP {http_response.status_code}: {http_response.text[:500]}")
+                call_security_classifier_to_anthropic(self, http_response, openai_request, req_id)
             else:
                 openai_request = anthropic_to_openai_request(parsed_body)
-                if openai_request.get('stream'):
-                    stream_openai_to_anthropic(self, client, openai_request, req_id)
+                is_stream = openai_request.get('stream', False)
+
+                http_response = session.post(
+                    OPENAI_CHAT_URL,
+                    headers=request_headers,
+                    json=openai_request,
+                    timeout=HTTP_TIMEOUT,
+                    stream=is_stream,
+                )
+                if http_response.status_code >= 400:
+                    raise RuntimeError(f"HTTP {http_response.status_code}: {http_response.text[:500]}")
+
+                if is_stream:
+                    stream_openai_to_anthropic(self, http_response, openai_request, req_id)
                 else:
-                    call_openai_to_anthropic(self, client, openai_request, req_id)
+                    call_openai_to_anthropic(self, http_response, openai_request, req_id)
 
         except CLIENT_DISCONNECT_ERRORS:
             raise
         except Exception as e:
-            error_msg = f"[#{req_id}] OpenAI SDK error: {e}"
-            self._record_error(f"OpenAI SDK error: {e}", req_id)
+            self._record_error(f"HTTP forward error: {e}", req_id)
             self._write_log(
                 self._req_path('resp', req_id),
-                f"\n{'=' * 60}\n[#{req_id}] {datetime.now().isoformat()}\nOpenAI SDK error: {e}\n{'=' * 60}\n",
+                f"\n{'=' * 60}\n[#{req_id}] {datetime.now().isoformat()}\nHTTP forward error: {e}\n{'=' * 60}\n",
                 max_entries=20,
                 force=True,
             )
 
-            error_body = json.dumps({'error': str(e)}).encode('utf-8')
+            error_body = _json.dumps({'error': str(e)}).encode('utf-8')
             try:
                 self.send_response(502)
                 self.send_header('Content-Type', 'application/json')
@@ -996,7 +1095,7 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(error_body)
             except CLIENT_DISCONNECT_ERRORS as write_error:
-                logger.warning(f"[#{req_id}] Client disconnected before SDK error could be written: {write_error}")
+                logger.warning(f"[#{req_id}] Client disconnected before error could be written: {write_error}")
 
     def do_POST(self):
         self._handle()
@@ -1038,7 +1137,24 @@ class ThreadPoolHTTPServer(HTTPServer):
         self._request_queue.put((request, client_address))
 
 
+def _disable_quick_edit():
+    """Disable console Quick Edit Mode to prevent click-to-pause on Windows."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            new_mode = (mode.value & ~0x0040) | 0x0080
+            kernel32.SetConsoleMode(handle, new_mode)
+    except Exception:
+        pass
+
+
 def main():
+    _disable_quick_edit()
     kill_existing_instance()
     server = ThreadPoolHTTPServer(('127.0.0.1', PROXY_PORT), ClaudeSniffer)
 
