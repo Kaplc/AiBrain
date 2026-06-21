@@ -565,7 +565,7 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
         pass
 
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"Response: 200 (stream, {chunk_count} chunks) | +{elapsed:.1f}s")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (stream, {chunk_count} chunks) | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] HTTP stream done: {chunk_count} chunks, finish={finish_reason}")
 
 
@@ -631,7 +631,7 @@ def call_security_classifier_to_anthropic(handler, http_response, openai_request
         max_entries=20,
     )
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"Response: 200 (classifier, {verdict_text}) | +{elapsed:.1f}s")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (classifier, {verdict_text}) | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] Security classifier done: {verdict_text}")
 
 def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
@@ -700,7 +700,7 @@ def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
     handler.wfile.write(body)
 
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"Response: 200 ({len(content)} blocks) | +{elapsed:.1f}s")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 ({len(content)} blocks) | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] HTTP non-stream done: {len(content)} blocks")
 
 
@@ -836,7 +836,7 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
             pass
 
         if parsed_body:
-            print(f"Model: {parsed_body.get('model', '(none)')}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Model: {parsed_body.get('model', '(none)')}")
 
         lines = []
         lines.append(f"\n{'=' * 60}")
@@ -963,7 +963,8 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
         is_sse = 'text/event-stream' in content_type
 
         elapsed = time.perf_counter() - self._req_t0
-        print(f"Response: {response.status_code} | +{elapsed:.1f}s")
+        ts = datetime.now().strftime('%H:%M:%S')
+        print(f"[{ts}] Response: {response.status_code} | +{elapsed:.1f}s")
         logger.info(f"[#{req_id}] Direct response: {response.status_code}")
         if response.status_code >= 400:
             self._record_error(
