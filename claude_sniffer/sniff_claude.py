@@ -59,6 +59,7 @@ def _get_http_session():
     return _http_session
 
 DIRECT_FORWARD_MODELS = ['minimax', 'qwen']
+_selected_model = None
 
 def kill_existing_instance():
     """Kill an existing proxy instance that is already listening on the port."""
@@ -186,6 +187,7 @@ def _extract_xml_tag(text, tag):
 
 def build_security_classifier_openai_request(anthropic_data):
     """Build a compact LLM request for Claude Code auto-mode safety checks."""
+    global _selected_model
     system_text = _extract_text(anthropic_data.get('system'))
     message_text = _extract_text(anthropic_data.get('messages'))
     full_context = '\n\n'.join(part for part in [system_text, message_text] if part)
@@ -214,7 +216,7 @@ def build_security_classifier_openai_request(anthropic_data):
     if action:
         latest_context += "\n\nMost recent action extracted:\n" + _truncate_middle(action, 2000)
 
-    model = anthropic_data.get('model') or OPENAI_MODEL
+    model = _selected_model or anthropic_data.get('model') or OPENAI_MODEL
     return {
         'model': model,
         'messages': [
@@ -239,24 +241,161 @@ CLIENT_DISCONNECT_ERRORS = (
     ConnectionResetError,
     ConnectionAbortedError,
 )
-# --- Anthropic -> OpenAI request conversion ---------------------------------
 
+# ── Anthropic↔OpenAI field alignment helpers (from cc-switch transform.rs) ──
+
+ANTHROPIC_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
+
+
+def strip_leading_anthropic_billing_header(text: str) -> str:
+    """Strip only a leading Claude Code attribution line from system text.
+
+    The rotating cch= value changes the prompt prefix on every request and
+    prevents prefix cache reuse.
+    """
+    if not text.startswith(ANTHROPIC_BILLING_HEADER_PREFIX):
+        return text
+    idx = text.find('\n')
+    if idx == -1:
+        return ""
+    return text[idx + 1:].lstrip('\r\n')
+
+
+def is_openai_o_series(model: str) -> bool:
+    """Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)"""
+    if len(model) <= 1:
+        return False
+    return model[0] == 'o' and model[1:2].isdigit()
+
+
+def supports_reasoning_effort(model: str) -> bool:
+    """Detect models that support reasoning_effort (o-series, GPT-5+)."""
+    if is_openai_o_series(model):
+        return True
+    lower = model.lower()
+    if lower.startswith('gpt-'):
+        rest = lower[4:]
+        return bool(rest) and rest[0].isdigit() and rest[0] >= '5'
+    return False
+
+
+def resolve_reasoning_effort(body: dict) -> str | None:
+    """Resolve reasoning_effort from Anthropic thinking/output_config.
+
+    Priority: output_config.effort > thinking.type + budget_tokens.
+    """
+    # Priority 1: explicit output_config.effort
+    oc = body.get('output_config')
+    if isinstance(oc, dict):
+        effort = oc.get('effort')
+        if effort in ('low', 'medium', 'high'):
+            return effort
+        if effort == 'max':
+            return 'xhigh'
+
+    # Priority 2: thinking.type + budget_tokens
+    thinking = body.get('thinking')
+    if not isinstance(thinking, dict):
+        return None
+    ttype = thinking.get('type')
+    if ttype == 'adaptive':
+        return 'xhigh'
+    if ttype == 'enabled':
+        budget = thinking.get('budget_tokens')
+        if budget is None:
+            return 'high'
+        if budget < 4_000:
+            return 'low'
+        if budget < 16_000:
+            return 'medium'
+        return 'high'
+    return None
+
+
+def clean_schema(schema):
+    """Clean JSON schema (remove unsupported format like 'uri')."""
+    if isinstance(schema, dict):
+        result = {}
+        for k, v in schema.items():
+            if k == 'format' and v == 'uri':
+                continue
+            result[k] = clean_schema(v)
+        return result
+    elif isinstance(schema, list):
+        return [clean_schema(item) for item in schema]
+    return schema
+
+
+def _normalize_system_messages(messages: list) -> None:
+    """Merge multiple system messages into one at position 0."""
+    system_msgs = [(i, m) for i, m in enumerate(messages) if m.get('role') == 'system']
+    if not system_msgs:
+        return
+
+    if len(system_msgs) == 1:
+        idx = system_msgs[0][0]
+        if idx > 0:
+            msg = messages.pop(idx)
+            messages.insert(0, msg)
+        return
+
+    # Merge multiple system messages
+    parts = []
+    for _, sm in system_msgs:
+        content = sm.get('content', '')
+        if isinstance(content, str) and content:
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get('type') == 'text':
+                    parts.append(part.get('text', ''))
+    for _, sm in reversed(system_msgs):
+        messages.remove(sm)
+    if parts:
+        messages.insert(0, {'role': 'system', 'content': '\n'.join(parts)})
+
+
+def _map_tool_choice(tc):
+    """Map Anthropic tool_choice to OpenAI Chat Completions format.
+
+    Anthropic: 'any' / 'auto' / 'none' / {type, name}
+    OpenAI:    'required' / 'auto' / 'none' / {type:'function', function:{name}}
+    """
+    if isinstance(tc, str):
+        return 'required' if tc == 'any' else tc
+    if isinstance(tc, dict):
+        tc_type = tc.get('type')
+        if tc_type == 'any':
+            return 'required'
+        if tc_type in ('auto', 'none'):
+            return tc_type
+        if tc_type == 'tool':
+            return {'type': 'function', 'function': {'name': tc.get('name', '')}}
+    return tc
 def anthropic_to_openai_request(anthropic_data):
-    """Convert Anthropic messages API request to OpenAI chat format"""
+    """Convert Anthropic messages API request to OpenAI chat format.
+
+    Aligned with cc-switch transform.rs:anthropic_to_openai_with_reasoning_content.
+    """
     messages = []
 
-    # System prompt
+    # System prompt — strip billing header, merge multiple blocks
     system = anthropic_data.get('system')
     if system:
         if isinstance(system, str):
-            messages.append({'role': 'system', 'content': system})
+            text = strip_leading_anthropic_billing_header(system)
+            if text:
+                messages.append({'role': 'system', 'content': text})
         elif isinstance(system, list):
             text_parts = []
             for block in system:
                 if isinstance(block, str):
                     text_parts.append(block)
                 elif isinstance(block, dict) and block.get('type') == 'text':
-                    text_parts.append(block.get('text', ''))
+                    text = block.get('text', '')
+                    text = strip_leading_anthropic_billing_header(text)
+                    if text:
+                        text_parts.append(text)
             if text_parts:
                 messages.append({'role': 'system', 'content': '\n'.join(text_parts)})
 
@@ -274,29 +413,43 @@ def anthropic_to_openai_request(anthropic_data):
                 tool_result_ids.add(block.get('tool_use_id', ''))
     matched_tool_ids = tool_use_ids & tool_result_ids
 
-    # Messages (handle tool_use / tool_result properly)
+    # Messages
     for msg in anthropic_data.get('messages', []):
         role = msg.get('role', 'user')
         content = msg.get('content', '')
-        thinking = msg.get('thinking', '')  # Extract thinking for reasoning_content
 
         if isinstance(content, str):
             msg_dict = {'role': role, 'content': content}
-            if role == 'assistant':
-                msg_dict['reasoning_content'] = thinking if thinking else ''
             messages.append(msg_dict)
         elif isinstance(content, list):
             text_parts = []
             tool_calls = []       # for assistant tool_use blocks
             tool_results = []     # for user tool_result blocks
+            thinking_text = ''
 
             for block in content:
+                # Strip cache_control (cc-switch: cache_control not supported by OpenAI)
+                if isinstance(block, dict):
+                    block.pop('cache_control', None)
+                    if 'cache_control' in block:
+                        block = {k: v for k, v in block.items() if k != 'cache_control'}
+
                 if isinstance(block, str):
                     text_parts.append(block)
                 elif block.get('type') == 'text':
                     text_parts.append(block.get('text', ''))
                 elif block.get('type') == 'thinking':
-                    thinking = block.get('thinking', '')
+                    thinking_text = block.get('thinking', '')
+                elif block.get('type') == 'redacted_thinking':
+                    thinking_text = '[redacted thinking]'
+                elif block.get('type') == 'image':
+                    source = block.get('source', {})
+                    media_type = source.get('media_type', 'image/png')
+                    data = source.get('data', '')
+                    text_parts.append({
+                        'type': 'image_url',
+                        'image_url': {'url': f'data:{media_type};base64,{data}'},
+                    })
                 elif block.get('type') == 'tool_use':
                     tool_id = block.get('id', '')
                     tool_input = block.get('input', {})
@@ -337,37 +490,58 @@ def anthropic_to_openai_request(anthropic_data):
             if role == 'assistant':
                 assistant_msg = {'role': 'assistant'}
                 if text_parts:
-                    assistant_msg['content'] = '\n'.join(text_parts)
+                    # Single text string -> simple content; array -> image_url parts (kept as-is)
+                    str_only = all(isinstance(p, str) for p in text_parts)
+                    if str_only:
+                        assistant_msg['content'] = '\n'.join(text_parts)
+                    else:
+                        # Mixed text + image_url parts
+                        assistant_msg['content'] = text_parts
                 else:
                     assistant_msg['content'] = ''
                 if tool_calls:
                     assistant_msg['tool_calls'] = tool_calls
-                # DeepSeek thinking mode requires reasoning_content
-                assistant_msg['reasoning_content'] = thinking if thinking else ''
+                # reasoning_content: always emit for assistant (no provider differentiation)
+                if thinking_text:
+                    assistant_msg['reasoning_content'] = thinking_text
+                elif tool_calls:
+                    assistant_msg['reasoning_content'] = 'tool call'
+                else:
+                    assistant_msg['reasoning_content'] = ''
                 if text_parts or tool_calls:
                     messages.append(assistant_msg)
-            else:
+            elif role == 'user':
                 # User message with tool_result: only emit tool messages
-                # (text is dropped to keep tool_calls -> tool chain unbroken)
                 if tool_results:
                     for tr in tool_results:
                         messages.append(tr)
                 elif text_parts:
-                    # No tool_results, emit as normal user message
-                    messages.append({'role': 'user', 'content': '\n'.join(text_parts)})
+                    # Simplify single-string user messages
+                    str_only = all(isinstance(p, str) for p in text_parts)
+                    if str_only and len(text_parts) == 1:
+                        messages.append({'role': 'user', 'content': text_parts[0]})
+                    elif str_only:
+                        messages.append({'role': 'user', 'content': '\n'.join(text_parts)})
+                    else:
+                        messages.append({'role': 'user', 'content': text_parts})
 
-    # Tool definitions
+    # Normalize system messages (merge multiple, ensure first position)
+    _normalize_system_messages(messages)
+
+    # Tool definitions — clean schema + strip cache_control
     tools = anthropic_data.get('tools')
     openai_tools = None
     if tools:
         openai_tools = []
         for tool in tools:
+            if isinstance(tool, dict):
+                tool.pop('cache_control', None)
             openai_tools.append({
                 'type': 'function',
                 'function': {
                     'name': tool.get('name', ''),
                     'description': tool.get('description', ''),
-                    'parameters': tool.get('input_schema', {'type': 'object', 'properties': {}}),
+                    'parameters': clean_schema(tool.get('input_schema', {'type': 'object', 'properties': {}})),
                 },
             })
 
@@ -378,14 +552,34 @@ def anthropic_to_openai_request(anthropic_data):
     }
     if openai_tools:
         result['tools'] = openai_tools
+
+    # Parameters — o-series uses max_completion_tokens
+    model = result['model']
     if anthropic_data.get('max_tokens'):
-        result['max_tokens'] = anthropic_data['max_tokens']
+        if is_openai_o_series(model):
+            result['max_completion_tokens'] = anthropic_data['max_tokens']
+        else:
+            result['max_tokens'] = anthropic_data['max_tokens']
     if anthropic_data.get('temperature') is not None:
         result['temperature'] = anthropic_data['temperature']
     if anthropic_data.get('top_p') is not None:
         result['top_p'] = anthropic_data['top_p']
     if anthropic_data.get('stop_sequences'):
         result['stop'] = anthropic_data['stop_sequences']
+
+    # Tool choice mapping
+    if anthropic_data.get('tool_choice') is not None:
+        result['tool_choice'] = _map_tool_choice(anthropic_data['tool_choice'])
+
+    # Reasoning effort (o-series / GPT-5+)
+    if supports_reasoning_effort(model):
+        effort = resolve_reasoning_effort(anthropic_data)
+        if effort:
+            result['reasoning_effort'] = effort
+
+    # Stream options: include_usage for streaming (OpenAI doesn't emit usage in SSE otherwise)
+    if result.get('stream'):
+        result['stream_options'] = {'include_usage': True}
 
     logger.info(f"[convert] model={result.get('model')}, {len(messages)} messages, {len(openai_tools or [])} tools")
     return result
@@ -394,7 +588,11 @@ def anthropic_to_openai_request(anthropic_data):
 # --- OpenAI HTTP streaming -> Anthropic SSE ---------------------------------
 
 def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
-    """POST raw HTTP, parse SSE lines, translate chunks to Anthropic SSE format"""
+    """Streaming: translate OpenAI SSE chunks to Anthropic SSE format.
+
+    Manages thinking/text/tool_use content blocks with proper start/delta/stop.
+    Aligned with cc-switch streaming.rs:create_anthropic_sse_stream.
+    """
     import json as _json
 
     handler.send_response(200)
@@ -406,32 +604,39 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
     msg_id = f"msg_{os.urandom(12).hex()}"
     model_name = openai_request.get('model') or OPENAI_MODEL or ''
     chunk_count = 0
-    sent_content_start = False
+    has_sent_message_start = False
+    has_emitted_message_delta = False
 
-    def send_sse(event, data):
-        payload = f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
-        handler.wfile.write(payload.encode('utf-8'))
-        handler.wfile.flush()
+    # Content block tracking
+    next_content_index = 0
+    current_block_type = None          # 'thinking' | 'text' | None
+    current_block_index = None
+    tool_blocks_by_idx = {}            # openai_index -> state dict
+    open_tool_anthropic_indices = set()
+    pending_message_delta = None
 
-    send_sse('message_start', {
-        'type': 'message_start',
-        'message': {
-            'id': msg_id,
-            'type': 'message',
-            'role': 'assistant',
-            'model': model_name,
-            'content': [],
-            'stop_reason': None,
-            'stop_sequence': None,
-            'usage': {'input_tokens': 0, 'output_tokens': 0},
-        },
-    })
-
-    finish_reason = 'end_turn'
-    tool_calls_acc = {}
+    # Usage accounting (three-bucket: input + cache_read + cache_creation == prompt)
     input_tokens = 0
     output_tokens = 0
     cached_tokens = 0
+    cache_creation_tokens = 0
+
+    finish_reason = 'end_turn'
+
+    def send_sse(event, data):
+        payload = f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+        try:
+            handler.wfile.write(payload.encode('utf-8'))
+            handler.wfile.flush()
+        except CLIENT_DISCONNECT_ERRORS:
+            raise
+
+    def close_non_tool_block():
+        nonlocal current_block_type, current_block_index
+        if current_block_index is not None:
+            send_sse('content_block_stop', {'type': 'content_block_stop', 'index': current_block_index})
+            current_block_type = None
+            current_block_index = None
 
     try:
         for line in http_response.iter_lines():
@@ -445,20 +650,19 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
                 break
             chunk = _json.loads(data_str)
 
-            # Capture real usage from final chunk (some providers include it)
+            # ── Usage: three-bucket accounting ──
             usage = chunk.get('usage')
             if usage:
-                raw_input = usage.get('prompt_tokens', 0)
+                raw_input = usage.get('prompt_tokens', 0) or 0
                 output_tokens = usage.get('completion_tokens', output_tokens)
-                prompt_details = usage.get('prompt_tokens_details')
-                if prompt_details:
-                    cached = prompt_details.get('cached_tokens', 0)
-                    if cached > 0:
-                        cached_tokens = cached
-                hit = usage.get('prompt_cache_hit_tokens', 0)
-                if hit > 0:
-                    cached_tokens = hit
-                input_tokens = raw_input - cached_tokens
+                # cache_read: direct field > nested prompt_tokens_details.cached_tokens
+                cached = usage.get('cache_read_input_tokens', 0) or 0
+                if not cached:
+                    details = usage.get('prompt_tokens_details') or {}
+                    cached = details.get('cached_tokens', 0) or 0
+                cache_creation_tokens = usage.get('cache_creation_input_tokens', 0) or 0
+                cached_tokens = int(cached) or 0
+                input_tokens = max(0, int(raw_input) - int(cached) - int(cache_creation_tokens))
 
             choices = chunk.get('choices', [])
             if not choices:
@@ -468,93 +672,222 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
 
             chunk_count += 1
 
-            # Text content
-            text = delta.get('content')
-            if text:
-                if not sent_content_start:
+            # ── Build chunk-level usage JSON for message_delta ──
+            chunk_usage_json = None
+            if usage:
+                uj = {'input_tokens': input_tokens or 0, 'output_tokens': output_tokens or 0}
+                if cached_tokens:
+                    uj['cache_read_input_tokens'] = cached_tokens
+                if cache_creation_tokens:
+                    uj['cache_creation_input_tokens'] = cache_creation_tokens
+                chunk_usage_json = uj
+
+            # ── message_start ──
+            if not has_sent_message_start:
+                has_sent_message_start = True
+                start_usage = {'input_tokens': 0, 'output_tokens': 0}
+                if cached_tokens:
+                    start_usage['cache_read_input_tokens'] = cached_tokens
+                send_sse('message_start', {
+                    'type': 'message_start',
+                    'message': {
+                        'id': msg_id,
+                        'type': 'message',
+                        'role': 'assistant',
+                        'model': model_name,
+                        'content': [],
+                        'stop_reason': None,
+                        'stop_sequence': None,
+                        'usage': start_usage,
+                    },
+                })
+
+            # ── Reasoning content → thinking block ──
+            reasoning = delta.get('reasoning') or delta.get('reasoning_content')
+            if reasoning:
+                if current_block_type != 'thinking':
+                    close_non_tool_block()
+                    idx = next_content_index
+                    next_content_index += 1
                     send_sse('content_block_start', {
                         'type': 'content_block_start',
-                        'index': 0,
-                        'content_block': {'type': 'text', 'text': ''},
+                        'index': idx,
+                        'content_block': {'type': 'thinking', 'thinking': ''},
                     })
-                    sent_content_start = True
+                    current_block_type = 'thinking'
+                    current_block_index = idx
                 send_sse('content_block_delta', {
                     'type': 'content_block_delta',
-                    'index': 0,
+                    'index': current_block_index,
+                    'delta': {'type': 'thinking_delta', 'thinking': reasoning},
+                })
+
+            # ── Text content ──
+            text = delta.get('content')
+            if text:
+                if current_block_type != 'text':
+                    close_non_tool_block()
+                    idx = next_content_index
+                    next_content_index += 1
+                    send_sse('content_block_start', {
+                        'type': 'content_block_start',
+                        'index': idx,
+                        'content_block': {'type': 'text', 'text': ''},
+                    })
+                    current_block_type = 'text'
+                    current_block_index = idx
+                send_sse('content_block_delta', {
+                    'type': 'content_block_delta',
+                    'index': current_block_index,
                     'delta': {'type': 'text_delta', 'text': text},
                 })
 
-            # Tool calls (accumulate then emit)
+            # ── Tool calls ──
             tool_calls = delta.get('tool_calls')
             if tool_calls:
+                close_non_tool_block()
                 for tc in tool_calls:
-                    idx = tc.get('index', 0)
-                    if idx not in tool_calls_acc:
-                        if sent_content_start:
-                            send_sse('content_block_stop', {
-                                'type': 'content_block_stop', 'index': 0,
-                            })
-                        block_idx = len(tool_calls_acc) + (1 if sent_content_start else 0)
-                        fn = tc.get('function', {})
-                        tool_calls_acc[idx] = {
-                            'id': tc.get('id') or f"toolu_{os.urandom(6).hex()}",
-                            'name': fn.get('name', ''),
-                            'args': '',
-                            'block_idx': block_idx,
+                    oai_idx = tc.get('index', 0)
+                    if oai_idx not in tool_blocks_by_idx:
+                        tool_blocks_by_idx[oai_idx] = {
+                            'anthropic_index': next_content_index,
+                            'id': tc.get('id', ''),
+                            'name': '',
+                            'started': False,
+                            'pending_args': '',
                         }
+                        next_content_index += 1
+
+                    tb = tool_blocks_by_idx[oai_idx]
+                    if tc.get('id'):
+                        tb['id'] = tc['id']
+                    fn_block = tc.get('function', {})
+                    if fn_block.get('name'):
+                        tb['name'] = fn_block['name']
+
+                    should_start = not tb['started'] and tb['id'] and tb['name']
+                    if should_start:
+                        tb['started'] = True
                         send_sse('content_block_start', {
                             'type': 'content_block_start',
-                            'index': block_idx,
+                            'index': tb['anthropic_index'],
                             'content_block': {
                                 'type': 'tool_use',
-                                'id': tool_calls_acc[idx]['id'],
-                                'name': tool_calls_acc[idx]['name'],
+                                'id': tb['id'],
+                                'name': tb['name'],
                                 'input': {},
                             },
                         })
-                    fn = tc.get('function', {})
-                    args = fn.get('arguments')
-                    if args:
-                        tool_calls_acc[idx]['args'] += args
-                        send_sse('content_block_delta', {
-                            'type': 'content_block_delta',
-                            'index': tool_calls_acc[idx]['block_idx'],
-                            'delta': {
-                                'type': 'input_json_delta',
-                                'partial_json': args,
-                            },
-                        })
+                        open_tool_anthropic_indices.add(tb['anthropic_index'])
+                        # Emit pending args accumulated before start
+                        if tb['pending_args']:
+                            send_sse('content_block_delta', {
+                                'type': 'content_block_delta',
+                                'index': tb['anthropic_index'],
+                                'delta': {
+                                    'type': 'input_json_delta',
+                                    'partial_json': tb['pending_args'],
+                                },
+                            })
+                            tb['pending_args'] = ''
 
+                    args = fn_block.get('arguments', '')
+                    if args:
+                        if tb['started']:
+                            send_sse('content_block_delta', {
+                                'type': 'content_block_delta',
+                                'index': tb['anthropic_index'],
+                                'delta': {
+                                    'type': 'input_json_delta',
+                                    'partial_json': args,
+                                },
+                            })
+                        else:
+                            tb['pending_args'] += args
+
+            # ── Finish reason – cache until [DONE] for complete usage ──
             if finish:
                 finish_reason = {
                     'stop': 'end_turn',
                     'tool_calls': 'tool_use',
+                    'function_call': 'tool_use',
                     'length': 'max_tokens',
+                    'content_filter': 'end_turn',
                 }.get(finish, 'end_turn')
+
+                # De-duplicate: only first finish_reason triggers block close
+                if has_emitted_message_delta:
+                    # Update cached usage if newer chunk has it
+                    if pending_message_delta and chunk_usage_json:
+                        pending_message_delta['usage'] = chunk_usage_json
+                    continue
+                has_emitted_message_delta = True
+
+                close_non_tool_block()
+
+                # Late-start tool blocks that accumulated args before id/name arrived
+                for idx_key, tb in sorted(tool_blocks_by_idx.items()):
+                    if tb['started']:
+                        continue
+                    if not tb['id'] and not tb['name'] and not tb['pending_args']:
+                        continue
+                    if not tb['id']:
+                        tb['id'] = f"tool_call_{idx_key}"
+                    if not tb['name']:
+                        tb['name'] = 'unknown_tool'
+                    tb['started'] = True
+                    send_sse('content_block_start', {
+                        'type': 'content_block_start',
+                        'index': tb['anthropic_index'],
+                        'content_block': {
+                            'type': 'tool_use',
+                            'id': tb['id'],
+                            'name': tb['name'],
+                            'input': {},
+                        },
+                    })
+                    open_tool_anthropic_indices.add(tb['anthropic_index'])
+                    if tb['pending_args']:
+                        send_sse('content_block_delta', {
+                            'type': 'content_block_delta',
+                            'index': tb['anthropic_index'],
+                            'delta': {
+                                'type': 'input_json_delta',
+                                'partial_json': tb['pending_args'],
+                            },
+                        })
+
+                # Close all open tool blocks
+                for ti in sorted(open_tool_anthropic_indices):
+                    send_sse('content_block_stop', {'type': 'content_block_stop', 'index': ti})
+                open_tool_anthropic_indices.clear()
+
+                # Build usage with three-bucket accounting
+                usage_dict = {
+                    'input_tokens': input_tokens or 0,
+                    'output_tokens': output_tokens or chunk_count,
+                }
+                if cached_tokens:
+                    usage_dict['cache_read_input_tokens'] = cached_tokens
+                if cache_creation_tokens:
+                    usage_dict['cache_creation_input_tokens'] = cache_creation_tokens
+
+                # Cache message_delta — emit after [DONE] with final usage
+                pending_message_delta = {
+                    'type': 'message_delta',
+                    'delta': {'stop_reason': finish_reason, 'stop_sequence': None},
+                    'usage': usage_dict,
+                }
+
+    except CLIENT_DISCONNECT_ERRORS:
+        raise
     except Exception as e:
         logger.error(f"[#{req_id}] Stream error: {e}")
 
-    # Close content blocks
-    if tool_calls_acc:
-        send_sse('content_block_stop', {
-            'type': 'content_block_stop',
-            'index': tool_calls_acc[max(tool_calls_acc.keys())]['block_idx'],
-        })
-    elif sent_content_start:
-        send_sse('content_block_stop', {'type': 'content_block_stop', 'index': 0})
+    # Emit pending message_delta (with accumulated usage)
+    if pending_message_delta:
+        send_sse('message_delta', pending_message_delta)
 
-    usage_dict = {
-        'input_tokens': input_tokens,
-        'output_tokens': output_tokens or chunk_count,
-    }
-    if cached_tokens > 0:
-        usage_dict['cache_read_input_tokens'] = cached_tokens
-
-    send_sse('message_delta', {
-        'type': 'message_delta',
-        'delta': {'stop_reason': finish_reason, 'stop_sequence': None},
-        'usage': usage_dict,
-    })
     send_sse('message_stop', {'type': 'message_stop'})
 
     try:
@@ -635,7 +968,10 @@ def call_security_classifier_to_anthropic(handler, http_response, openai_request
     logger.info(f"[#{req_id}] Security classifier done: {verdict_text}")
 
 def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
-    """Parse HTTP JSON response, translate to Anthropic format"""
+    """Parse HTTP JSON response, translate to Anthropic format.
+
+    Aligned with cc-switch transform.rs:openai_to_anthropic.
+    """
     import json as _json
 
     data = http_response.json()
@@ -643,17 +979,52 @@ def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
     choices = data.get('choices', [])
     if choices and choices[0].get('message'):
         msg = choices[0]['message']
-        text = msg.get('content')
-        if text:
-            content.append({'type': 'text', 'text': text})
+
+        # reasoning_content → thinking block (DeepSeek style)
+        reasoning = msg.get('reasoning_content')
+        if reasoning:
+            content.append({'type': 'thinking', 'thinking': reasoning})
+
+        # Text content
+        msg_content = msg.get('content')
+        if msg_content:
+            if isinstance(msg_content, str):
+                if msg_content:
+                    content.append({'type': 'text', 'text': msg_content})
+            elif isinstance(msg_content, list):
+                for part in msg_content:
+                    part_type = part.get('type', '')
+                    if part_type in ('text', 'output_text'):
+                        text = part.get('text', '')
+                        if text:
+                            content.append({'type': 'text', 'text': text})
+                    elif part_type == 'refusal':
+                        refusal = part.get('refusal', '')
+                        if refusal:
+                            content.append({'type': 'text', 'text': refusal})
+
+        # Refusal at message level (some providers)
+        refusal = msg.get('refusal')
+        if refusal and not any(
+            c.get('type') == 'text' and c.get('text') == refusal
+            for c in content
+        ):
+            content.append({'type': 'text', 'text': refusal})
+
+        # Tool calls
         tool_calls = msg.get('tool_calls')
         if tool_calls:
             for tc in tool_calls:
+                args_str = tc['function'].get('arguments', '{}')
+                try:
+                    parsed_args = _json.loads(args_str) if isinstance(args_str, str) else args_str
+                except _json.JSONDecodeError:
+                    parsed_args = {}
                 content.append({
                     'type': 'tool_use',
                     'id': tc['id'],
                     'name': tc['function']['name'],
-                    'input': _json.loads(tc['function']['arguments']) if tc['function'].get('arguments') else {},
+                    'input': parsed_args,
                 })
 
     finish_reason = 'end_turn'
@@ -661,25 +1032,28 @@ def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
         finish_reason = {
             'stop': 'end_turn',
             'tool_calls': 'tool_use',
+            'function_call': 'tool_use',
             'length': 'max_tokens',
+            'content_filter': 'end_turn',
         }.get(choices[0]['finish_reason'], 'end_turn')
 
-    usage = data.get('usage', {})
-    prompt_details = usage.get('prompt_tokens_details') or {}
-    cached_tokens = 0
-    cached = prompt_details.get('cached_tokens', 0)
-    if cached > 0:
-        cached_tokens = cached
-    hit = usage.get('prompt_cache_hit_tokens', 0)
-    if hit > 0:
-        cached_tokens = hit
-    raw_input = usage.get('prompt_tokens', 0)
+    # Usage: three-bucket accounting
+    usage = data.get('usage', {}) or {}
+    cached = usage.get('cache_read_input_tokens', 0) or 0
+    if not cached:
+        details = usage.get('prompt_tokens_details') or {}
+        cached = details.get('cached_tokens', 0) or 0
+    cache_creation = usage.get('cache_creation_input_tokens', 0) or 0
+    raw_input = usage.get('prompt_tokens', 0) or 0
+
     anthropic_usage = {
-        'input_tokens': raw_input - cached_tokens,
-        'output_tokens': usage.get('completion_tokens', 0),
+        'input_tokens': max(0, int(raw_input) - int(cached) - int(cache_creation)),
+        'output_tokens': usage.get('completion_tokens', 0) or 0,
     }
-    if cached_tokens > 0:
-        anthropic_usage['cache_read_input_tokens'] = cached_tokens
+    if cached:
+        anthropic_usage['cache_read_input_tokens'] = int(cached)
+    if cache_creation:
+        anthropic_usage['cache_creation_input_tokens'] = int(cache_creation)
 
     anthropic_response = {
         'id': f"msg_{os.urandom(12).hex()}",
@@ -927,8 +1301,15 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
 
     def _dispatch_forward(self, parsed_body, body, headers_dict, req_id):
         """Route request based on model type"""
+        global _selected_model
         model = parsed_body.get('model', '') if parsed_body else ''
-        if is_direct_forward_model(model):
+        is_classifier = is_security_classifier_request(parsed_body)
+        if model and not is_classifier:
+            _selected_model = model
+        if is_classifier:
+            logger.info(f"[#{req_id}] Classifier (model={model}) -> HTTP forward")
+            self._http_forward(parsed_body, body, headers_dict, req_id)
+        elif is_direct_forward_model(model):
             logger.info(f"[#{req_id}] Model '{model}' -> direct forward")
             self._direct_forward(body, headers_dict, req_id)
         else:
@@ -936,9 +1317,9 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
             self._http_forward(parsed_body, body, headers_dict, req_id)
 
     def _direct_forward(self, body, headers_dict, req_id):
-        """Forward request directly (for minimax / qwen) with SSE streaming"""
-        forward_headers = dict(headers_dict)
-        forward_headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        """Forward request directly — only converts Authorization -> x-api-key"""
+        forward_headers = {k: v for k, v in headers_dict.items()
+                           if k.lower() not in ('host', 'content-length')}
 
         if 'Authorization' in forward_headers:
             auth = forward_headers['Authorization']
@@ -946,16 +1327,11 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
                 forward_headers['x-api-key'] = auth[7:]
             del forward_headers['Authorization']
 
-        for key in ['Content-Length', 'Accept-Encoding', 'Host', 'Connection']:
-            if key in forward_headers:
-                del forward_headers[key]
-
         response = requests.post(
             FORWARD_URL,
             headers=forward_headers,
             data=body.encode('utf-8') if body else None,
             timeout=HTTP_TIMEOUT,
-            verify=False,
             stream=True,
         )
 
