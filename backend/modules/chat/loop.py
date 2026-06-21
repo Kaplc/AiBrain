@@ -121,6 +121,14 @@ def send_message(
             logger.info("[loop] workmemory updated")
         except Exception as e:
             logger.warning(f"[loop] workmemory update failed: {e}")
+        # 将 pipeline 步骤事件（语义搜索/图扩散）推送到 SSE 流
+        try:
+            from .chat_mod import ChatManager
+            cm = ChatManager.get_instance()
+            for step_info in cm.pop_memory_steps():
+                yield {"type": "memory_step", **step_info}
+        except Exception:
+            pass
 
         # 1. 获取工作记忆
         work_memory = {}

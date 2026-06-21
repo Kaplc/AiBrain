@@ -96,6 +96,8 @@ def register(app, ready_state, logger, stats_db):
                     if t == 'token':
                         token_count += 1
                         yield f"data: {json.dumps(event)}\n\n"
+                    elif t == 'memory_step':
+                        yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'tool_call':
                         yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'tool_history':

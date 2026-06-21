@@ -36,6 +36,9 @@ class ChatManager:
         self._prompt_tokens = 0
         self._completion_tokens = 0
         self._stats_db = None
+        # 记忆搜索步骤缓冲区（LLM 检查、语义搜索、图扩散等，供 SSE 推送到前端）
+        self._memory_steps: list[dict] = []
+        self._memory_steps_lock = threading.Lock()
         # Reactive BrainSession 最近一次内部思考（供 brain_context section 注入）
         self._brain_context: dict = {}
 
@@ -63,6 +66,23 @@ class ChatManager:
         """记录 token 用量"""
         self._prompt_tokens = prompt
         self._completion_tokens = completion
+
+    def push_memory_step(self, step: str, status: str):
+        """追加一条搜索步骤事件（线程安全），供 SSE 流推送到前端
+
+        Args:
+            step: 步骤名称，如 "vector_search" / "graph_recall"
+            status: "running" / "done"
+        """
+        with self._memory_steps_lock:
+            self._memory_steps.append({"step": step, "status": status})
+
+    def pop_memory_steps(self) -> list[dict]:
+        """取出并清空所有未推送的步骤事件"""
+        with self._memory_steps_lock:
+            steps = list(self._memory_steps)
+            self._memory_steps.clear()
+            return steps
 
     def set_brain_context(self, ctx: dict) -> None:
         """记录 Reactive BrainSession 最近一次内部思考（brain_context section 读取）。"""

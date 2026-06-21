@@ -22,9 +22,19 @@ def _set_status(s: str):
         pass
 
 
+def _push_step(step: str, status: str):
+    """向 ChatManager 推送步骤事件，供 SSE 流推送到前端"""
+    try:
+        from modules.chat import ChatManager
+        ChatManager.get_instance().push_memory_step(step, status)
+    except Exception:
+        pass
+
+
 def execute(ctx) -> None:
+    _push_step("graph_recall", "running")
     _set_status("实体搜索")
-    """执行 GraphRecall 步骤：实体映射 + 共现召回 + LLM 过滤
+    """执行 GraphRecall 步骤：实体映射 + 共现召回
 
     Args:
         ctx: PipelineContext
@@ -33,11 +43,7 @@ def execute(ctx) -> None:
     use_infer = meta.get("infer", True)
     if not use_infer:
         logger.info("[step:graph_recall] infer=false, skip")
-        for m in ctx.intermediate.get("semantic_results", []):
-            m.setdefault("entities", [])
-        return
-    if meta.get("_info_enough"):
-        logger.info("[step:graph_recall] info_enough=true, skip")
+        _push_step("graph_recall", "done")
         for m in ctx.intermediate.get("semantic_results", []):
             m.setdefault("entities", [])
         return
@@ -46,12 +52,14 @@ def execute(ctx) -> None:
     semantic_results = ctx.intermediate.get("semantic_results")
     if semantic_results is None:
         logger.info("[step:graph_recall] no semantic_results, skip")
+        _push_step("graph_recall", "done")
         return
 
     from modules.brain.graph import get_graph
     graph = get_graph()
     if not graph:
         logger.warning("[step:graph_recall] graph not available, skip")
+        _push_step("graph_recall", "done")
         for m in semantic_results:
             m.setdefault("entities", [])
         return
@@ -78,6 +86,7 @@ def execute(ctx) -> None:
     candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=200)
     if not candidates:
         logger.info("[step:graph_recall] 扩散召回无候选记忆")
+        _push_step("graph_recall", "done")
         return
 
     # 从 Qdrant 补 display_text（图不再存文本）
@@ -132,6 +141,7 @@ def execute(ctx) -> None:
     logger.info(f"[step:graph_recall] 共现保留 {len(added)} 条")
     for r in added:
         logger.info(f"  └─ {r.get('id','')[:8]} | {r.get('text','')[:80]}")
+    _push_step("graph_recall", "done")
 
 
 def _make_step():
@@ -139,7 +149,7 @@ def _make_step():
     from ...context import StepDef
     return StepDef(
         name="graph_recall",
-        description="共现召回 + LLM 过滤",
+        description="共现召回（实体扩散）",
         execute=execute,
         enabled=True,
         required=False,

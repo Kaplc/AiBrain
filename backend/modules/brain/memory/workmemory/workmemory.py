@@ -350,13 +350,14 @@ class WorkMemoryManager:
     def handle_packagemem(self, query: str = "") -> dict:
         """搜索长期记忆并写入 package.json
 
-        流程：用用户原话向量搜索 → 写 package.json
+        流程：直接用用户原话向量搜索 + 图扩散 → 写 package.json
+        不做 LLM 判断/精炼。
 
         Args:
             query: 当前用户输入的文本，为空时从 output.json 取最新 user 消息
 
         Returns:
-            {"query": str, "result_count": int, "package_size": int, "keyword_queries": [str]}
+            {"query": str, "result_count": int, "package_size": int}
         """
         # 1. 确定搜索词
         if not query:
@@ -365,7 +366,7 @@ class WorkMemoryManager:
                 query = outputs[-1]["user"]
             else:
                 logger.info("[workmemory] handle_packagemem: no input to search")
-                return {"query": "", "result_count": 0, "package_size": 0, "keyword_queries": []}
+                return {"query": "", "result_count": 0, "package_size": 0}
 
         search_query = query
         all_results = []
@@ -386,55 +387,7 @@ class WorkMemoryManager:
                 seen.add(rid)
                 unique_results.append(r)
 
-        # 3. 判断搜索结果是否足够，不够则精炼后重搜
-        try:
-            current = search_query
-            outputs = self.output_mem_read()
-            conversation = []
-            for o in outputs[-6:]:
-                if o.get("user"):
-                    conversation.append({"role": "user", "content": o["user"]})
-                if o.get("assistant"):
-                    conversation.append({"role": "assistant", "content": o["assistant"]})
-            conversation.append({"role": "user", "content": current})
-            from modules.LLM import get_agent_manager
-            agent = get_agent_manager().get("info_sufficient")
-            verdict = agent.run({
-                "query": current,
-                "conversation": conversation,
-                "memories": [{"id": r.get("id",""), "text": r.get("text","") or r.get("memory","")} for r in unique_results],
-            })
-            if not verdict.get("enough") and all_results:
-                logger.info(f"[workmemory] results insufficient, refining query")
-                refined_agent = get_agent_manager().get("memory_search")
-                refined = refined_agent.run({"current": current, "conversation": conversation})
-                refined_query = refined.get("query", "")
-                if refined_query and refined_query != current:
-                    logger.info(f"[workmemory] refined query={refined_query!r}")
-                    more_results = search_memory(refined_query)
-                    seen_ids = {r.get("id", "") for r in all_results if r.get("id")}
-                    for r in more_results:
-                        rid = r.get("id", "")
-                        if rid and rid not in seen_ids:
-                            seen_ids.add(rid)
-                            all_results.append(r)
-                    # 重新去重
-                    unique_results = []
-                    seen = set()
-                    for r in all_results:
-                        rid = r.get("id", "")
-                        if rid and rid not in seen:
-                            seen.add(rid)
-                            unique_results.append(r)
-                    logger.info(f"[workmemory] after refine: total={len(unique_results)}")
-            elif not verdict.get("enough"):
-                logger.info(f"[workmemory] no results to refine")
-            else:
-                logger.info("[workmemory] search results sufficient")
-        except Exception as e:
-            logger.warning(f"[workmemory] info check failed: {e}")
-
-        # 4. 构建 JSON 并写入 package.json
+        # 2. 构建 JSON 并写入 package.json
         pkg_data = {
             "query": search_query,
             "results": [

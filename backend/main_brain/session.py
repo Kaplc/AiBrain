@@ -79,6 +79,21 @@ class BrainSession:
             budgets={"max_tools": int(cfg.get("brain_session_max_cycles", 3))},
         )
 
+        # 附加最近对话上下文，让 judge 的 recall_memory query 更准确
+        try:
+            from modules.brain.memory.workmemory import get_work_memory
+            entries = get_work_memory().output_mem_read()
+            recent = []
+            for e in entries[-6:]:
+                if e.get("user"):
+                    recent.append(f"用户: {e['user'][:200]}")
+                if e.get("assistant"):
+                    recent.append(f"助手: {e['assistant'][:200]}")
+            if recent:
+                ctx.trigger["recent_conversation"] = "\n".join(recent)
+        except Exception:
+            pass
+
         ok = True
         try:
             from .controller import get_cycle_runner

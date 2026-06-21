@@ -76,6 +76,39 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             return jsonify({"error": str(e), "results": []})
 
+    @app.route('/memory/search/test', methods=['POST'])
+    def search_test():
+        """测试搜索接口：纯向量搜索 + 图扩散，不做任何 LLM 调用
+
+        请求: {"query": "搜索文本"}
+        返回: 详见下面 response 中的注释说明
+        """
+        data = request.get_json()
+        query = (data or {}).get('query', '').strip()
+        if not query:
+            return jsonify({"error": "query 不能为空"})
+
+        try:
+            results = search_memory(query)
+            semantic = [r for r in results if r.get('source') == 'semantic']
+            graph = [r for r in results if r.get('source') == 'graph']
+            return jsonify({
+                "search_query": query,
+                "llm_calls": 0,
+                "total_results": len(results),
+                "semantic_results": sorted(semantic, key=lambda x: x['score'], reverse=True)[:15],
+                "graph_results": sorted(graph, key=lambda x: x['score'], reverse=True)[:10],
+                "stats": {
+                    "total": len(results),
+                    "semantic": len(semantic),
+                    "graph": len(graph),
+                },
+                "note": "纯向量搜索+图扩散，0 次 LLM 调用"
+            })
+        except Exception as e:
+            logger.warning(f"[memory/search/test] failed: {e}")
+            return jsonify({"error": str(e), "results": [], "llm_calls": 0})
+
     @app.route('/memory/mcp/store', methods=['POST'])
     def mcp_store():
         data = request.get_json()

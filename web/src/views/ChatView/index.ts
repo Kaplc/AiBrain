@@ -20,6 +20,7 @@ export interface ChatMessage {
   toolCalls?: Array<{name: string; arguments: Record<string,any>; result: string}>
   toolName?: string
   toolArgs?: Record<string, any>
+  memorySteps?: Array<{step: string; status: string}>
 }
 
 const API_BASE = window.location.origin
@@ -220,6 +221,19 @@ export class ChatViewModel {
               this._scrollToBottom()
             } else if (payload.type === 'error') {
               this._toast.show(`AI 响应出错: ${payload.message}`, 'error')
+            } else if (payload.type === 'memory_step') {
+              // 记忆搜索步骤（语义搜索、图扩散等）
+              if (!this.messages[idx].memorySteps) {
+                this.messages[idx].memorySteps = []
+              }
+              // 如果已存在同名步骤，更新其状态；否则追加
+              const exist = this.messages[idx].memorySteps.find(s => s.step === payload.step)
+              if (exist) {
+                exist.status = payload.status
+              } else {
+                this.messages[idx].memorySteps.push({ step: payload.step, status: payload.status })
+              }
+              this._scrollToBottom()
             } else if (payload.type === 'tool_call') {
               // 工具调用追加到 assistant 气泡内
               if (!this.messages[idx].toolCalls) {

@@ -328,6 +328,13 @@ function formatMsgTime(time: string): string {
         >
           <!-- 思绪标记 -->
           <span v-if="msg.is_thought === 1" class="thought-badge">💭 思绪</span>
+          <!-- 记忆搜索步骤展示 -->
+          <div v-if="msg.memorySteps?.length" class="memory-steps">
+            <div v-for="(ms, mi) in msg.memorySteps" :key="mi" class="memory-step">
+              <span class="memory-step-icon">{{ ms.status === 'done' ? '✅' : '⏳' }}</span>
+              <span class="memory-step-name">{{ ms.step === 'vector_search' ? '语义搜索' : ms.step === 'graph_recall' ? '图扩散召回' : ms.step }}</span>
+            </div>
+          </div>
           <!-- 工具调用展示 -->
           <div v-if="msg.toolCalls?.length" class="tool-calls">
             <div v-for="(tc, ti) in msg.toolCalls" :key="ti" class="tool-call">
@@ -542,6 +549,32 @@ function formatMsgTime(time: string): string {
 }
 .tool-call-name {
   color: #a78bfa;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── 记忆搜索步骤（气泡内） ── */
+.memory-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.memory-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.memory-step-icon {
+  font-size: 10px;
+}
+.memory-step-name {
+  color: #34d399;
   font-weight: 600;
   white-space: nowrap;
 }

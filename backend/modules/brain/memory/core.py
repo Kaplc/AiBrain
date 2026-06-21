@@ -359,20 +359,15 @@ def _search_memory_legacy(query: str) -> list[dict]:
                 all_entities = list(dict.fromkeys(all_entities))
                 candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=50)
                 if candidates:
-                    from modules.brain.llm import filter_related_memories
-                    related_ids = filter_related_memories(query, candidates)
-                    if related_ids:
-                        related_map = {c["id"]: c for c in candidates}
-                        semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
-                        min_semantic = min(semantic_scores) if semantic_scores else 0.5
-                        graph_base_score = min_semantic * 0.8
-                        for i, rid in enumerate(related_ids[:10]):
-                            c = related_map.get(rid)
-                            if c:
-                                c["score"] = round(graph_base_score - i * 0.001, 4)
-                                c["source"] = "graph"
-                                c["entities"] = entity_map.get(c["id"], [])
-                                memories.append(c)
+                    related_map = {c["id"]: c for c in candidates}
+                    semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
+                    min_semantic = min(semantic_scores) if semantic_scores else 0.5
+                    graph_base_score = min_semantic * 0.8
+                    for i, c in enumerate(candidates[:10]):
+                        c["score"] = round(graph_base_score - i * 0.001, 4)
+                        c["source"] = "graph"
+                        c["entities"] = entity_map.get(c["id"], [])
+                        memories.append(c)
         except Exception as e:
             logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
     else:

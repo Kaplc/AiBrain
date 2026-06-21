@@ -8,28 +8,31 @@ VectorSearch Step - 语义向量搜索（required）
 """
 import logging
 
-from modules.brain.memory.store import memory_search
-
-
-def _set_status(s: str):
-    try:
-        from modules.chat import ChatManager
-        ChatManager.get_instance().set_status(s)
-    except Exception:
-        pass
 from modules.brain.memory.core import _get_search_options
+from modules.brain.memory.store import memory_search
 
 logger = logging.getLogger('memory.pipeline')
 
 
+def _push_step(step: str, status: str):
+    """向 ChatManager 推送步骤事件，供 SSE 流推送到前端"""
+    try:
+        from modules.chat import ChatManager
+        ChatManager.get_instance().push_memory_step(step, status)
+    except Exception:
+        pass
+
+
 def execute(ctx) -> None:
-    """执行 VectorSearch 步骤：自适应语义搜索
+    """执行 VectorSearch 步骤：语义向量搜索 → 写入 intermediate 供后续图扩散
+
+    纯向量搜索，不做 LLM 判断/筛选。下游 graph_recall 步骤负责图扩散补充。
 
     Args:
         ctx: PipelineContext
             input_data: str (query)
     """
-    _set_status("向量搜索")
+    _push_step("vector_search", "running")
     query = ctx.input_data
     opts = _get_search_options()
 
@@ -60,45 +63,13 @@ def execute(ctx) -> None:
     for m in memories:
         logger.info(f"  └─ [{m.get('score',0):.4f}] {m.get('id','')[:8]} | {m.get('text','')[:80]}")
 
-    # 先判断搜索结果是否足够回答（不筛选，用原始结果判断）
-    ctx.metadata["_info_enough"] = False
-    if memories:
-        try:
-            from modules.LLM import get_agent_manager
-            agent = get_agent_manager().get("info_sufficient")
-            verdict = agent.run({"query": query, "memories": memories})
-            if verdict.get("enough"):
-                ctx.metadata["_info_enough"] = True
-                logger.info("[step:vector_search] info_sufficient=true，跳过筛选，直接回复")
-            else:
-                logger.info(f"[step:vector_search] info_sufficient=false，继续筛选")
-        except Exception as e:
-            logger.warning(f"[step:vector_search] info_sufficient failed: {e}")
-
-    # 如果不够，再进行 LLM 筛选（缩小范围供下游实体扩散）
-    if not ctx.metadata["_info_enough"] and memories:
-        try:
-            from modules.LLM import get_agent_manager
-            agent = get_agent_manager().get("memory_relation")
-            related_ids = agent.run({"query": query, "candidates": memories})
-            if related_ids:
-                id_set = set(related_ids)
-                memories = [m for m in memories if m.get("id") in id_set]
-                logger.info(f"[step:vector_search] LLM filter: {len(related_ids)} related kept")
-                for m in memories:
-                    logger.info(f"  └─ {m.get('id','')[:8]} | {m.get('text','')[:80]}")
-            else:
-                memories = []
-                logger.info("[step:vector_search] LLM filter: none related")
-        except Exception as e:
-            logger.warning(f"[step:vector_search] LLM filter failed, using all results: {e}")
-
     # 写入 intermediate
     ctx.intermediate["semantic_results"] = memories
     ctx.intermediate["min_semantic_score"] = min_semantic
     ctx.metadata["_search_query"] = query
 
     logger.info(f"[step:vector_search] results={len(memories)} min_score={min_semantic:.4f}")
+    _push_step("vector_search", "done")
 
 
 def _make_step():
