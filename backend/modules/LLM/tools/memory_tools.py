@@ -40,7 +40,7 @@ MEMORY_SEARCH_TOOL = ToolDef(
         "properties": {
             "query": {
                 "type": "string",
-                "description": "搜索关键词或自然语言描述",
+                "description": "用自然语言描述你想搜索的内容（例如"小明的生日是什么时候"），不要只输关键词",
             }
         },
         "required": ["query"],

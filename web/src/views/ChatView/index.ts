@@ -42,6 +42,29 @@ export class ChatViewModel {
     prompt_tokens: 0,
     completion_tokens: 0,
     max_context_tokens: 400000,
+    // 大脑循环状态（来自 /chat/state brain 字段）
+    brain: null as {
+      life_loop_status: string
+      current_activity: string
+      current_focus: string
+      idle_seconds: number
+      energy: number
+      mood: { label?: string; valence?: number; arousal?: number }
+      open_loop_count: number
+      pending_expression_count: number
+      scheduler_running: boolean
+      drives: Record<string, number>
+      top_concerns: Array<{ node_id: string; effective: number }>
+      reflection: {
+        last_reflection_at: string | null
+        last_reflection_summary: string
+        beliefs: string[]
+        interests: string[]
+        goals: string[]
+        open_questions: string[]
+      }
+      last_error: string
+    } | null,
   })
 
   private _abortCtl: AbortController | null = null

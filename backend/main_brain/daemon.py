@@ -242,7 +242,7 @@ class LifeLoopDaemon:
         reflect_result = {"ok": False, "skipped": True, "reason": "not executed",
                           "updated_fields": [], "summary": ""}
         try:
-            from main_brain.narrative_store import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             store = get_self_narrative()
             if store is None:
                 reflect_result = {"ok": False, "skipped": True, "reason": "narrative store not ready",
@@ -279,6 +279,9 @@ class LifeLoopDaemon:
             "next_wake_hint": {"tick_type": _next_tick(tick_type), "reason": reason},
         })
 
+        # daily_tick 走 reflect 路径，这里补一次日沉淀触发
+        self._maybe_consolidate(tick_type)
+
         logger.info(
             f"[tick] {tick_type} activity=reflect "
             f"ok={reflect_result.get('ok')} skipped={reflect_result.get('skipped')} "
@@ -296,6 +299,19 @@ class LifeLoopDaemon:
             "reflect_result": reflect_result,
             "dry_run": False,
         }
+
+    def _maybe_consolidate(self, tick_type: str) -> None:
+        """daily_tick 时触发输出记忆沉淀（仅 dayliy，受开关控制）。"""
+        if tick_type != TICK_DAILY:
+            return
+        try:
+            from .consolidation import (
+                enqueue_consolidation, is_auto_trigger_enabled, TRIGGER_DAILY_TICK,
+            )
+            if is_auto_trigger_enabled(TRIGGER_DAILY_TICK):
+                enqueue_consolidation(TRIGGER_DAILY_TICK)
+        except Exception as e:
+            logger.warning(f"[daemon] daily consolidate trigger failed: {e}")
 
     # ── TickInput 构造 ───────────────────────────────────────
     def _build_tick_input(self, tick_type: str):

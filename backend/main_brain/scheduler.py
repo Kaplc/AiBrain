@@ -31,7 +31,7 @@ class LifeScheduler:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._daemon = None
-        self._last_run: dict[str, float] = {}  # tick_type -> monotonic timestamp
+        self._clock = None  # 懒加载 BrainClock
         self._lock = threading.Lock()
 
     # ── 日志初始化 ───────────────────────────────────────────
@@ -88,6 +88,8 @@ class LifeScheduler:
         self._thread = None
         if thread is not None:
             thread.join(timeout=5)
+        if self._clock is not None:
+            self._clock.persist_on_stop()
         logger.info("[scheduler] stopped")
         return {"ok": True, "status": "stopped"}
 
@@ -96,11 +98,13 @@ class LifeScheduler:
 
     # ── 主循环 ───────────────────────────────────────────────
     def _loop(self) -> None:
-        import time as _t
+        # 延迟加载 BrainClock（scheduler 启动时才创建，不干扰模块加载阶段）
+        if self._clock is None:
+            from .clock import get_brain_clock
+            self._clock = get_brain_clock()
         # 启动后先等一个短 tick，给系统预热时间
         self._sleep(get_brain_config().get("short_tick_seconds", 30))
         while not self._stop.is_set():
-            now = _t.monotonic()
             cfg = get_brain_config()
             busy = _is_chat_busy()
             schedule = [
@@ -115,10 +119,9 @@ class LifeScheduler:
                 # 用户聊天时只保留 short
                 if busy and tick_type != TICK_SHORT:
                     continue
-                last = self._last_run.get(tick_type, 0.0)
-                if now - last >= interval:
+                if self._clock.should_fire(tick_type, interval):
                     self._fire(tick_type)
-                    self._last_run[tick_type] = _t.monotonic()
+                    self._clock.mark_fired(tick_type)
             # 以 short 间隔的较小值为心跳，避免空转过频
             self._sleep(min(15, max(5, int(cfg.get("short_tick_seconds", 30)) // 2)))
 

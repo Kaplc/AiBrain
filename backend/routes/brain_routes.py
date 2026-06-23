@@ -105,3 +105,66 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] run detail failed: {e}")
             return jsonify({"error": str(e)}), 500
+
+    # ── 输出记忆沉淀（memory consolidation）调试接口 ──────────
+    @app.route('/brain/memory/consolidate', methods=['POST'])
+    def brain_memory_consolidate():
+        """触发一次输出记忆沉淀。body: {trigger, window_size, dry_run}"""
+        try:
+            body = request.get_json(silent=True) or {}
+            trigger = body.get("trigger", "manual")
+            window_size = int(body.get("window_size", 20))
+            dry_run = bool(body.get("dry_run", False))
+            if window_size <= 0 or window_size > 100:
+                return jsonify({"error": "window_size 必须在 1..100"}), 400
+            from main_brain.consolidation import consolidate_memory
+            return jsonify(consolidate_memory(trigger, dry_run=dry_run, window_size=window_size))
+        except Exception as e:
+            logger.warning(f"[brain] memory/consolidate failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/memory/consolidate/preview', methods=['POST'])
+    def brain_memory_consolidate_preview():
+        """dry-run 预览候选+评分，不写库、不推进检查点。body: {trigger, window_size}"""
+        try:
+            body = request.get_json(silent=True) or {}
+            trigger = body.get("trigger", "manual")
+            window_size = int(body.get("window_size", 20))
+            if window_size <= 0 or window_size > 100:
+                return jsonify({"error": "window_size 必须在 1..100"}), 400
+            from main_brain.consolidation import preview_memory_consolidation
+            return jsonify(preview_memory_consolidation(trigger, window_size=window_size))
+        except Exception as e:
+            logger.warning(f"[brain] memory/consolidate/preview failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/memory/consolidation/state', methods=['GET'])
+    def brain_memory_consolidation_state():
+        """沉淀检查点状态。"""
+        try:
+            from modules.brain.memory.consolidation import get_trace_store
+            state = get_trace_store().get_state()
+            return jsonify({
+                "last_processed_seq": state.last_processed_seq,
+                "last_run_id": state.last_run_id,
+                "last_saved_at": state.last_saved_at,
+                "last_saved_memory_id": state.last_saved_memory_id,
+                "policy_version": state.policy_version,
+                "cooldown_until": state.cooldown_until,
+                "pending_backlog": state.pending_backlog,
+                "seen_hash_count": len(state.seen_hashes),
+            })
+        except Exception as e:
+            logger.warning(f"[brain] memory/consolidation/state failed: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/brain/memory/consolidation/recent', methods=['GET'])
+    def brain_memory_consolidation_recent():
+        """最近几次沉淀运行摘要（调试/回放）。query: limit。"""
+        try:
+            limit = int(request.args.get("limit", 10))
+            from modules.brain.memory.consolidation import get_trace_store
+            return jsonify({"runs": get_trace_store().recent_runs(limit=limit)})
+        except Exception as e:
+            logger.warning(f"[brain] memory/consolidation/recent failed: {e}")
+            return jsonify({"runs": [], "error": str(e)}), 500

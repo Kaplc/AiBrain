@@ -64,6 +64,23 @@ function scrollToBottom() {
 
 const proactiveLoading = ref(false)
 
+// 大脑循环详细面板折叠状态
+const showBrainDetail = ref(false)
+const brain = computed(() => chatViewModel.loopState.brain)
+
+function fmtIdle(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  return `${h}h${m ? ` ${m}m` : ''}`
+}
+
+function formatDriveLabel(key: string): string {
+  const map: Record<string, string> = { curiosity: '好奇', companionship: '陪伴', self_expression: '表达', completion: '完成' }
+  return map[key] || key
+}
+
 async function handleProactive() {
   if (proactiveLoading.value) return
   proactiveLoading.value = true
@@ -304,6 +321,60 @@ function formatMsgTime(time: string): string {
       </template>
       <button class="status-btn" @click="openSettings" title="系统提示词">⚙</button>
       <button class="status-btn" @click="handleClear" title="清空对话">🗑</button>
+    </div>
+
+    <!-- 大脑循环状态条（简略信息 + 展开按钮） -->
+    <div v-if="brain" class="brain-bar" :class="{ running: brain.scheduler_running }" @click="showBrainDetail = !showBrainDetail">
+      <span class="brain-bar-icon">{{ brain.scheduler_running ? '🧠' : '💤' }}</span>
+      <span class="brain-bar-activity">{{ brain.current_activity || 'wait' }}{{ brain.current_focus ? ': ' + brain.current_focus.slice(0, 20) : '' }}</span>
+      <span class="brain-bar-idle">{{ fmtIdle(brain.idle_seconds || 0) }}</span>
+      <span v-if="brain.pending_expression_count > 0" class="brain-bar-pending">{{ brain.pending_expression_count }} 待表达</span>
+      <span class="brain-bar-toggle">{{ showBrainDetail ? '▲' : '▼' }}</span>
+    </div>
+
+    <!-- 大脑循环详细面板（折叠） -->
+    <div v-if="showBrainDetail && brain" class="brain-detail">
+      <div class="bd-section">
+        <div class="bd-title">🧬 驱动力</div>
+        <div class="bd-drives">
+          <div v-for="(val, key) in brain.drives" :key="key" class="bd-drive">
+            <span class="bd-drive-label">{{ formatDriveLabel(key) }}</span>
+            <div class="bd-drive-bar"><div class="bd-drive-fill" :style="{ width: (val * 100) + '%' }"></div></div>
+            <span class="bd-drive-val">{{ (val * 100).toFixed(0) }}%</span>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="brain.top_concerns?.length" class="bd-section">
+        <div class="bd-title">🎯 当前关注</div>
+        <div class="bd-concerns">
+          <span v-for="c in brain.top_concerns" :key="c.node_id" class="bd-concern" :title="'effective: ' + c.effective">{{ c.node_id }}</span>
+        </div>
+      </div>
+
+      <div class="bd-section bd-meta">
+        <span class="bd-meta-item">能量 {{ (brain.energy * 100).toFixed(0) }}%</span>
+        <span class="bd-meta-item">心情 {{ brain.mood?.label || brain.mood?.valence?.toFixed(2) || '--' }}</span>
+        <span class="bd-meta-item">{{ brain.open_loop_count || 0 }} 闭环</span>
+      </div>
+
+      <div v-if="brain.reflection?.beliefs?.length || brain.reflection?.interests?.length" class="bd-section">
+        <div class="bd-title">💭 反思</div>
+        <div class="bd-reflection">
+          <div v-if="brain.reflection.beliefs?.length" class="bd-rf-row">
+            <span class="bd-rf-label">信念</span>
+            <span class="bd-rf-text">{{ brain.reflection.beliefs.join('; ') }}</span>
+          </div>
+          <div v-if="brain.reflection.interests?.length" class="bd-rf-row">
+            <span class="bd-rf-label">兴趣</span>
+            <span class="bd-rf-text">{{ brain.reflection.interests.join('; ') }}</span>
+          </div>
+          <div v-if="brain.reflection.last_reflection_at" class="bd-rf-row dim">
+            <span class="bd-rf-label">反思于</span>
+            <span class="bd-rf-text">{{ brain.reflection.last_reflection_at.slice(0, 19) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 消息列表 -->
@@ -1016,4 +1087,61 @@ function formatMsgTime(time: string): string {
 }
 .btn-save:hover { background: #6d28d9; }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── 大脑循环状态条 ── */
+.brain-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  background: #1a1d27;
+  border-bottom: 1px solid #2d3149;
+  font-size: 11px;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s;
+}
+.brain-bar:hover { background: #1e2030; }
+.brain-bar.running { border-left: 3px solid #7c3aed; }
+.brain-bar-icon { font-size: 12px; }
+.brain-bar-activity { flex: 1; color: #a78bfa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-bar-idle { color: #94a3b8; }
+.brain-bar-pending { color: #fbbf24; font-weight: 600; }
+.brain-bar-toggle { font-size: 9px; color: #475569; }
+
+/* ── 大脑循环详情面板 ── */
+.brain-detail {
+  background: #14171f;
+  border-bottom: 1px solid #2d3149;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.bd-title { font-size: 10px; color: #64748b; margin-bottom: 6px; font-weight: 600; }
+
+/* 驱动力 */
+.bd-drives { display: flex; flex-direction: column; gap: 4px; }
+.bd-drive { display: flex; align-items: center; gap: 8px; }
+.bd-drive-label { min-width: 32px; color: #94a3b8; font-size: 11px; }
+.bd-drive-bar { flex: 1; height: 6px; background: #2d3149; border-radius: 3px; overflow: hidden; }
+.bd-drive-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #a78bfa); border-radius: 3px; transition: width .3s; }
+.bd-drive-val { min-width: 28px; text-align: right; color: #a78bfa; font-size: 11px; }
+
+/* 关注 */
+.bd-concerns { display: flex; flex-wrap: wrap; gap: 4px; }
+.bd-concern { background: #1e2030; color: #cbd5e1; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #2d3149; }
+
+/* 元信息 */
+.bd-meta { display: flex; gap: 16px; color: #94a3b8; font-size: 11px; }
+.bd-meta-item { display: flex; align-items: center; gap: 4px; }
+
+/* 反思 */
+.bd-reflection { display: flex; flex-direction: column; gap: 4px; }
+.bd-rf-row { display: flex; gap: 6px; font-size: 11px; }
+.bd-rf-label { color: #64748b; min-width: 28px; flex-shrink: 0; }
+.bd-rf-text { color: #cbd5e1; }
+.bd-rf-row.dim .bd-rf-text { color: #64748b; }
 </style>

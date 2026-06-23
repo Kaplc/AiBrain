@@ -1,5 +1,5 @@
 """
-自我叙事模块 - LLM Prompt 常量（已迁至 main_brain）
+自我叙事模块 - LLM Prompt 常量（已迁至 main_brain/narrative）
 用于反思引擎、叙事显著性判断、自传初始化
 """
 

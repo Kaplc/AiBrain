@@ -71,7 +71,7 @@ def search_memory(query: str) -> list[dict]:
     """搜索记忆，返回匹配的文本和分数
 
     Args:
-        query: 搜索关键词
+        query: 自然语言搜索语句
     """
     result = _call("/memory/mcp/search", {"query": query})
     if "error" in result:

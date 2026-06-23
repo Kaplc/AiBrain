@@ -38,7 +38,7 @@ class LearningAdapter:
         if not thought:
             return
         try:
-            from main_brain.narrative_store import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if sn:
                 # v1：仅作为一次反思记录写入，具体方法由 self_narrative 决定

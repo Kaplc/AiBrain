@@ -147,7 +147,7 @@ def register(app, ready_state, logger, stats_db):
         data = request.get_json()
         query = (data or {}).get('query', '').strip()
         if not query:
-            return jsonify({"error": "搜索关键词不能为空"})
+            return jsonify({"error": "搜索内容不能为空"})
         rowid = stats_db.append_stream('search', content=query, status='pending')
         try:
             search_data = _search_all_categories(query)

@@ -278,8 +278,10 @@ def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
 def search_memory(query: str) -> list[dict]:
     """搜索记忆，通过 PipelineEngine 编排各搜索阶段。
 
+    建议使用完整的自然语言描述搜索（如"小明的生日是什么时候"），效果优于关键词拼接。
+
     Args:
-        query: 搜索关键词
+        query: 自然语言搜索语句
 
     Returns:
         list[dict]: [{id, text, score}, ...]

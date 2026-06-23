@@ -50,6 +50,12 @@ DEFAULT_BRAIN = {
     "proactive_interruption_max": 0.35,
     "proactive_cooldown_minutes": 30,
     "proactive_repetition_max": 0.6,
+
+    # 输出记忆沉淀（memory_consolidation）
+    # 总开关默认关：自动沉淀会调 LLM + 写长时记忆，确认无碍后再打开。manual 接口始终可用。
+    "memory_consolidation_enabled": False,
+    "memory_consolidation_daily_tick": False,    # 日 tick 沉淀
+    "memory_consolidation_window_size": 20,      # 单次扫描窗口
 }
 
 

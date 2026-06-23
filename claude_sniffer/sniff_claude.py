@@ -898,7 +898,9 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
         pass
 
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (stream, {chunk_count} chunks) | +{elapsed:.1f}s")
+    in_k = f"{input_tokens / 1000:.1f}k" if input_tokens else "0k"
+    out_k = f"{output_tokens / 1000:.1f}k" if output_tokens else "0k"
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (stream, {chunk_count} chunks) | ↑{in_k} ↓{out_k} | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] HTTP stream done: {chunk_count} chunks, finish={finish_reason}")
 
 
@@ -964,7 +966,9 @@ def call_security_classifier_to_anthropic(handler, http_response, openai_request
         max_entries=20,
     )
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (classifier, {verdict_text}) | +{elapsed:.1f}s")
+    in_k = f"{anthropic_usage['input_tokens'] / 1000:.1f}k" if anthropic_usage.get('input_tokens') else "0k"
+    out_k = f"{anthropic_usage['output_tokens'] / 1000:.1f}k" if anthropic_usage.get('output_tokens') else "0k"
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 (classifier, {verdict_text}) | ↑{in_k} ↓{out_k} | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] Security classifier done: {verdict_text}")
 
 def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
@@ -1074,7 +1078,9 @@ def call_openai_to_anthropic(handler, http_response, openai_request, req_id):
     handler.wfile.write(body)
 
     elapsed = time.perf_counter() - handler._req_t0
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 ({len(content)} blocks) | +{elapsed:.1f}s")
+    in_k = f"{anthropic_usage['input_tokens'] / 1000:.1f}k" if anthropic_usage.get('input_tokens') else "0k"
+    out_k = f"{anthropic_usage['output_tokens'] / 1000:.1f}k" if anthropic_usage.get('output_tokens') else "0k"
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Response: 200 ({len(content)} blocks) | ↑{in_k} ↓{out_k} | +{elapsed:.1f}s")
     logger.info(f"[#{req_id}] HTTP non-stream done: {len(content)} blocks")
 
 
@@ -1339,8 +1345,19 @@ class ClaudeSniffer(BaseHTTPRequestHandler):
         is_sse = 'text/event-stream' in content_type
 
         elapsed = time.perf_counter() - self._req_t0
+        token_display = ""
+        if response.status_code == 200 and 'application/json' in response.headers.get('Content-Type', ''):
+            try:
+                usage_info = response.json().get('usage') or {}
+                if usage_info:
+                    in_t = usage_info.get('prompt_tokens', 0) or 0
+                    out_t = usage_info.get('completion_tokens', 0) or 0
+                    if in_t or out_t:
+                        token_display = f" | ↑{in_t / 1000:.1f}k ↓{out_t / 1000:.1f}k"
+            except Exception:
+                pass
         ts = datetime.now().strftime('%H:%M:%S')
-        print(f"[{ts}] Response: {response.status_code} | +{elapsed:.1f}s")
+        print(f"[{ts}] Response: {response.status_code}{token_display} | +{elapsed:.1f}s")
         logger.info(f"[#{req_id}] Direct response: {response.status_code}")
         if response.status_code >= 400:
             self._record_error(

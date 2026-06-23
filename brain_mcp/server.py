@@ -22,8 +22,8 @@ def store(text: str) -> str:
 
 @mcp.tool()
 def search(query: str) -> dict:
-    """搜索记忆，返回文本和相关性分数。Args: query=搜索关键词"""
+    """搜索记忆，返回文本和相关性分数。Args: query=自然语言搜索语句"""
     if not query or not query.strip():
-        raise ValueError("搜索关键词不能为空")
+        raise ValueError("搜索内容不能为空")
     results = search_memory(query)
     return {"query": query, "results": results}

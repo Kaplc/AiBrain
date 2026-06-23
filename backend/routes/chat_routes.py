@@ -4,6 +4,49 @@ import json
 from flask import request, jsonify, Response, stream_with_context
 
 
+# ── brain 状态辅助（外部刺激 + 反思） ──────────────────────────
+def _get_drives_summary() -> dict:
+    """获取驱动力全量值"""
+    try:
+        from modules.brain.state import get_drives
+        return get_drives().get_all()
+    except Exception:
+        return {}
+
+
+def _get_top_concerns(n: int = 5) -> list[dict]:
+    """获取 top N 当前关注（node_id + effective 值）"""
+    try:
+        from modules.brain.state import get_concerns
+        top = get_concerns().all_effective(n)
+        return [{"node_id": node_id, "effective": round(eff, 4)} for node_id, eff in top if eff > 0]
+    except Exception:
+        return []
+
+
+def _get_reflection_summary() -> dict:
+    """获取反思摘要（beliefs / interests / goals + 上次反思时间）"""
+    try:
+        from main_brain.narrative import get_self_narrative
+        store = get_self_narrative()
+        if store is None:
+            return {}
+        bio = store.get_autobiography()
+        if not bio:
+            return {}
+        cs = bio.get("current_state", {})
+        return {
+            "last_reflection_at": cs.get("last_reflection_at"),
+            "last_reflection_summary": cs.get("thinking", "")[:200],
+            "beliefs": bio.get("beliefs", [])[:3],
+            "interests": bio.get("interests", [])[:3],
+            "goals": bio.get("goals", [])[:3],
+            "open_questions": bio.get("open_questions", [])[:3],
+        }
+    except Exception:
+        return {}
+
+
 def register(app, ready_state, logger, stats_db):
     @app.route('/chat/history', methods=['GET'])
     def chat_history():
@@ -32,6 +75,9 @@ def register(app, ready_state, logger, stats_db):
                         "content": entry["assistant"],
                         "created_at": ts,
                     })
+            # 后台轮询调试日志
+            last_msg = messages[-1]["content"][:40] if messages else "(无消息)"
+            logger.info(f"[poll] /chat/history 返回 {len(messages)} 条消息 | 末条={last_msg!r}")
             return jsonify({"messages": messages})
         except Exception as e:
             logger.error(f"[chat] load history failed: {e}")
@@ -69,6 +115,13 @@ def register(app, ready_state, logger, stats_db):
         from modules.chat import ChatManager
         mgr = ChatManager.get_instance()
         logger.info(f"[chat] send start: msg={user_msg[:60]!r}")
+
+        # 标记用户活跃时间（脱离 brain_session 开关，始终跟踪）
+        try:
+            from main_brain.adapters.state import get_state_adapter
+            get_state_adapter().mark_user_contact()
+        except Exception:
+            pass
 
         # Reactive BrainSession：回复前先内部思考几轮（可配置开关，失败自动回退）
         try:
@@ -158,10 +211,18 @@ def register(app, ready_state, logger, stats_db):
                 "life_loop_status": life.get("life_loop_status", ""),
                 "current_focus": life.get("current_focus", ""),
                 "current_activity": life.get("current_activity", ""),
+                "idle_seconds": life.get("idle_seconds", 0),
+                "energy": life.get("energy", 0.6),
+                "mood": life.get("mood", {}),
                 "open_loop_count": len(life.get("open_loops", []) or []),
                 "pending_expression_count": len(life.get("pending_expressions", []) or []),
                 "last_error": life.get("last_error", ""),
                 "scheduler_running": get_life_loop_daemon().is_running(),
+                # 外部刺激：驱动力 + 当前关注
+                "drives": _get_drives_summary(),
+                "top_concerns": _get_top_concerns(5),
+                # 反思摘要
+                "reflection": _get_reflection_summary(),
             }
         except Exception as e:
             logger.warning(f"[chat] brain state enrich failed: {e}")

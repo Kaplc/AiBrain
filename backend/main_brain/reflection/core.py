@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from modules.brain.llm import call_llm
-from main_brain.narrative_utils import parse_json
+from main_brain.narrative import parse_json
 
 logger = logging.getLogger('main_brain.reflection')
 
@@ -98,7 +98,6 @@ def run_reflection(store, force=False):
             logger.warning("[reflection] LLM response parse failed")
             return _reflect_result(False, reason="LLM response parse failed")
 
-        # 更新认知状态
         updates = {}
         for field in ("beliefs", "interests", "goals", "open_questions"):
             items = obj.get(field, [])
@@ -108,7 +107,6 @@ def run_reflection(store, force=False):
         if updates:
             _apply_cognitive_updates(store, autobiography, updates)
 
-        # 更新反思时间
         now = datetime.utcnow().isoformat()
         current = autobiography.get("current_state", {})
         current["last_reflection_at"] = now
@@ -126,7 +124,6 @@ def run_reflection(store, force=False):
 
 
 def _reflect_result(ok, *, skipped=False, updated_fields=None, reason="", summary=""):
-    """构造反思结果字典"""
     return {
         "ok": ok,
         "activity": "reflect",
@@ -164,13 +161,6 @@ def _get_recent_memories(limit: int = 30) -> list[str]:
 
 
 def _apply_cognitive_updates(store, autobiography: dict, updates: dict):
-    """将认知更新应用到自传
-
-    Args:
-        store: SelfNarrativeStore
-        autobiography: 当前自传
-        updates: {"beliefs": [...], "interests": [...], ...}
-    """
     if not updates:
         return
 

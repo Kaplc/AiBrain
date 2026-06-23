@@ -11,8 +11,8 @@ from datetime import datetime
 
 logger = logging.getLogger('self_narrative')
 
-# ── JSON 副本文件路径（放在同目录 data/ 下）──
-_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 由于 __file__ 现在是 narrative/store.py，上两层才是 main_brain/
+_FILE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SELF_NARRATIVE_FILE = os.path.join(_FILE_DIR, "data", "self_narrative.json")
 
 # ── 身份预算常量 ──────────────────────────────────────────
@@ -88,27 +88,19 @@ class SelfNarrativeStore:
     VALID_ANCHOR_TYPES = {"normal", "milestone", "identity", "current_chapter"}
 
     def __init__(self, graph):
-        """初始化：建表、加载或创建自传文档
-
-        Args:
-            graph: GraphMemory 实例，复用其 _exec / _conn
-        """
         self._graph = graph
         self._exec = graph._exec
         self._conn = graph._conn
         self._lock = threading.Lock()
 
-        # 建表
         for stmt in _CREATE_TABLES.strip().split(";"):
             stmt = stmt.strip()
             if stmt:
                 self._exec(stmt)
         self._conn.commit()
 
-        # 加载或初始化自传
         self._ensure_autobiography()
 
-        # 启动时同步一次 JSON 文件副本
         try:
             bio = self.get_autobiography()
             self._sync_to_file(bio)
@@ -120,14 +112,12 @@ class SelfNarrativeStore:
     # ── 自传文档 CRUD ────────────────────────────────────────
 
     def _ensure_autobiography(self):
-        """确保 autobiography 表中有数据行，没有则创建初始自传"""
         rows = self._exec("SELECT data FROM autobiography WHERE id = 1")
         if rows:
             data = rows[0][0]
             if data and data != '{}':
                 return
 
-        # 尝试用 LLM 从已有记忆生成初始自传
         autobiography = self._try_generate_initial_autobiography()
         if autobiography is None:
             autobiography = dict(_INITIAL_AUTOBIOGRAPHY)
@@ -140,9 +130,7 @@ class SelfNarrativeStore:
         logger.info("[narrative_store] initial autobiography created")
 
     def _try_generate_initial_autobiography(self) -> dict | None:
-        """尝试从已有记忆中生成初始自传，失败返回 None"""
         try:
-            # 取最近 50 条记忆
             rows = self._exec(
                 "SELECT text FROM memory_nodes ORDER BY rowid DESC LIMIT 50"
             )
@@ -157,10 +145,8 @@ class SelfNarrativeStore:
             from modules.brain.llm import call_llm
 
             user_prompt = INITIAL_AUTOBIOGRAPHY_PROMPT.format(memories=memories_text)
-            # system prompt 为空，全部内容放 user prompt
             raw = call_llm("你是一个 JSON 生成助手，只输出 JSON。", user_prompt, timeout=30)
 
-            # 解析 JSON
             from .utils import parse_json
             parsed = parse_json(raw)
             if parsed and "identity" in parsed:
@@ -171,7 +157,6 @@ class SelfNarrativeStore:
         return None
 
     def get_autobiography(self) -> dict:
-        """读取完整自传 JSON"""
         rows = self._exec("SELECT data FROM autobiography WHERE id = 1")
         if rows and rows[0][0]:
             try:
@@ -181,7 +166,6 @@ class SelfNarrativeStore:
         return dict(_INITIAL_AUTOBIOGRAPHY)
 
     def update_autobiography(self, data: dict):
-        """写入完整自传 JSON（DB + JSON 文件同步）"""
         with self._lock:
             self._exec(
                 "INSERT OR REPLACE INTO autobiography (id, data, updated_at) VALUES (1, ?, ?)",
@@ -192,7 +176,6 @@ class SelfNarrativeStore:
         logger.info("[narrative_store] autobiography updated")
 
     def update_current_state(self, **kwargs):
-        """部分更新 current_state 字段（原子读-改-写）"""
         with self._lock:
             bio = self.get_autobiography()
             current = bio.get("current_state", {})
@@ -201,7 +184,6 @@ class SelfNarrativeStore:
             self._write_autobiography_unlocked(bio)
 
     def add_milestone(self, milestone: dict):
-        """追加里程碑事件（原子读-改-写）"""
         with self._lock:
             bio = self.get_autobiography()
             milestones = bio.get("milestones", [])
@@ -212,7 +194,6 @@ class SelfNarrativeStore:
         logger.info(f"[narrative_store] milestone added: {milestone.get('title', '')}")
 
     def get_current_chapter(self) -> dict:
-        """获取当前人生章节"""
         bio = self.get_autobiography()
         chapters = bio.get("life_story", {}).get("chapters", [])
         idx = bio.get("life_story", {}).get("current_chapter_index", 0)
@@ -221,7 +202,6 @@ class SelfNarrativeStore:
         return {"title": "未知", "period": "", "summary": "", "key_memories": [], "lessons": []}
 
     def advance_chapter(self, title: str, period: str, summary: str):
-        """创建新的人生章节（原子读-改-写）"""
         with self._lock:
             bio = self.get_autobiography()
             chapters = bio.get("life_story", {}).get("chapters", [])
@@ -243,23 +223,9 @@ class SelfNarrativeStore:
     def tag_memory(self, memory_id: str, why_important: str = '',
                    impact_on_self: str = '', related_chapter: str = '',
                    anchor_type: str = 'normal', is_core: bool = False) -> bool:
-        """为一条记忆创建叙事锚点
-
-        Args:
-            memory_id: 记忆 ID
-            why_important: 为什么对猫猫重要
-            impact_on_self: 对自我认知的影响
-            related_chapter: 关联的人生章节
-            anchor_type: 锚点类型 (normal/milestone/identity/current_chapter)
-            is_core: 是否核心记忆
-
-        Returns:
-            是否成功
-        """
         if anchor_type not in self.VALID_ANCHOR_TYPES:
             anchor_type = "normal"
 
-        # 根据 anchor_type 计算 warmth_boost
         warmth_boost = self._calc_warmth_boost(anchor_type, is_core)
 
         try:
@@ -282,7 +248,6 @@ class SelfNarrativeStore:
             return False
 
     def get_anchor(self, memory_id: str) -> dict | None:
-        """读取单条记忆的叙事锚点"""
         rows = self._exec(
             "SELECT memory_id, why_important, impact_on_self, related_chapter, "
             "warmth_boost, anchor_type, is_core, created_at, updated_at "
@@ -294,11 +259,6 @@ class SelfNarrativeStore:
         return None
 
     def get_anchors_for_memories(self, memory_ids: list[str]) -> dict[str, dict]:
-        """批量查询多条记忆的叙事锚点
-
-        Returns:
-            {memory_id: anchor_dict}
-        """
         if not memory_ids:
             return {}
         try:
@@ -315,7 +275,6 @@ class SelfNarrativeStore:
             return {}
 
     def get_core_memories(self) -> list[dict]:
-        """返回所有核心记忆（is_core=1）"""
         try:
             rows = self._exec(
                 """SELECT na.memory_id, na.why_important, na.impact_on_self,
@@ -343,7 +302,6 @@ class SelfNarrativeStore:
             return []
 
     def get_all_anchors(self, limit: int = 200, offset: int = 0) -> list[dict]:
-        """分页获取所有叙事锚点"""
         try:
             rows = self._exec(
                 """SELECT na.memory_id, na.why_important, na.impact_on_self,
@@ -374,7 +332,6 @@ class SelfNarrativeStore:
             return []
 
     def core_memory_count(self) -> int:
-        """核心记忆数量"""
         try:
             rows = self._exec("SELECT COUNT(*) FROM narrative_anchors WHERE is_core = 1")
             return rows[0][0] if rows else 0
@@ -382,25 +339,21 @@ class SelfNarrativeStore:
             return 0
 
     def total_anchor_count(self) -> int:
-        """总锚点数量"""
         try:
             rows = self._exec("SELECT COUNT(*) FROM narrative_anchors")
             return rows[0][0] if rows else 0
         except Exception:
             return 0
 
-    # ── 身份预算 (S.6) ────────────────────────────────────────
+    # ── 身份预算 ────────────────────────────────────────────
 
     def enforce_core_budget(self, max_core: int = None):
-        """确保核心记忆不超过预算，超出时降级最不重要的（线程安全）"""
         with self._lock:
             if max_core is None:
                 max_core = IDENTITY_BUDGET["max_core_memories"]
-
             count = self.core_memory_count()
             if count <= max_core:
                 return
-
             overflow = count - max_core
             rows = self._exec(
                 "SELECT memory_id FROM narrative_anchors WHERE is_core = 1 "
@@ -415,41 +368,25 @@ class SelfNarrativeStore:
                     (datetime.utcnow().isoformat(), mid)
                 )
                 demoted += 1
-                logger.info(f"[narrative:budget] demoted core memory {mid[:8]}")
             if demoted:
                 self._conn.commit()
                 logger.info(f"[narrative:budget] demoted {demoted} core memories (was {count}, budget {max_core})")
 
     def calculate_min_activation(self, anchor: dict) -> float:
-        """计算一条记忆的最低激活值底线
-
-        Args:
-            anchor: 锚点字典（来自 get_anchors_for_memories）
-
-        Returns:
-            最低激活值（0.0 表示无保护）
-        """
         if not anchor:
             return 0.0
-
         anchor_type = anchor.get("anchor_type", "normal")
         is_core = anchor.get("is_core", False)
-
         if anchor_type == "milestone":
             return IDENTITY_BUDGET["milestone_min_activation"]
         if is_core:
             return IDENTITY_BUDGET["core_memory_min_activation"]
         return 0.0
 
-    # ── Phase 3 涌现预留 stub ────────────────────────────────
+    # ── 涌现染色 ────────────────────────────────────────────
 
     def on_emergence_event(self, event_type: str, memory_id: str,
                            related_memory_id: str = None) -> str:
-        """涌现事件的叙事染色（Phase 3 实现后接入）
-
-        Returns:
-            叙事上下文文本
-        """
         anchor = self.get_anchor(memory_id)
         if anchor:
             return (
@@ -458,10 +395,9 @@ class SelfNarrativeStore:
             )
         return "我突然想到了什么……好像和刚才聊的有点关系。"
 
-    # ── 统计信息 ──────────────────────────────────────────────
+    # ── 统计 ────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
-        """返回叙事模块统计信息"""
         try:
             bio = self.get_autobiography()
             return {
@@ -482,7 +418,6 @@ class SelfNarrativeStore:
 
     @staticmethod
     def _calc_warmth_boost(anchor_type: str, is_core: bool) -> float:
-        """根据锚点类型和是否核心计算温度加成"""
         boosts = {
             "milestone": 0.2,
             "identity": 0.15,
@@ -496,7 +431,6 @@ class SelfNarrativeStore:
 
     @staticmethod
     def _row_to_anchor(row) -> dict:
-        """SQL 行转锚点字典"""
         return {
             "memory_id": row[0],
             "why_important": row[1],
@@ -510,7 +444,6 @@ class SelfNarrativeStore:
         }
 
     def _get_anchor_type_distribution(self) -> dict:
-        """获取锚点类型分布"""
         try:
             rows = self._exec(
                 "SELECT anchor_type, COUNT(*) FROM narrative_anchors GROUP BY anchor_type"
@@ -520,7 +453,6 @@ class SelfNarrativeStore:
             return {}
 
     def _write_autobiography_unlocked(self, data: dict):
-        """写入自传 JSON（不加锁，调用方需持有 self._lock）"""
         self._exec(
             "INSERT OR REPLACE INTO autobiography (id, data, updated_at) VALUES (1, ?, ?)",
             (json.dumps(data, ensure_ascii=False, indent=2), datetime.utcnow().isoformat())
@@ -530,13 +462,7 @@ class SelfNarrativeStore:
         logger.info("[narrative_store] autobiography updated")
 
     def _sync_to_file(self, data: dict):
-        """同步写入 JSON 文件副本，方便直接打开查看
-
-        文件放在项目根目录 self_narrative.json，只用于可视化浏览。
-        数据库（memory_graph.db）才是源数据，JSON 文件为只读副本。
-        """
         try:
-            # 给文件加一个锚点统计，方便浏览
             output = dict(data)
             try:
                 output["_stats"] = {
@@ -548,7 +474,6 @@ class SelfNarrativeStore:
             os.makedirs(os.path.dirname(_SELF_NARRATIVE_FILE), exist_ok=True)
             with open(_SELF_NARRATIVE_FILE, "w", encoding="utf-8") as f:
                 json.dump(output, f, ensure_ascii=False, indent=2)
-            logger.debug(f"[narrative_store] synced to {_SELF_NARRATIVE_FILE}")
         except Exception as e:
             logger.warning(f"[narrative_store] sync to file failed: {e}")
 
@@ -559,14 +484,6 @@ _INSTANCE = None
 
 
 def init_self_narrative(graph) -> 'SelfNarrativeStore | None':
-    """初始化 SelfNarrativeStore 单例，在 app 启动时调用
-
-    Args:
-        graph: GraphMemory 实例（复用其 SQLite 连接）
-
-    Returns:
-        SelfNarrativeStore 实例，失败返回 None
-    """
     global _INSTANCE
     if _INSTANCE is not None:
         return _INSTANCE
@@ -580,5 +497,4 @@ def init_self_narrative(graph) -> 'SelfNarrativeStore | None':
 
 
 def get_self_narrative() -> 'SelfNarrativeStore | None':
-    """获取 SelfNarrativeStore 单例，未初始化时返回 None"""
     return _INSTANCE
