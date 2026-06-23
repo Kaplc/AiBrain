@@ -14,12 +14,12 @@ logger = logging.getLogger('memory')
 
 
 def _search_all_categories(query: str) -> dict:
-    """搜索所有记忆，按 score 排序取前15条，返回 results + stats"""
+    """搜索所有记忆：语义命中最多15条 + 情景图扩散最多10条"""
     try:
         results = search_memory(query)
-        # 语义结果最多15条，图结果最多10条，合计25条
+        # 语义结果最多15条，情景图扩散(scene_diffusion)最多10条
         semantic = [r for r in results if r.get('source') == 'semantic']
-        graph = [r for r in results if r.get('source') == 'graph']
+        graph = [r for r in results if r.get('source') in ('graph', 'scene_diffusion')]
         semantic = sorted(semantic, key=lambda x: x['score'], reverse=True)[:15]
         graph = sorted(graph, key=lambda x: x['score'], reverse=True)[:10]
         sorted_results = semantic + graph

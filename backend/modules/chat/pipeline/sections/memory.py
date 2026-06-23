@@ -1,4 +1,4 @@
-"""记忆片段 — 把搜索结果放到 metadata 供 loop 作为独立参考消息"""
+"""记忆片段 — 把搜索结果作为独立动态块（参考信息）注入"""
 from ..context import PromptContext
 
 
@@ -12,7 +12,7 @@ def execute(ctx: PromptContext) -> None:
         return
 
     lines = [f"• {r.get('text', '')[:200]}" for r in results]
-    ctx.metadata["_memory_reference"] = "\n".join(lines)
+    ctx.add_block("memory_reference", "\n".join(lines), title="参考信息")
 
 
 def _make_step():

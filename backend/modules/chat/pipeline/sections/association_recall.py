@@ -73,7 +73,7 @@ def execute(ctx: PromptContext) -> None:
         return
 
     parts = mem_lines[:5]
-    ctx.add_section("浮现的记忆", "\n".join(parts))
+    ctx.add_block("association_recall", "\n".join(parts), title="浮现的记忆")
 
 
 def _make_step():

@@ -118,7 +118,11 @@ class LifeLoopDaemon:
             f"reason={reason[:60]}"
         )
 
-        # 5. controller 跑循环
+        # 5a. reflect 活动特殊处理：直接调反思核心，不走 LLM controller
+        if activity == "reflect" and not dry_run:
+            return self._run_reflect_activity(run, tick_type, reason, tick_input)
+
+        # 5b. controller 跑循环（其他活动）
         stop_reason = "max_cycles"
         try:
             from .controller import get_cycle_runner
@@ -228,6 +232,69 @@ class LifeLoopDaemon:
             "idle_seconds": idle,
             "energy": round(energy, 3),
             "stop_reason": "sleep",
+        }
+
+    def _run_reflect_activity(self, run, tick_type: str, reason: str, tick_input) -> dict:
+        """reflect 活动：直接调用反思核心，不走 LLM BrainJudge。
+
+        Returns: 同 run_tick 的标准返回格式。
+        """
+        reflect_result = {"ok": False, "skipped": True, "reason": "not executed",
+                          "updated_fields": [], "summary": ""}
+        try:
+            from main_brain.narrative_store import get_self_narrative
+            store = get_self_narrative()
+            if store is None:
+                reflect_result = {"ok": False, "skipped": True, "reason": "narrative store not ready",
+                                  "updated_fields": [], "summary": ""}
+            else:
+                from main_brain.reflection import run_reflection
+                reflect_result = run_reflection(store, force=False)
+        except Exception as e:
+            logger.warning(f"[daemon] reflect activity failed: {e}")
+            reflect_result = {"ok": False, "skipped": True, "reason": str(e),
+                              "updated_fields": [], "summary": ""}
+
+        # 用反思结果构造 BrainRun
+        run.finished_at = _now()
+        run.selected_activity = "reflect"
+        run.stop_reason = "completed" if reflect_result.get("ok") else "error"
+
+        thought = reflect_result.get("summary", reason)
+        summary = run.to_summary()
+        summary["thought_summary"] = thought[:200]
+        summary["reflect_result"] = {
+            "ok": reflect_result.get("ok"),
+            "skipped": reflect_result.get("skipped"),
+            "updated_fields": reflect_result.get("updated_fields", []),
+        }
+        try:
+            get_event_log().append_run(summary)
+        except Exception as e:
+            logger.warning(f"[daemon] reflect log append failed: {e}")
+
+        self._state.set_loop_status("idle_thinking", activity="wait")
+        self._state.update_life_node({
+            "current_activity": "reflect",
+            "next_wake_hint": {"tick_type": _next_tick(tick_type), "reason": reason},
+        })
+
+        logger.info(
+            f"[tick] {tick_type} activity=reflect "
+            f"ok={reflect_result.get('ok')} skipped={reflect_result.get('skipped')} "
+            f"fields={reflect_result.get('updated_fields', [])} "
+            f"thought={thought[:80]}"
+        )
+        return {
+            "run_id": run.run_id,
+            "tick_type": tick_type,
+            "selected_activity": "reflect",
+            "reason": reason,
+            "cycle_count": 0,
+            "stop_reason": run.stop_reason,
+            "thought_summary": thought[:160],
+            "reflect_result": reflect_result,
+            "dry_run": False,
         }
 
     # ── TickInput 构造 ───────────────────────────────────────

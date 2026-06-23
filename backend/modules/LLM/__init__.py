@@ -23,6 +23,7 @@ from .config import LLMConfig, SUPPORTED_PROVIDERS
 from .stream import call_llm_stream, call_llm_sync, call_llm_nonstream
 from .llm_mod import LLMManager, get_llm_manager
 from .Agents import AgentManager, get_agent_manager
+from .usage import UsageMetrics, UsageNormalizer
 
 __all__ = [
     # 配置
@@ -38,4 +39,7 @@ __all__ = [
     # Agent
     "AgentManager",
     "get_agent_manager",
+    # Usage 归一化
+    "UsageMetrics",
+    "UsageNormalizer",
 ]

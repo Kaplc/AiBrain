@@ -150,6 +150,84 @@ def _build_embedding_text(display: str, epi: dict) -> str:
     return "\n".join(parts) if parts else (display or "")
 
 
+def _read_life_state_context() -> str:
+    """读取内部状态，转成自然语言文本给 LLM 参考。读取失败返回空字符串。"""
+    try:
+        from main_brain.adapters.state import get_state_adapter
+        life = get_state_adapter().read_life_state()
+        mood = life.get("mood", {})
+        if isinstance(mood, str):
+            mood_label = mood
+        elif isinstance(mood, dict):
+            mood_label = mood.get("label", "neutral")
+        else:
+            mood_label = "neutral"
+        energy = float(life.get("energy", 0.6))
+        focus = str(life.get("current_focus", ""))[:40]
+        activity = str(life.get("current_activity", ""))[:30]
+
+        from modules.brain.state import get_state
+        internal = get_state().snapshot()
+        drives = internal.get("drives", {}) or {}
+
+        parts = ["【记录这条记忆时我的状态】"]
+        # mood 转自然语言
+        mood_texts = {
+            "neutral": "心情平静",
+            "curious": "充满好奇",
+            "happy": "心情愉悦",
+            "excited": "有些兴奋",
+            "tired": "有点疲惫",
+            "sad": "情绪低落",
+            "anxious": "有些不安",
+            "grateful": "充满感激",
+        }
+        mood_desc = mood_texts.get(mood_label, mood_label)
+        parts.append(mood_desc)
+
+        # energy 转中文
+        if energy >= 0.8:
+            parts.append("精力充沛")
+        elif energy >= 0.5:
+            parts.append("精力正常")
+        elif energy >= 0.3:
+            parts.append("精力一般")
+        else:
+            parts.append("有些疲惫")
+
+        # current_activity 转自然语言
+        activity_texts = {
+            "wait": "",
+            "proactive_contact": "正在主动联系",
+            "prepare_expression": "正在准备表达",
+            "reflect": "正在反思",
+            "chat": "正在聊天",
+            "idle": "",
+        }
+        act_desc = activity_texts.get(activity, f"正在{activity}" if activity else "")
+        if act_desc:
+            parts.append(act_desc)
+
+        if focus:
+            parts.append(f"正在关注：{focus}")
+
+        # drives 转自然语言
+        drive_names = {
+            "curiosity": "求知欲",
+            "companionship": "陪伴欲",
+            "self_expression": "表达欲",
+            "completion": "完成欲",
+        }
+        strong_drives = [drive_names.get(k, k) for k, v in drives.items() if isinstance(v, (int, float)) and v >= 0.7]
+        if strong_drives:
+            parts.append(f"内心驱动力：{'、'.join(strong_drives)}强烈")
+
+        return "，".join(parts) + "。"
+    except Exception as e:
+        logger.debug(f"[encoder] read life-state failed: {e}")
+        return ""
+
+
 def execute(ctx) -> None:
     """执行 Encoder 步骤：LLM 提取情景结构，写入 memory_meta
 
@@ -172,12 +250,25 @@ def execute(ctx) -> None:
     from modules.brain.llm import call_llm
     from modules.brain.memory.self_narrative.utils import parse_json
 
+    # 读取内部状态作为 LLM 上下文
+    state_context = _read_life_state_context()
+    user_prompt = f"记忆文本：{text}"
+    if state_context:
+        user_prompt = f"{state_context}\n\n{user_prompt}"
+
     try:
         logger.info(f"[step:encoder] encoding | text={str(text)[:60]!r}")
-        raw = call_llm(ENCODER_PROMPT, f"记忆文本：{text}", timeout=30)
-        obj = parse_json(raw)
+        obj = None
+        for attempt in range(1, 6):
+            prompt = ENCODER_PROMPT if attempt == 1 else ENCODER_PROMPT + "\n注意：只输出严格的 JSON，不要多余文字。"
+            raw = call_llm(prompt, user_prompt, timeout=30)
+            obj = parse_json(raw)
+            if obj is not None:
+                break
+            logger.warning(f"[step:encoder] parse_json failed (attempt {attempt}/5) | raw={str(raw)[:120]!r}")
+
         if obj is None:
-            logger.warning(f"[step:encoder] parse_json failed, using SAFE_DEFAULTS | raw={str(raw)[:120]!r}")
+            logger.warning("[step:encoder] all 5 attempts failed, using SAFE_DEFAULTS")
             encoded = _defaults_with_text(str(text))
         else:
             encoded = _normalize(obj, str(text))

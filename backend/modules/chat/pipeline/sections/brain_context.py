@@ -41,7 +41,7 @@ def execute(ctx: PromptContext) -> None:
             lines.append(f"（可自然带出：{kp}）")
 
         if lines:
-            ctx.add_section("内部思考", "\n".join(lines))
+            ctx.add_block("brain_context", "\n".join(lines), title="内部思考")
     except Exception:
         pass
 

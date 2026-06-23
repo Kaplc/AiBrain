@@ -51,9 +51,10 @@ def execute(ctx: PromptContext) -> None:
             name = loaded.get("name", "")
             content = loaded.get("content", "")
             if content:
-                ctx.add_section(
-                    "当前技能",
-                    f"技能名称：{name}\n\n{content}"
+                ctx.add_block(
+                    "skills_loaded",
+                    f"技能名称：{name}\n\n{content}",
+                    title="当前技能",
                 )
 
         # 2. 始终显示可用技能列表
@@ -61,7 +62,7 @@ def execute(ctx: PromptContext) -> None:
         if skills:
             lines = [f"  {s['name']}" + (f" - {s['description']}" if s['description'] else "") for s in skills]
             lines.append("使用 skill load 可加载技能完整内容")
-            ctx.add_section("可用技能", "\n".join(lines))
+            ctx.add_block("skills_available", "\n".join(lines), title="可用技能")
     except Exception:
         pass
 

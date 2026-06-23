@@ -145,26 +145,21 @@ def send_message(
             system_persona=system_persona,
         )
         pipeline = PromptPipeline.get_instance()
-        system_prompt = pipeline.run(ctx)
-        memory_ref = ctx.metadata.get("_memory_reference", "")
-        logger.info(f"[loop] system_prompt:\n{system_prompt}")
-        if memory_ref:
-            logger.info(f"[loop] memory_ref:\n{memory_ref[:200]}")
+        composition = pipeline.build(ctx)
 
-        # 3. 构建 messages 数组
-        #    注意：memory_ref 放在历史对话之后，这样 [system] + [历史] 前缀
-        #    在多轮对话间保持稳定，提高 DeepSeek KV 缓存命中率
-        msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
-        for turn in _conversation_history:
-            msgs.append(turn)
-        if _tool_memory:
-            msgs.extend(_tool_memory)
-            logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
-        if memory_ref:
-            msgs.append({"role": "system", "content": f"参考信息：\n{memory_ref}"})
+        # 3. 挂载历史 / tool memory / 当前用户消息，按 provider 渲染成最终 messages
+        #    组装顺序固定：[稳定主前缀 system] + [历史] + [tool memory] + [动态上下文 system...] + [user]
+        #    稳定块在最前、动态块在易变尾部 → [stable system]+[历史] 跨轮稳定，提升 KV cache 命中
         from datetime import datetime
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        msgs.append({"role": "user", "content": f"[{now_str}] {prompt}"})
+        composition.history_messages = list(_conversation_history)
+        if _tool_memory:
+            composition.tool_memory_messages = list(_tool_memory)
+            logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
+        composition.user_message = f"[{now_str}] {prompt}"
+        composition.metadata["provider"] = provider
+        msgs = composition.render(provider)
+        logger.info(f"[loop] composition summary: {composition.summary()}")
 
         # 4. LLM 配置
         cfg = LLMConfig(
@@ -177,7 +172,6 @@ def send_message(
             timeout=timeout,
         )
         logger.info(f"[loop] calling LLM: {len(msgs)} msgs, provider={provider} model={model}")
-        logger.info(f"[loop]  └─ system: {system_prompt[:300]}")
         logger.info(f"[loop]  └─ user: {prompt[:200]}")
 
         # ════════════════════════════════════════════════════════
@@ -193,12 +187,11 @@ def send_message(
                 tool_schemas = []
 
         if tools_enabled and tool_schemas:
-            # 统计 msgs 组成
-            n_sys = 1 if msgs and msgs[0].get("role") == "system" else 0
+            # 统计 msgs 组成（system 可能是多个独立块）
+            n_sys = sum(1 for m in msgs if m.get("role") == "system")
             n_hist = sum(1 for m in msgs if m.get("role") in ("user", "assistant") and not m.get("tool_calls"))
             n_tool = sum(1 for m in msgs if m.get("role") == "tool" or m.get("tool_calls"))
-            n_ref = sum(1 for m in msgs if m.get("role") == "user" and "参考信息" in (m.get("content") or ""))
-            logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} ref={n_ref} total={len(msgs)}")
+            logger.info(f"[loop] msgs composition: sys={n_sys} history={n_hist} tool_mem={n_tool} total={len(msgs)}")
             pre_tool_len = len(msgs)
             yield from _tool_loop(cfg, msgs, prompt, tool_schemas, pre_tool_len)
             # _try_proactive_send 已由 LifeLoopDaemon 统一管理

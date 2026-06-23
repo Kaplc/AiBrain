@@ -72,7 +72,7 @@ def execute(ctx: PromptContext) -> None:
             lines.append("还没想明白：\n" + "\n".join(loop_lines))
 
         if lines:
-            ctx.add_section("内心状态", "\n".join(lines))
+            ctx.add_block("internal_state", "\n".join(lines), title="内心状态")
     except Exception:
         pass
 

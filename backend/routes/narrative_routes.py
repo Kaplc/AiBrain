@@ -138,28 +138,24 @@ def register(app, ready_state, _logger, stats_db):
 
     @app.route('/narrative/reflect', methods=['POST'])
     def narrative_reflect():
-        """手动触发反思"""
+        """手动触发反思（转调统一反思核心函数 run_reflection）"""
         if not ready_state.is_set():
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
             from flask import request
             body = request.get_json(silent=True) or {}
-            user_msg = body.get("user_message", "")
-            assistant_msg = body.get("assistant_message", "")
-
-            if not user_msg or not assistant_msg:
-                return json.dumps({"error": "需要 user_message 和 assistant_message"}), 400, {'Content-Type': 'application/json'}
+            force = bool(body.get("force", False))
 
             from modules.brain.memory.self_narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
 
-            # 同步执行反思（手动触发时不用后台线程）
-            sn.reflect_on_conversation(user_msg, assistant_msg)
+            from main_brain.reflection import run_reflection
+            result = run_reflection(sn, force=force)
 
-            return json.dumps({"result": "反思完成"}, ensure_ascii=False), 200, {'Content-Type': 'application/json'}
+            return json.dumps(result, ensure_ascii=False), 200, {'Content-Type': 'application/json'}
         except Exception as e:
             logger.warning(f"[route] reflect failed: {e}")
             return json.dumps({"error": str(e)}), 500, {'Content-Type': 'application/json'}

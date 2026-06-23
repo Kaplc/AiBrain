@@ -255,7 +255,9 @@ def store_vector(text: str, payload: dict | None = None) -> str:
             # collection 仍在，是其它错误，向上抛出
             raise
     import json as _j
-    _log_payload = {k: v for k, v in full_payload.items() if k != 'embedding_text'}
+    _log_payload = dict(full_payload)
+    if _log_payload.get("embedding_text"):
+        _log_payload["embedding_text"] = str(_log_payload["embedding_text"])[:120]
     logger.info(
         f"[qdrant_store] stored point={point_id[:8]}\n"
         f"{_j.dumps(_log_payload, ensure_ascii=False, indent=2)}\n"

@@ -15,14 +15,14 @@ logger = logging.getLogger('memory.pipeline')
 
 DEFAULT_CONFIG = {
     "store": [
+        {"name": "episodic_merge", "enabled": True, "required": False},
         {"name": "encoder", "enabled": True, "required": False},
         {"name": "vector_store", "enabled": True, "required": True},
-        {"name": "entity_extract", "enabled": True, "required": False},
-        {"name": "graph_link", "enabled": True, "required": False},
+        {"name": "scene_link", "enabled": True, "required": False},
     ],
     "search": [
         {"name": "vector_search", "enabled": True, "required": True},
-        {"name": "graph_recall", "enabled": True, "required": False},
+        {"name": "scene_recall", "enabled": True, "required": False},
     ],
 }
 

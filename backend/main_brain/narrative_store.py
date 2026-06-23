@@ -1,7 +1,7 @@
 """
 SelfNarrativeStore 单例 — 自传文档 + 叙事锚点 + 身份预算
 复用 GraphMemory 的 SQLite 连接（memory_graph.db）
-每次更新自传时同步写入 self_narrative.json 文件供可视化查看。
+每次更新自传时同步写入 data/self_narrative.json 文件供可视化查看。
 """
 import json
 import logging
@@ -11,11 +11,9 @@ from datetime import datetime
 
 logger = logging.getLogger('self_narrative')
 
-# ── JSON 副本文件路径（放在 data/ 目录，方便直接打开查看）──
+# ── JSON 副本文件路径（放在同目录 data/ 下）──
 _FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-# data 统一放在 backend/modules/brain/data/（_FILE_DIR 是 .../memory/self_narrative，上两级到 brain）
-_BRAIN_DATA_DIR = os.path.dirname(os.path.dirname(_FILE_DIR))
-_SELF_NARRATIVE_FILE = os.path.join(_BRAIN_DATA_DIR, "data", "self_narrative.json")
+_SELF_NARRATIVE_FILE = os.path.join(_FILE_DIR, "data", "self_narrative.json")
 
 # ── 身份预算常量 ──────────────────────────────────────────
 IDENTITY_BUDGET = {
@@ -443,24 +441,6 @@ class SelfNarrativeStore:
             return IDENTITY_BUDGET["core_memory_min_activation"]
         return 0.0
 
-    # ── 反思入口（委托 reflection 模块）────────────────────
-
-    def reflect_on_conversation(self, user_msg: str, assistant_msg: str):
-        """(已废弃) 每轮对话反思不再使用"""
-        pass
-
-    def daily_reflect(self):
-        """每日反思：从近期重要记忆中提炼认知状态
-
-        由 app.py 的后台调度器触发，每 24h 运行一次。
-        """
-        try:
-            from .reflection import daily_reflect
-            return daily_reflect(self)
-        except Exception as e:
-            logger.warning(f"[narrative_store] daily_reflect failed: {e}")
-            return False
-
     # ── Phase 3 涌现预留 stub ────────────────────────────────
 
     def on_emergence_event(self, event_type: str, memory_id: str,
@@ -571,3 +551,34 @@ class SelfNarrativeStore:
             logger.debug(f"[narrative_store] synced to {_SELF_NARRATIVE_FILE}")
         except Exception as e:
             logger.warning(f"[narrative_store] sync to file failed: {e}")
+
+
+# ── 单例管理 ─────────────────────────────────────────────────
+
+_INSTANCE = None
+
+
+def init_self_narrative(graph) -> 'SelfNarrativeStore | None':
+    """初始化 SelfNarrativeStore 单例，在 app 启动时调用
+
+    Args:
+        graph: GraphMemory 实例（复用其 SQLite 连接）
+
+    Returns:
+        SelfNarrativeStore 实例，失败返回 None
+    """
+    global _INSTANCE
+    if _INSTANCE is not None:
+        return _INSTANCE
+    try:
+        _INSTANCE = SelfNarrativeStore(graph)
+        logger.info("[self_narrative] SelfNarrativeStore initialized")
+        return _INSTANCE
+    except Exception as e:
+        logger.warning("[self_narrative] init failed (non-fatal): {}".format(e))
+        return None
+
+
+def get_self_narrative() -> 'SelfNarrativeStore | None':
+    """获取 SelfNarrativeStore 单例，未初始化时返回 None"""
+    return _INSTANCE

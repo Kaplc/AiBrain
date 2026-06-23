@@ -18,6 +18,7 @@ import re
 from typing import Iterator, Optional
 
 from .config import LLMConfig
+from .usage import UsageNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -141,17 +142,8 @@ def _openai_compatible_stream(
                 finish_reason = choice.finish_reason
 
             if getattr(chunk, "usage", None):
-                usage = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                }
-                # 提取缓存命中信息（DeepSeek 等返回 prompt_cache_hit_tokens）
-                cache_detail = getattr(chunk.usage, 'prompt_cache_hit_tokens', None)
-                cache_miss = getattr(chunk.usage, 'prompt_cache_miss_tokens', None)
-                if cache_detail is not None:
-                    usage["cache_hit_tokens"] = cache_detail
-                if cache_miss is not None:
-                    usage["cache_miss_tokens"] = cache_miss
+                metrics = UsageNormalizer.normalize(chunk.usage, config.provider)
+                usage = metrics.to_dict()
 
                 # 记录到数据库
                 _record_token_usage(usage, config.model, source)
@@ -187,17 +179,27 @@ def _anthropic_stream(
         kwargs["base_url"] = config.base_url
     client = anthropic.Anthropic(**kwargs)
 
-    messages = []
-    if user_prompt:
-        messages.append({"role": "user", "content": user_prompt})
+    # 优先使用传入的 messages，否则自动构造
+    if messages is not None:
+        msgs = messages
+    else:
+        msgs = []
+        if system_prompt:
+            msgs.append({"role": "system", "content": system_prompt})
+        if user_prompt:
+            msgs.append({"role": "user", "content": user_prompt})
+
+    # Anthropic 确定性序列化：合并所有 system 块为顶部 system 参数
+    system_text, rest = _split_system_messages(msgs)
+    converted = _convert_messages_for_anthropic(rest)
 
     try:
         with client.messages.stream(
             model=config.model,
             max_tokens=config.max_tokens,
             temperature=config.temperature,
-            system=system_prompt or "",
-            messages=msgs,
+            system=system_text,
+            messages=converted,
         ) as stream:
             for text in stream.text_stream:
                 if text:
@@ -207,11 +209,12 @@ def _anthropic_stream(
             try:
                 final = stream.get_final_message()
                 if final and final.usage:
-                    usage = {
-                        "prompt_tokens": final.usage.input_tokens,
-                        "completion_tokens": final.usage.output_tokens,
+                    metrics = UsageNormalizer.normalize(final.usage, "anthropic")
+                    yield {
+                        "content": "",
+                        "usage": metrics.to_dict(),
+                        "finish_reason": final.stop_reason,
                     }
-                    yield {"content": "", "usage": usage, "finish_reason": final.stop_reason}
             except Exception as e:
                 logger.warning(f"[llm:anthropic] 取 final_usage 失败: {e}")
     except Exception as e:
@@ -312,16 +315,8 @@ def _openai_compatible_nonstream(
 
     usage = None
     if response.usage:
-        usage = {
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-        }
-        cache_detail = getattr(response.usage, 'prompt_cache_hit_tokens', None)
-        cache_miss = getattr(response.usage, 'prompt_cache_miss_tokens', None)
-        if cache_detail is not None:
-            usage["cache_hit_tokens"] = cache_detail
-        if cache_miss is not None:
-            usage["cache_miss_tokens"] = cache_miss
+        metrics = UsageNormalizer.normalize(response.usage, config.provider)
+        usage = metrics.to_dict()
         _record_token_usage(usage, config.model, source)
 
     return {
@@ -342,6 +337,25 @@ def _convert_openai_tools_to_anthropic(openai_tools: list[dict]) -> list[dict]:
         }
         for t in openai_tools
     ]
+
+
+def _split_system_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+    """把所有 system 消息按序合并成一个字符串，其余消息保持顺序返回
+
+    Anthropic 的 messages 数组不支持穿插 system（system 必须作为顶部参数），
+    且当前内部模型可能含多个独立 system block（稳定前缀 + 动态上下文）。
+    这里做确定性序列化：合并所有 system 内容到一个 system 字符串。
+    """
+    sys_parts: list[str] = []
+    rest: list[dict] = []
+    for m in messages:
+        if m.get("role") == "system":
+            c = m.get("content", "")
+            if c:
+                sys_parts.append(c)
+        else:
+            rest.append(m)
+    return "\n\n".join(sys_parts), rest
 
 
 def _convert_messages_for_anthropic(messages: list[dict]) -> list[dict]:
@@ -410,15 +424,11 @@ def _anthropic_nonstream(
         kwargs["base_url"] = config.base_url
     client = anthropic.Anthropic(**kwargs)
 
-    # 提取 system prompt
-    system_text = ""
-    for m in messages:
-        if m.get("role") == "system":
-            system_text = m.get("content", "")
-            break
+    # Anthropic 确定性序列化：合并所有 system 块为顶部 system 参数
+    system_text, rest = _split_system_messages(messages)
 
     # 转换消息格式
-    converted_msgs = _convert_messages_for_anthropic(messages)
+    converted_msgs = _convert_messages_for_anthropic(rest)
 
     create_kwargs = {
         "model": config.model,
@@ -453,10 +463,8 @@ def _anthropic_nonstream(
 
     usage = None
     if response.usage:
-        usage = {
-            "prompt_tokens": response.usage.input_tokens,
-            "completion_tokens": response.usage.output_tokens,
-        }
+        metrics = UsageNormalizer.normalize(response.usage, "anthropic")
+        usage = metrics.to_dict()
         _record_token_usage(usage, config.model, source)
 
     return {

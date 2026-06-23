@@ -240,6 +240,7 @@ def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
     msg = f"已记住: {', '.join(parts)}" if parts else "已处理"
 
     all_entity_names = []
+    use_infer = _memory_settings.get("infer", True)
     if use_infer:
         try:
             from modules.brain.graph import get_graph
@@ -302,6 +303,9 @@ def search_memory(query: str) -> list[dict]:
         event_results = ctx.intermediate.get("event_results")
         if event_results:
             memories.extend(event_results)
+        scene_results = ctx.intermediate.get("scene_results")
+        if scene_results:
+            memories.extend(scene_results)
         graph_results = ctx.intermediate.get("graph_results")
         if graph_results:
             memories.extend(graph_results)
@@ -329,7 +333,7 @@ def _search_memory_legacy(query: str) -> list[dict]:
     threshold = opts.get("threshold", 0.55)
     MIN_COUNT = 15
 
-    memories = memory_search(query, top_k=75, threshold=threshold)
+    memories = memory_search(query, top_k=15, threshold=threshold)
     memories.sort(key=lambda x: x["score"], reverse=True)
 
     if len(memories) < MIN_COUNT:
@@ -432,6 +436,14 @@ def delete_memory(memory_id: str) -> dict:
             graph.delete_memory(memory_id)
     except Exception as e:
         logger.warning(f"[graph] delete_memory failed (non-fatal): {e}")
+    # 同步清理情景图索引，避免孤儿边
+    try:
+        from modules.brain.memory.scene_graph import get_scene_graph
+        sg = get_scene_graph()
+        if sg:
+            sg.delete_scene(memory_id)
+    except Exception as e:
+        logger.warning(f"[scene_graph] delete_scene failed (non-fatal): {e}")
     global _memory_count_cache
     if _memory_count_cache is not None:
         _memory_count_cache = max(0, _memory_count_cache - 1)

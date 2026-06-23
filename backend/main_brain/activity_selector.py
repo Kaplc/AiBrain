@@ -88,8 +88,8 @@ class ActivitySelector:
         return ("organize_memory", "长 tick 整理近期记忆、去重、生成 lesson 候选")
 
     def _select_daily(self, life_state, autonomy) -> tuple[str, str]:
-        # 日 tick：长期目标回顾 + 关系语境
-        return ("maintain_goal", "日 tick 回顾长期目标、更新关系语境")
+        # 日 tick：先反思，再维护目标
+        return ("reflect", "日 tick 执行每日反思")
 
 
 _selector: ActivitySelector | None = None

@@ -65,7 +65,7 @@ def execute(ctx: PromptContext) -> None:
                     parts.append(f"  · {item}")
 
         if len(parts) > 3:
-            ctx.add_section("自我叙事", "\n".join(parts))
+            ctx.add_block("self_narrative", "\n".join(parts), title="自我叙事")
 
     except Exception:
         # 自我叙事不可用时不阻塞对话

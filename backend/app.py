@@ -94,6 +94,7 @@ from routes.stats_routes import register as reg_stats
 from routes.chat_routes import register as reg_chat
 from routes.narrative_routes import register as reg_narrative
 from routes.brain_routes import register as reg_brain
+from routes.scene_routes import register as reg_scene
 
 reg_overview(app, _ready, logger, stats_db)
 reg_memory(app, _ready, logger, stats_db)
@@ -110,6 +111,7 @@ reg_stats(app, _ready, logger, stats_db)
 reg_chat(app, _ready, logger, stats_db)
 reg_narrative(app, _ready, logger, stats_db)
 reg_brain(app, _ready, logger, stats_db)
+reg_scene(app, _ready, logger, stats_db)
 
 # 初始化 RebuildService（实体网络重建）单例
 from core.rebuild_service import RebuildService
@@ -374,38 +376,9 @@ def _preload():
     except Exception as e:
         logger.warning(f"PromptPipeline init failed (non-fatal): {e}")
 
-    # 每日反思调度器（启动时检查 + 每 24h 自动触发）
-    try:
-        from modules.brain.memory.self_narrative import get_self_narrative
-        _sn_ref = get_self_narrative()
-        if _sn_ref:
-            import threading as _th
-            import time as _time
-            import datetime as _dt
-
-            def _reflect_loop():
-                while True:
-                    try:
-                        _bio_ref = _sn_ref.get_autobiography()
-                        _last_ref = (_bio_ref.get("current_state") or {}).get("last_reflection_at", "")
-                        _due = True
-                        if _last_ref:
-                            try:
-                                _last_dt = _dt.datetime.fromisoformat(_last_ref)
-                                if _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None) - _last_dt < _dt.timedelta(hours=24):
-                                    _due = False
-                            except Exception:
-                                pass
-                        if _due:
-                            _sn_ref.daily_reflect()
-                    except Exception:
-                        pass
-                    _time.sleep(86400)  # 每 24h 跑一次
-
-            _th.Thread(target=_reflect_loop, daemon=True).start()
-            logger.info("[daily_reflect] scheduler started (24h interval)")
-    except Exception as e:
-        logger.warning(f"[daily_reflect] scheduler failed (non-fatal): {e}")
+    # 反思已由 LifeLoopDaemon daily_tick 接管（见 activity_selector._select_daily）
+    # 保留日志说明便于排查
+    logger.info("[daily_reflect] delegated to LifeLoopDaemon daily_tick")
 
     # 旧后台主动消息定时器（已由 LifeLoopDaemon 替代，保留注释便于回滚）
     # try:

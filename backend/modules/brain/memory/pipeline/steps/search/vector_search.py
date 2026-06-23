@@ -40,7 +40,7 @@ def execute(ctx) -> None:
     MIN_COUNT = 15
 
     # 第一次请求：只拿高于阈值的（memory_search 内部合并新库 aibrain_memories + 老库 mem0_memories）
-    memories = memory_search(query, top_k=75, threshold=threshold)
+    memories = memory_search(query, top_k=15, threshold=threshold)
     memories.sort(key=lambda x: x["score"], reverse=True)
 
     # 不足 MIN_COUNT 时，去掉阈值再请求补足

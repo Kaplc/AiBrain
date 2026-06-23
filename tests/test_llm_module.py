@@ -239,7 +239,11 @@ class TestIntegrationWithOpenAISDK(unittest.TestCase):
 
         self.assertEqual("".join(r["content"] for r in results), "你好")
         last = results[-1]
-        self.assertEqual(last["usage"], {"prompt_tokens": 10, "completion_tokens": 5})
+        # usage 经 UsageNormalizer 归一化后恒定 4 键，无缓存信息时 cache 记 0
+        self.assertEqual(last["usage"], {
+            "prompt_tokens": 10, "completion_tokens": 5,
+            "cache_hit_tokens": 0, "cache_miss_tokens": 0,
+        })
         self.assertEqual(last["finish_reason"], "stop")
 
 

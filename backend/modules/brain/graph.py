@@ -293,7 +293,7 @@ class GraphMemory:
             try:
                 self._exec(
                     "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                    (mem0_id, mem0_id[:20]),
+                    (mem0_id, text),
                 )
                 self._conn.commit()
                 logger.info(f"[graph:link] {mem0_id[:8]} → 0 entities (no link)")
@@ -305,7 +305,7 @@ class GraphMemory:
         try:
             self._exec(
                 "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                (mem0_id, mem0_id[:20]),
+                (mem0_id, text),
             )
             resolved_entities = []  # Track deduped entity names
             for new_entity in link_entities:
@@ -507,7 +507,7 @@ class GraphMemory:
         try:
             self._exec(
                 "INSERT OR REPLACE INTO memory_nodes (mem0_id, text) VALUES (?, ?)",
-                (mem0_id, mem0_id[:20]),
+                (mem0_id, text),
             )
             self._exec(
                 "INSERT OR IGNORE INTO mentions (mem0_id, entity_name) VALUES (?, '用户')",

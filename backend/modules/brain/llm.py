@@ -124,8 +124,12 @@ def _parse_llm_response(raw: str) -> dict:
     return {"refined_text": raw, "category": "reference"}
 
 
-def call_llm(system_prompt: str, user_prompt: str, timeout: int = 30) -> str:
-    """调用 LLM，返回原始文本响应"""
+def call_llm(system_prompt: str, user_prompt: str, timeout: int = 30, max_tokens: int = 128000) -> str:
+    """调用 LLM，返回原始文本响应
+
+    Args:
+        max_tokens: 输出最大 token 数。情景编码等长输出场景需要 2048+，默认可覆盖大部分场景。
+    """
     cfg = _load_llm_config()
     provider = cfg["provider"]
 
@@ -151,7 +155,7 @@ def call_llm(system_prompt: str, user_prompt: str, timeout: int = 30) -> str:
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         timeout=timeout,
     )
     return response.choices[0].message.content.strip()
