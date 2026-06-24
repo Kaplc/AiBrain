@@ -52,6 +52,23 @@ def register(app, ready_state, logger, stats_db):
             logger.warning(f"[brain] life/tick failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    @app.route('/brain/chat/mode', methods=['GET', 'POST'])
+    def brain_chat_mode():
+        try:
+            from main_brain.config import get_brain_config
+            bc = get_brain_config()
+            if request.method == 'POST':
+                body = request.get_json(silent=True) or {}
+                mode = body.get('mode', '')
+                bc.set_chat_mode(mode)
+                logger.info(f'[brain] chat mode set to {mode}')
+            return jsonify({'mode': bc.get_chat_mode()})
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            logger.warning(f'[brain] chat/mode failed: {e}')
+            return jsonify({'error': str(e)}), 500
+
     @app.route('/brain/state', methods=['GET'])
     def brain_state():
         """LifeState + config + scheduler 状态摘要。"""
@@ -107,6 +124,55 @@ def register(app, ready_state, logger, stats_db):
             return jsonify({"error": str(e)}), 500
 
     # ── 输出记忆沉淀（memory consolidation）调试接口 ──────────
+    @app.route('/brain/events/ingest', methods=['POST'])
+    def brain_events_ingest():
+        try:
+            body = request.get_json(silent=True) or {}
+            source = body.get("source", "system")
+            evt_type = body.get("type", "system_signal")
+            modality = body.get("modality", "text")
+            content = body.get("content", "")
+            metadata = body.get("metadata", {})
+            from main_brain.contracts import BrainEvent, _new_event_id, _new_trace_id, _now_iso
+            from main_brain.orchestrator import Orchestrator
+            event = BrainEvent(
+                id=_new_event_id(), trace_id=_new_trace_id(),
+                source=source, type=evt_type, modality=modality,
+                content=content, timestamp=_now_iso(),
+                salience=body.get("salience", 0.5), metadata=metadata,
+            )
+            ctx = Orchestrator.get_instance().process_event(event, max_depth=int(body.get("max_depth", 3)))
+            return jsonify({"ok": not bool(ctx.error), "event_id": event.id, "trace_id": event.trace_id, "error": ctx.error or None})
+        except Exception as e:
+            logger.warning(f"[brain] events/ingest failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/events/recent', methods=['GET'])
+    def brain_events_recent():
+        try:
+            limit = int(request.args.get("limit", 50))
+            from main_brain.logging.event_log import get_event_log
+            log_path = get_event_log().log_path()
+            events = _read_recent_events(log_path, limit)
+            return jsonify({"events": events})
+        except Exception as e:
+            logger.warning(f"[brain] events/recent failed: {e}")
+            return jsonify({"events": [], "error": str(e)}), 500
+
+    @app.route('/brain/events/<event_id>', methods=['GET'])
+    def brain_event_detail(event_id):
+        try:
+            from main_brain.logging.event_log import get_event_log
+            log_path = get_event_log().log_path()
+            events = _read_recent_events(log_path, 500)
+            for ev in events:
+                if ev.get("id") == event_id:
+                    return jsonify(ev)
+            return jsonify({"error": "event not found"}), 404
+        except Exception as e:
+            logger.warning(f"[brain] event detail failed: {e}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/brain/memory/consolidate', methods=['POST'])
     def brain_memory_consolidate():
         """触发一次输出记忆沉淀。body: {trigger, window_size, dry_run}"""
@@ -168,3 +234,32 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] memory/consolidation/recent failed: {e}")
             return jsonify({"runs": [], "error": str(e)}), 500
+
+
+# ── 小工具 ───────────────────────────────────────────────────
+def _read_recent_events(log_path: str, limit: int = 50) -> list[dict]:
+    """从 JSONL 读取最近事件（尾部倒序读）。"""
+    import json
+    import os
+    if not os.path.exists(log_path):
+        return []
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        events = []
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("id") or rec.get("event_id"):
+                events.append(rec)
+                if len(events) >= limit:
+                    break
+        return events
+    except Exception:
+        return []
+

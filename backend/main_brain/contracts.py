@@ -267,6 +267,7 @@ class BrainJudgeDecision:
             confidence=_clamp(float(d.get("confidence", 0.5))),
         )
 
+
     def to_dict(self) -> dict:
         return {
             "thought_summary": self.thought_summary,
@@ -294,6 +295,7 @@ class ExpressionGateResult:
     repetition_score: float = 0.0
     cooldown_ok: bool = False
     reason: str = ""
+
 
     def to_dict(self) -> dict:
         return {
@@ -346,3 +348,232 @@ def _as_dict(v: Any) -> dict:
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 统一事件回路（T001 / FR-001）
+# BrainEvent / BrainCycleContext — 统一所有输入输出形态
+# ═══════════════════════════════════════════════════════════════
+
+# 事件来源枚举
+EVENT_SOURCE_CHAT = "chat"
+EVENT_SOURCE_TOOL = "tool"
+EVENT_SOURCE_TICK = "tick"
+EVENT_SOURCE_REFLECTION = "reflection"
+EVENT_SOURCE_SYSTEM = "system"
+EVENT_SOURCE_FILE = "file"
+EVENT_SOURCE_VISION = "vision"
+
+# 事件类型枚举
+EVENT_TYPE_USER_MESSAGE = "user_message"
+EVENT_TYPE_TOOL_RESULT = "tool_result"
+EVENT_TYPE_TICK = "tick"
+EVENT_TYPE_REFLECTION_RESULT = "reflection_result"
+EVENT_TYPE_STATE_CHANGE = "state_change"
+EVENT_TYPE_SYSTEM_SIGNAL = "system_signal"
+
+# 模态枚举
+EVENT_MODALITY_TEXT = "text"
+EVENT_MODALITY_EVENT = "event"
+EVENT_MODALITY_JSON = "json"
+EVENT_MODALITY_IMAGE = "image"
+EVENT_MODALITY_AUDIO = "audio"
+
+
+@dataclass
+class BrainEvent:
+    """统一事件契约 — 所有刺激的统一包装。
+
+    让 user_message / tool_result / tick / reflection_result / system_signal
+    都能走同一条入口。
+    """
+    id: str = ""
+    parent_id: str = ""   # 父事件 ID，根事件为 ""（空字符串 = 无父，以此作为根事件判据）
+    trace_id: str = ""    # 链路根事件 ID，同一链路所有事件的 trace_id 应等于根事件的 id
+    source: str = EVENT_SOURCE_CHAT
+    type: str = EVENT_TYPE_USER_MESSAGE
+    modality: str = EVENT_MODALITY_TEXT
+    content: str = ""
+    timestamp: str = ""
+    salience: float = 0.0
+    metadata: dict = field(default_factory=dict)
+    raw: Any = None
+
+    def is_root_event(self) -> bool:
+        return not self.parent_id
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "parent_id": self.parent_id,
+            "trace_id": self.trace_id,
+            "source": self.source,
+            "type": self.type,
+            "modality": self.modality,
+            "content": self.content[:500],
+            "timestamp": self.timestamp,
+            "salience": round(self.salience, 3),
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class BrainCycleContext:
+    """单轮事件处理的完整上下文。
+
+    包括感知→注意→记忆→状态→决策→动作→学习→反馈的完整链路。
+    """
+    event: BrainEvent = field(default_factory=BrainEvent)
+    perception: dict = field(default_factory=dict)
+    attention: dict = field(default_factory=dict)
+    memory: dict = field(default_factory=dict)
+    state: dict = field(default_factory=dict)
+    cognition: dict = field(default_factory=dict)
+    action: dict = field(default_factory=dict)
+    learning: dict = field(default_factory=dict)
+    feedback: dict = field(default_factory=dict)
+    error: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "event_id": self.event.id,
+            "source": self.event.source,
+            "perception": self.perception,
+            "attention": self.attention,
+            "memory": self.memory,
+            "state": self.state,
+            "cognition": self.cognition,
+            "action": self.action,
+            "learning": self.learning,
+            "feedback": self.feedback,
+            "error": self.error,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 事件工厂 — 便捷创建不同来源的 BrainEvent
+# ═══════════════════════════════════════════════════════════════
+
+def _new_event_id() -> str:
+    import hashlib
+    from modules.brain.state import times
+    stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
+    suffix = hashlib.md5(stamp.encode()).hexdigest()[:6]
+    return f"evt_{stamp}_{suffix}"
+
+
+def _new_trace_id() -> str:
+    import hashlib
+    from modules.brain.state import times
+    stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
+    suffix = hashlib.md5(stamp.encode()).hexdigest()[:8]
+    return f"trace_{stamp}_{suffix}"
+
+
+def make_chat_event(content: str, **metadata) -> BrainEvent:
+    """创建用户消息事件。"""
+    return BrainEvent(
+        id=_new_event_id(),
+        trace_id=_new_trace_id(),
+        source=EVENT_SOURCE_CHAT,
+        type=EVENT_TYPE_USER_MESSAGE,
+        modality=EVENT_MODALITY_TEXT,
+        content=content,
+        timestamp=_now_iso(),
+        salience=1.0,
+        metadata=metadata,
+    )
+
+
+def make_tool_result_event(tool_name: str, result: str, parent_id: str, trace_id: str, **metadata) -> BrainEvent:
+    """创建工具结果事件。"""
+    return BrainEvent(
+        id=_new_event_id(),
+        parent_id=parent_id,
+        trace_id=trace_id,
+        source=EVENT_SOURCE_TOOL,
+        type=EVENT_TYPE_TOOL_RESULT,
+        modality=EVENT_MODALITY_JSON,
+        content=result,
+        timestamp=_now_iso(),
+        salience=0.8,
+        metadata={"tool_name": tool_name, **metadata},
+    )
+
+
+def make_tick_event(tick_type: str, **metadata) -> BrainEvent:
+    """创建后台 tick 事件。"""
+    return BrainEvent(
+        id=_new_event_id(),
+        trace_id=_new_trace_id(),
+        source=EVENT_SOURCE_TICK,
+        type=EVENT_TYPE_TICK,
+        modality=EVENT_MODALITY_EVENT,
+        content=f"tick:{tick_type}",
+        timestamp=_now_iso(),
+        salience=0.5,
+        metadata={"tick_type": tick_type, **metadata},
+    )
+
+
+def make_reflection_event(content: str, **metadata) -> BrainEvent:
+    """创建反思结果事件。"""
+    return BrainEvent(
+        id=_new_event_id(),
+        trace_id=_new_trace_id(),
+        source=EVENT_SOURCE_REFLECTION,
+        type=EVENT_TYPE_REFLECTION_RESULT,
+        modality=EVENT_MODALITY_TEXT,
+        content=content,
+        timestamp=_now_iso(),
+        salience=0.6,
+        metadata=metadata,
+    )
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 聊天回复信封（T001 / FR-004）
+# BrainReplyEnvelope — 大脑产出回复的统一包装
+# ═══════════════════════════════════════════════════════════════
+
+REPLY_TYPE_FINAL = "final"
+REPLY_TYPE_PENDING = "pending"
+REPLY_TYPE_FALLBACK = "fallback"
+
+
+@dataclass
+class BrainReplyEnvelope:
+    """大脑产出的回复信封 — 不管回复来自哪个 action，都包装成这个结构。
+
+    表达桥（ExpressionBridge）负责把它转成 SSE token 流。
+    """
+    trace_id: str = ""
+    source_event_id: str = ""
+    reply_type: str = REPLY_TYPE_FINAL
+    text: str = ""
+    chunks: list[str] = field(default_factory=list)
+    should_send: bool = True
+    hold_reason: str = ""
+    usage: dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_judge(cls, decision: "BrainJudgeDecision", event_id: str, trace_id: str) -> "BrainReplyEnvelope":
+        """从 BrainJudgeDecision 构建回复信封。"""
+        text = ""
+        strategy = decision.reply_strategy or {}
+        if isinstance(strategy, dict):
+            text = strategy.get("final_reply", "") or strategy.get("text", "")
+        return cls(
+            trace_id=trace_id,
+            source_event_id=event_id,
+            reply_type=REPLY_TYPE_FINAL,
+            text=text,
+            should_send=bool(text),
+            metadata={"confidence": decision.confidence},
+        )

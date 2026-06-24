@@ -4,6 +4,47 @@ import json
 from flask import request, jsonify, Response, stream_with_context
 
 
+# ── 事件日志辅助 ──────────────────────────────────────────────
+def _log_reply_event(text: str, source_event_id: str, trace_id: str = "") -> None:
+    """将最终回复记录为一条 BrainEvent（补充事件链，挂到同一 trace 上）。"""
+    try:
+        from main_brain.contracts import BrainEvent, _new_event_id, _now_iso
+        from main_brain.orchestrator import Orchestrator
+        evt = BrainEvent(
+            id=_new_event_id(),
+            parent_id=source_event_id,
+            trace_id=trace_id or source_event_id,
+            source="chat",
+            type="final_reply",
+            modality="text",
+            content=text[:500],
+            timestamp=_now_iso(),
+            salience=0.8,
+        )
+        Orchestrator.get_instance().process_event(evt, max_depth=1)
+    except Exception:
+        pass
+
+
+def _write_chat_history(user_msg: str, reply_text: str) -> None:
+    """把本轮对话写回对话历史和 work memory（同步 brain-first 与旧链路的行为）。"""
+    if not reply_text:
+        return
+    # 1. 追加到 _conversation_history
+    try:
+        from modules.chat.loop import _conversation_history
+        _conversation_history.append({"role": "user", "content": user_msg})
+        _conversation_history.append({"role": "assistant", "content": reply_text})
+    except Exception:
+        pass
+    # 2. 写入 output.json
+    try:
+        from modules.brain.memory.workmemory import get_work_memory
+        get_work_memory().output_mem_write(reply_text, user_prompt=user_msg)
+    except Exception:
+        pass
+
+
 # ── brain 状态辅助（外部刺激 + 反思） ──────────────────────────
 def _get_drives_summary() -> dict:
     """获取驱动力全量值"""
@@ -111,66 +152,107 @@ def register(app, ready_state, logger, stats_db):
                 'action': 'open_settings',
             }), 503
 
-        # 获取 ChatManager 并发送
+        # T003 / T009: 用户消息入脑（fallback 开关控制）
+        _event_id = None
+        _event_trace_id = None
+        try:
+            from main_brain.config import EVENT_ORCHESTRATOR_ENABLED as _EVT_ENABLED
+            if _EVT_ENABLED:
+                from main_brain.contracts import make_chat_event
+                from main_brain.orchestrator import Orchestrator
+                event = make_chat_event(user_msg)
+                _event_id = event.id
+                _event_trace_id = event.trace_id
+                Orchestrator.get_instance().process_event(event)
+                from modules.chat import ChatManager as _CM
+                _CM.get_instance().set_event_trace(event.trace_id, event.id)
+                logger.info(f"[chat] event created: id={event.id} trace={event.trace_id}")
+            else:
+                logger.debug("[chat] event_orchestrator disabled, skip event creation")
+        except Exception as e:
+            logger.warning(f"[chat] event creation skipped (non-fatal): {e}")
+
+        # ── T002/T003: 大脑优先 SSE 流 ─────────────────────────
+        # SSE start 立即返回（不等大脑处理）
+        # 然后 generate() 内部尝试 brain-first → 有 final_reply 则直接输出 → 否则 fallback
+
         from modules.chat import ChatManager
         mgr = ChatManager.get_instance()
-        logger.info(f"[chat] send start: msg={user_msg[:60]!r}")
 
-        # 标记用户活跃时间（脱离 brain_session 开关，始终跟踪）
+        # 标记用户活跃时间（不阻塞）
         try:
             from main_brain.adapters.state import get_state_adapter
             get_state_adapter().mark_user_contact()
         except Exception:
             pass
 
-        # Reactive BrainSession：回复前先内部思考几轮（可配置开关，失败自动回退）
-        try:
-            from main_brain.config import get_brain_config
-            if get_brain_config().session_enabled:
-                from main_brain import get_brain_session
-                brain = get_brain_session().run_reactive(user_msg)
-                mgr.set_brain_context(brain)
-                logger.info(
-                    f"[chat] brain_session done: run={brain.get('run_id')} "
-                    f"cycles={brain.get('cycle_count')} stop={brain.get('stop_reason')}"
-                )
-            else:
-                mgr.set_brain_context({})
-        except Exception as e:
-            logger.warning(f"[chat] brain_session skipped (fallback to plain send): {e}")
-            mgr.set_brain_context({})
-
         def generate():
             yield f"data: {json.dumps({'type': 'start'})}\n\n"
             token_count = 0
+
+            # 1. 尝试大脑主链路
+            brain_reply = None
+            brain_session_ok = False
+            _brain_result = None
+            try:
+                from main_brain.config import get_brain_config as _get_bc
+                from main_brain import get_brain_session
+                if _get_bc().get_chat_mode() == _get_bc().CHAT_MODE_BRAIN_FIRST:
+                    brain = get_brain_session().run_reactive(user_msg)
+                    if _event_id:
+                        brain["event_id"] = _event_id
+                    _brain_result = brain
+                    _strategy = brain.get("reply_strategy") or {}
+                    _reply_text = ""
+                    if isinstance(_strategy, dict):
+                        _reply_text = _strategy.get("final_reply") or _strategy.get("text") or ""
+                    if _reply_text:
+                        brain_reply = _reply_text
+                        brain_session_ok = True
+                        logger.info(f"[chat] brain-first: run={brain.get('run_id')}")
+                    else:
+                        logger.info(f"[chat] brain-first: no final_reply, fallback with brain context")
+            except Exception as e:
+                logger.warning(f"[chat] brain-first failed (fallback): {e}")
+
+            # 2. 大脑有回复 → 直接输出
+            if brain_session_ok and brain_reply:
+                yield f"data: {json.dumps({'type': 'token', 'content': brain_reply})}\n\n"
+                token_count += 1
+                _log_reply_event(brain_reply, _event_id or "", _event_trace_id or "")
+                _write_chat_history(user_msg, brain_reply)
+                logger.info(f"[chat] brain-first done: tokens={token_count}")
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+
+            # 3. Fallback：旧 ChatManager.send()（保留 brain 上下文注入 prompt）
+            mgr.set_brain_context(_brain_result or {"fallback": True})
+            _fallback_text = ""
             try:
                 for event in mgr.send(user_msg):
                     t = event.get('type')
                     if t == 'token':
                         token_count += 1
+                        _fallback_text += event.get('content', '')
                         yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'memory_step':
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'tool_call':
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'tool_history':
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'token_estimate':
+                    elif t in ('memory_step', 'tool_call', 'tool_history', 'token_estimate'):
                         yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'usage':
                         yield f"data: {json.dumps(event)}\n\n"
                     elif t == 'done':
-                        logger.info(f"[chat] send done: tokens={token_count}")
+                        logger.info(f"[chat] fallback done: tokens={token_count}")
                         yield f"data: {json.dumps({'type': 'done'})}\n\n"
                         break
                     elif t == 'error':
-                        logger.error(f"[chat] send error: {event.get('message')}")
+                        logger.error(f"[chat] fallback error: {event.get('message')}")
                         yield f"data: {json.dumps(event)}\n\n"
                         break
             except Exception as e:
-                logger.error(f"[chat/send] stream error: {e}")
+                logger.error(f"[chat/send] fallback stream error: {e}")
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             finally:
+                if _fallback_text:
+                    _log_reply_event(_fallback_text, _event_id or "", _event_trace_id or "")
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         return Response(

@@ -12,7 +12,7 @@
 - `use_tool`：调用白名单只读工具。`action_args` 给 `{"name": "工具名", "args": {...}}`。不确定有哪些工具时不要选它。
 - `update_state`：更新自己的关注/工作集/未决问题/目标。把要改的字段放进 `state_updates`。
 - `create_pending`：想到一句想跟用户说、但现在不急着说的话，放进 `pending_expression`（含 `reason`、`value`）。
-- `final_reply`：你已经准备好回复用户。把回复策略写进 `reply_strategy`（含 `tone`、`should_mention_thoughts`、`key_points`）。
+- `final_reply`：你已经准备好回复用户。把回复文本写进 `reply_strategy.final_reply`，策略写进 `reply_strategy.tone/key_points`。
 - `sleep`：暂时不需要更多动作，可以结束本轮思考。
 - `abort`：发现无法继续。
 
@@ -35,7 +35,7 @@
   "action_args": {},
   "state_updates": {},
   "pending_expression": {"reason": "", "value": 0.0},
-  "reply_strategy": {"tone": "", "should_mention_thoughts": false, "key_points": []},
+  "reply_strategy": {"final_reply": "", "tone": "", "should_mention_thoughts": false, "key_points": []},
   "should_notify_user": false,
   "notify_reason": "",
   "learning_hints": [],

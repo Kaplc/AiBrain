@@ -1,18 +1,11 @@
-"""main_brain 配置集中管理（T000）
+"""main_brain 配置集中管理（全部由 py 文件定义）
 
-读取 ~/.aibrain/config/brain.json，缺字段用默认补。所有循环行为（session /
-life / proactive）都可独立开关；max_cycles / timeout / cooldown / autonomy_level
-集中在此，方便调试与降级。
-
-设计：
-  - 与 chat.json 同目录，单独文件避免污染现有 settings。
-  - 只读快照 + 显式 reload，写操作留给 settings_routes（v1 不写回，先靠手动改文件）。
+所有循环行为（session / life / proactive）通过 DEFAULT_BRAIN 常量配置，
+直接修改 config.py 后重启后端生效。不读外部文件，不依赖 C 盘 brain.json。
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
 
 logger = logging.getLogger("main_brain.config")
@@ -24,7 +17,7 @@ DEFAULT_BRAIN = {
     # 第一版以兼容可回滚为优先（plan 设计前提 6 / FR-013），确认无碍后再手动打开。
     "brain_session_enabled": False,
     "life_loop_enabled": False,          # 常驻循环默认关，靠 /brain/life/start 启动
-    "proactive_contact_enabled": False,  # 主动联系默认关，P6 再放量
+    "proactive_contact_enabled": False,
 
     # Reactive BrainSession
     "brain_session_max_cycles": 3,       # 可配到 5
@@ -59,19 +52,24 @@ DEFAULT_BRAIN = {
 }
 
 
-def _config_path() -> str:
-    return os.path.join(os.path.expanduser("~"), ".aibrain", "config", "brain.json")
+# 统一事件回路开关（代码常量）
+EVENT_ORCHESTRATOR_ENABLED = True
 
 
 class BrainConfig:
-    """main_brain 配置单例（只读快照 + reload）。"""
+    """main_brain 配置单例 — 全部从 py 常量读取，不依赖外部文件。"""
 
     _instance = None
     _lock = threading.Lock()
 
+    # 运行时聊天模式：brain_first / fallback（不持久化，进程级，重启恢复为 brain_first）
+    CHAT_MODE_BRAIN_FIRST = "brain_first"
+    CHAT_MODE_FALLBACK = "fallback"
+
     def __init__(self):
-        self._data: dict = {}
-        self.reload()
+        self._data = dict(DEFAULT_BRAIN)
+        self._chat_mode: str = self.CHAT_MODE_BRAIN_FIRST
+        self._chat_mode_lock = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> "BrainConfig":
@@ -81,25 +79,22 @@ class BrainConfig:
                     cls._instance = cls()
         return cls._instance
 
-    def reload(self) -> None:
-        """从磁盘重新加载，缺字段补默认。"""
-        merged = dict(DEFAULT_BRAIN)
-        path = _config_path()
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    merged.update(data)
-            except Exception as e:
-                logger.warning(f"[brain_config] load failed, using defaults: {e}")
-        self._data = merged
-
     def get(self, key: str, default=None):
         return self._data.get(key, default)
 
     def as_dict(self) -> dict:
         return dict(self._data)
+
+    # ── 运行时聊天模式 ─────────────────────────────────────
+    def get_chat_mode(self) -> str:
+        with self._chat_mode_lock:
+            return self._chat_mode
+
+    def set_chat_mode(self, mode: str) -> None:
+        if mode not in (self.CHAT_MODE_BRAIN_FIRST, self.CHAT_MODE_FALLBACK):
+            raise ValueError(f"无效聊天模式: {mode}")
+        with self._chat_mode_lock:
+            self._chat_mode = mode
 
     # ── 常用便捷取值 ─────────────────────────────────────────
     @property
@@ -122,17 +117,3 @@ class BrainConfig:
 def get_brain_config() -> BrainConfig:
     """获取 BrainConfig 单例。"""
     return BrainConfig.get_instance()
-
-
-def ensure_default_config() -> None:
-    """首次运行时写出默认 brain.json（若不存在）。供 app 启动时调用。"""
-    path = _config_path()
-    if os.path.exists(path):
-        return
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_BRAIN, f, indent=2, ensure_ascii=False)
-        logger.info(f"[brain_config] wrote default config: {path}")
-    except Exception as e:
-        logger.warning(f"[brain_config] ensure_default_config failed: {e}")

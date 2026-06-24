@@ -345,6 +345,22 @@ def _tool_loop(
                 }
                 result_str = reg.execute(fn_name, fn_args)
 
+                # T004: 工具结果回灌成事件（带 trace 链路追踪）
+                try:
+                    from main_brain.contracts import make_tool_result_event
+                    from main_brain.orchestrator import Orchestrator
+                    from modules.chat import ChatManager as _CM
+                    _trace_id, _parent_id = _CM.get_instance().get_event_trace()
+                    tool_result_event = make_tool_result_event(
+                        tool_name=fn_name,
+                        result=result_str[:2000],
+                        parent_id=_parent_id,
+                        trace_id=_trace_id or "",
+                    )
+                    Orchestrator.get_instance().process_event(tool_result_event)
+                except Exception:
+                    pass
+
                 tool_history.append({
                     "name": fn_name,
                     "arguments": fn_args,

@@ -104,10 +104,74 @@ class BrainEventLog:
             logger.warning(f"[event_log] get_run failed: {e}")
         return None
 
+    def append_event(self, event_dict: dict) -> None:
+        """记录一条 BrainEvent 摘要到事件日志。
+
+        Args:
+            event_dict: BrainEvent.to_dict() 输出，必须包含 id/source/type/timestamp。
+        """
+        record = dict(event_dict)
+        record.setdefault("logged_at", _now_iso())
+        try:
+            self._write_jsonl(record)
+        except Exception as e:
+            logger.warning(f"[event_log] append_event failed: {e}")
+
     def last_run_id(self, mode: str | None = None) -> str:
         """最近一次 run_id（供 /chat/state）。"""
         runs = self.recent_runs(limit=1, mode=mode)
         return runs[0].get("run_id", "") if runs else ""
+
+    # ── T008: 事件链追踪 ───────────────────────────────────
+    def get_event_chain(self, trace_id: str) -> list[dict]:
+        """按 trace_id 查询完整事件链（从 JSONL 倒序读）。"""
+        if not trace_id or not os.path.exists(_LOG_PATH):
+            return []
+        try:
+            with open(_LOG_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            chain = []
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("trace_id") == trace_id:
+                    chain.append(rec)
+            # trace_id 命中后按时间正序排列
+            chain.reverse()
+            return chain
+        except Exception as e:
+            logger.warning(f"[event_log] get_event_chain failed: {e}")
+            return []
+
+    def get_events_by_source(self, source: str, limit: int = 20) -> list[dict]:
+        """按 source 查询最近事件。"""
+        if not os.path.exists(_LOG_PATH):
+            return []
+        try:
+            with open(_LOG_PATH, "r", encoding="utf-8") as f:
+                all_lines = f.readlines()
+            events = []
+            for line in reversed(all_lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("source") == source:
+                    events.append(rec)
+                    if len(events) >= limit:
+                        break
+            events.reverse()
+            return events
+        except Exception:
+            return []
 
     def log_path(self) -> str:
         return _LOG_PATH

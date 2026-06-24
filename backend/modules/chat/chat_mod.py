@@ -41,6 +41,8 @@ class ChatManager:
         self._memory_steps_lock = threading.Lock()
         # Reactive BrainSession 最近一次内部思考（供 brain_context section 注入）
         self._brain_context: dict = {}
+        self._current_trace_id: str = ""
+        self._current_parent_event_id: str = ""
 
     @classmethod
     def get_instance(cls) -> 'ChatManager':
@@ -85,11 +87,17 @@ class ChatManager:
             return steps
 
     def set_brain_context(self, ctx: dict) -> None:
-        """记录 Reactive BrainSession 最近一次内部思考（brain_context section 读取）。"""
         self._brain_context = ctx or {}
 
     def get_brain_context(self) -> dict:
         return getattr(self, "_brain_context", {}) or {}
+
+    def set_event_trace(self, trace_id: str, event_id: str) -> None:
+        self._current_trace_id = trace_id
+        self._current_parent_event_id = event_id
+
+    def get_event_trace(self) -> tuple[str, str]:
+        return self._current_trace_id, self._current_parent_event_id
 
     # ── 配置 ──────────────────────────────────────────────
 

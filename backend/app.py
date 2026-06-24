@@ -360,6 +360,14 @@ def _preload():
     except Exception as e:
         logger.warning(f"PipelineEngine init failed (non-fatal): {e}")
 
+    # 初始化 Orchestrator（统一事件回路）
+    try:
+        from main_brain.orchestrator import Orchestrator
+        Orchestrator.get_instance().initialize()
+        logger.info("Orchestrator initialized")
+    except Exception as e:
+        logger.warning(f"Orchestrator init failed (non-fatal): {e}")
+
     # 初始化 AgentManager（LLM Agent 注册表）
     try:
         from modules.LLM.Agents import register_all_agents
@@ -433,10 +441,8 @@ def _preload():
 
     # ── 初始化 main_brain 配置 + 可选启动常驻生命循环 ───────
     try:
-        from main_brain.config import ensure_default_config, get_brain_config
-        ensure_default_config()
+        from main_brain.config import get_brain_config
         bcfg = get_brain_config()
-        bcfg.reload()
         logger.info(
             f"[main_brain] config ready: session={bcfg.session_enabled} "
             f"life_loop={bcfg.life_loop_enabled} proactive={bcfg.proactive_enabled} "

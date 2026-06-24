@@ -68,6 +68,15 @@ class LifeLoopDaemon:
         max_cycles = int(cfg.get(_TICK_MAX_CYCLES.get(tick_type, "medium_tick_max_cycles"), 0))
         timeout = float(cfg.get("background_tick_timeout_seconds", 30))
 
+        # T005: tick 事件入脑（失败降级，不阻塞）
+        try:
+            from .contracts import make_tick_event
+            from .orchestrator import Orchestrator
+            tick_event = make_tick_event(tick_type)
+            Orchestrator.get_instance().process_event(tick_event, max_depth=2)
+        except Exception:
+            pass
+
         # 1. 读固定上下文 → TickInput
         tick_input = self._build_tick_input(tick_type)
         life_state = tick_input.life_state
