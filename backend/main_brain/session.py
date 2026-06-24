@@ -94,6 +94,16 @@ class BrainSession:
         except Exception:
             pass
 
+        # inject procedural memory matches (non-blocking)
+        try:
+            from .procedural_memory.policy import enrich_tick_context_with_procedures
+            ctx_data = ctx.__dict__
+            ctx_data["mode"] = run.mode
+            ctx_data["actions"] = [c.action for c in run.cycles]
+            enrich_tick_context_with_procedures(ctx_data, dry_run=dry_run)
+        except Exception:
+            pass
+
         ok = True
         try:
             from .controller import get_cycle_runner

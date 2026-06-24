@@ -15,9 +15,9 @@ DEFAULT_BRAIN = {
     # 总开关
     # session 默认关：开启后每次回复前会多跑 1-3 轮 judge LLM（增加延迟/成本）。
     # 第一版以兼容可回滚为优先（plan 设计前提 6 / FR-013），确认无碍后再手动打开。
-    "brain_session_enabled": False,
-    "life_loop_enabled": False,          # 常驻循环默认关，靠 /brain/life/start 启动
-    "proactive_contact_enabled": False,
+    "brain_session_enabled": True,
+    "life_loop_enabled": True,
+    "proactive_contact_enabled": True,
 
     # Reactive BrainSession
     "brain_session_max_cycles": 3,       # 可配到 5
@@ -46,8 +46,8 @@ DEFAULT_BRAIN = {
 
     # 输出记忆沉淀（memory_consolidation）
     # 总开关默认关：自动沉淀会调 LLM + 写长时记忆，确认无碍后再打开。manual 接口始终可用。
-    "memory_consolidation_enabled": False,
-    "memory_consolidation_daily_tick": False,    # 日 tick 沉淀
+    "memory_consolidation_enabled": True,
+    "memory_consolidation_daily_tick": True,    # 日 tick 沉淀
     "memory_consolidation_window_size": 20,      # 单次扫描窗口
 }
 

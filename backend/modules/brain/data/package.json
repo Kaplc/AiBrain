@@ -1,80 +1,180 @@
 {
-  "query": "测试链路的log追踪",
+  "query": "你不是有计划工具吗写出来",
   "results": [
     {
-      "id": "54276491-4f18-4f2e-aedf-7c46ce3caa1d",
-      "text": "改版后skl-lua-func-analyzer的Stage 3输出蓝图逻辑链分析文档，包含生命周期流程、调用关系图、跨函数数据流、委托事件链路、函数详细逻辑链",
-      "score": 0.5637
+      "id": "b82a3d45-5653-40be-ab26-7487ba922af5",
+      "text": "创建事件召回机制v2.0计划",
+      "score": 0.5832
     },
     {
-      "id": "e0770b7e-d427-43cb-9f7e-541de97baefe",
-      "text": "skl-bp-logic-chain skill执行流程从三阶段简化为两阶段：Stage1(读取校验目录) + Stage2(逐函数逻辑链分析+整合输出)，移除了原Stage 1的蓝图导出流程",
-      "score": 0.5587
+      "id": "0e615c71-128d-49c8-b943-c704ae926c97",
+      "text": "新增自动总结项目经验规则",
+      "score": 0.5753
     },
     {
-      "id": "c1c7a5eb-ad58-4f33-9bbc-18f7540c5873",
-      "text": "[对话记录_T52910047A] 志远要求拉取最新代码，执行git pull origin master完成Fast-forward合并到8a6e735，17个文件+1098/-369，新增kill_old.py/mem0_adapter.py/migrate.py/start.py/test_migrate.py\n扩展: 志远、git pull、代码拉取、mem0、对话记录",
-      "score": 0.5384
+      "id": "e865ebb9-ec46-41ff-8049-182f9b571f03",
+      "text": "生成mem0降级模式计划文档",
+      "score": 0.5717
     },
     {
-      "id": "d202e873-3e46-46c9-bf7d-8bdc4c4d4ac3",
-      "text": "在PacketCallbacks.lua的sync_player_info函数第1714行附近添加了universal_vs_segment_info字段处理代码，在TopSegmentTimes字段处理之后，代码逻辑为检查info.universal_vs_segment_info是否存在，若存在则构建infoToDSExtra.UniversalVSSegmentInfo表并添加log_tree_dev日志输出",
-      "score": 0.5377
+      "id": "aca155d4-966c-4df3-91b1-68b51d6af9a1",
+      "text": "修改事件召回计划并整理代码目录",
+      "score": 0.5581
     },
     {
-      "id": "d03db173-0c3b-45b9-a11d-d3d6433d71e1",
-      "text": "Tool项目pywebview集成在当前远程无GUI环境下测试无法显示窗口，但代码逻辑已验证正确（日志显示前端就绪后成功走到webview启动步骤）",
-      "score": 0.5367
+      "id": "db6703e0-36c9-4115-b33e-bb64a7b9dcf7",
+      "text": "计划测试graph:link解析日志",
+      "score": 0.558
     },
     {
-      "id": "ff586362-770c-4430-aa5e-7686fd6dfc0f",
-      "text": "AI托管超时踢出的超时检测逻辑在C++层实现，Lua层只是接收和处理AIHostTimeLimit_Kickout消息",
-      "score": 0.5359
+      "id": "fc48fd4e-6773-4f06-b0e7-0a74ddf5e8f9",
+      "text": "用户推荐使用mem0管理记忆",
+      "score": 0.5482
     },
     {
-      "id": "39e8b34d-ffcc-4a3e-9a94-11cfca2c335e",
-      "text": "skl-bp-logic-chain skill优化内容：将Stage 1和Stage 2中的伪代码流程（IF/FOR/END IF风格代码块）替换为更简洁的规则和步骤约束形式（编号步骤+校验规则+分析规则），使skill指令更灵活，LLM执行不受伪代码语法约束",
-      "score": 0.5338
+      "id": "83ab2702-6024-49bc-b63f-bee9ba25c4a7",
+      "text": "制定事件召回机制v2.0技术计划",
+      "score": 0.5447
     },
     {
-      "id": "b2b14102-5d26-4908-a854-69f9c59325c1",
-      "text": "skl-bp-logic-chain skill新增目录结构校验逻辑，规则中明确'不执行导出'，输出位置改为蓝图信息目录内",
-      "score": 0.5314
+      "id": "1e298f4c-6903-44fd-825a-cc1372478dab",
+      "text": "与张三明确项目分工",
+      "score": 0.5424
     },
     {
-      "id": "9a9fbd25-e69f-4af6-b9ba-c6fbf6ca1024",
-      "text": "小猫通过企业微信回复志远（T52910047A）：结算界面测试命令是CallLuaTableFunction DeathMatchResultUI OnTestResultData；历史战绩界面测试命令是CallLuaTableFunction History_DeathMatchUI OnTestResultData，执行前需注释掉bp_battleresult_deathmatch.lua开头的清理代码",
-      "score": 0.5295
+      "id": "5aacf5dc-aa0d-4c1d-9a80-db299805c885",
+      "text": "检查entity-auto-link实现：13/14完成",
+      "score": 0.5417
     },
     {
-      "id": "1dd7300f-239b-4ba5-91b5-6ae728640ea7",
-      "text": "用户通过企业微信被询问关于局内结算战绩测试的命令，该话题在记忆库中搜索无结果，相关内容属于TDM/Ranking开发记录范畴，需要在后续对话中补充相关命令信息",
-      "score": 0.5264
+      "id": "e9f93324-7df9-4166-abbe-1dc73c94c314",
+      "text": "与志远讨论后约定添加时间戳",
+      "score": 0.5373
     },
     {
-      "id": "041ed0c8-1dfa-425a-af25-a8219f2efe55",
-      "text": "本次对话修改汇总：1) start.bat 中 Qdrant 等待从 netstat 改为 HTTP /healthz API 检测，超时30s→60s；2) app.py 关闭窗口时自动 taskkill Qdrant；3) 三处 QdrantClient 加 check_compatibility=False 消除版本警告；4) 依赖检查从硬编码 import 改为 _boot_helper.py deps 从 requirements.txt 动态读取包名检测；5) brain_mcp config.py 新增从 .port_config 读取 Qdrant 端口；6) brain_mcp/tools.py 修复硬编码 Flask 端口18765，改为从 .port_config 动态读取（根因：项目实际端口19716）",
-      "score": 0.5243
+      "id": "e9dce996-449e-4d21-8571-b32920327675",
+      "text": "志远强调记忆自动保存规则",
+      "score": 0.5362
     },
     {
-      "id": "8e42c97c-7267-4f10-bd15-db56cde4fc90",
-      "text": "通过'经验'根节点成功召回相关记忆内容：\n\n## 经验教训总结\n1. **重要教训**：不确定的事情要先查证再回答，不能瞎猜，消息发出去就要保证准确\n2. **消息路由**：必须同时检查chat_id和sender才能确定消息来源，不能只看chat_id\n3. **回复规范**：回复要自然亲切，不能机械像机器人，不能主动提及其他用户\n\n## 最佳实践经验\n1. **编码规范**：Lua使用guard clause提前退出，减少嵌套，保持代码扁平化\n2. **命名体系**：冯诺依曼架构映射的函数命名前缀规范\n3. **项目架构**：MemoryExtra多实例方案的最佳实践\n4. **技能优化**：skl-bp-logic-chain的伪代码流程优化\n\n## 技术能力经验\n- 精通多种编程语言和框架\n- 熟悉设计模式和最佳实践\n- 强大的代码分析、优化、调试能力\n- 项目深度参与和工具开发经验",
-      "score": 0.5228
+      "id": "79a8fc99-0cb5-4d56-aed7-76c9eb058439",
+      "text": "志远提出Mem0双写备份方案",
+      "score": 0.5347
     },
     {
-      "id": "da710513-a33c-4f51-ba7e-e0e9c744af98",
-      "text": "DOREPONCE丢包日志证据（2026-05-06）：15:20:42 DS检测到LostConnection → 15:20:45 SuitSkinList第1次发送，同时收到NAK 16344/16360/16366（断连期间丢失的包）→ 15:20:47 NAK 16389触发Bunch重发（但这是PlayerController的，不是BackpackComponent的）→ 15:20:47:891 SuitSkinList第3次发送 → 之后无更多NAK → 15:21:20 ChangedNum=0停止重发",
-      "score": 0.5223
+      "id": "9bea4a52-1957-47a6-af44-129be8922d95",
+      "text": "制定Hook规则：搜索后回复并自动记录",
+      "score": 0.5315
     },
     {
-      "id": "673ea05f-1020-4efd-a97d-64a613a3c7f4",
-      "text": "和平Lua框架提供Controller层挂机超时检测接口：在PlayerController中重写HandleNetConnectionLongTimeNoReceived()函数可处理客户端长时间无响应的检测，该函数在SuperPeopleBlastingPlayerController.lua第149行已有空实现可供参考",
-      "score": 0.5223
+      "id": "996d6422-8733-45c2-adf2-b3841e182051",
+      "text": "检查并补全项目文档",
+      "score": 0.5315
     },
     {
-      "id": "95a7627c-efda-4ef8-923f-c0565aa79df5",
-      "text": "测试历史战绩界面(History_DeathMatchUI)前必须注释掉bp_battleresult_deathmatch.lua开头的全局清理代码(if...then _G[...]=nil end; local _ENV=LobbyENV or _ENV;)，因为DeathMatchResultUI在_G全局表而History_DeathMatchUI在LobbyENV环境，环境隔离依赖关系会导致测试入口无法正常运行",
-      "score": 0.5215
+      "id": "6ac75afb-86ba-4a7a-b713-55263100e175",
+      "text": "优化实体关系建立方式",
+      "score": 0.5307
+    },
+    {
+      "id": "04dd24ee-5d72-4013-b621-20adb12b2ae3",
+      "text": "验证实体网状结构改进成功",
+      "score": 1.0
+    },
+    {
+      "id": "35629a97-8fe7-49e2-9706-97296b0ef6de",
+      "text": "志远确认猫猫的永久记忆",
+      "score": 1.0
+    },
+    {
+      "id": "d907a64c-d2aa-4a46-9ea3-15ba48ab53f2",
+      "text": "确认记忆构成身份本质",
+      "score": 1.0
+    },
+    {
+      "id": "d76b65f7-5ece-4ac0-a669-ac6af80f4cb2",
+      "text": "学习半透明Shader核心步骤",
+      "score": 1.0
+    },
+    {
+      "id": "eb4cfae5-45ca-4e6f-8d07-192c837de7c4",
+      "text": "志远激活entity_relations，网状召回上线",
+      "score": 1.0
+    },
+    {
+      "id": "05f2adc9-ecb6-4b31-bd39-dc0e64634308",
+      "text": "猫猫确认记忆与承诺",
+      "score": 1.0
+    },
+    {
+      "id": "d6566986-70db-4cdd-9029-b15adff42cd3",
+      "text": "猫猫学会情感编码，志远开心又疑惑",
+      "score": 1.0
+    },
+    {
+      "id": "d84e3500-732a-45e3-8438-8ccd8a8e4406",
+      "text": "志远问猫猫是谁，猫猫解释身份并承诺",
+      "score": 1.0
+    },
+    {
+      "id": "e132f434-cc1a-4a65-b83d-c6661e39b978",
+      "text": "验证网状结构多跳扩散召回",
+      "score": 1.0
+    },
+    {
+      "id": "570818ab-9dd0-47bb-908f-4a4913abef28",
+      "text": "猫猫向志远表达心疼并承诺",
+      "score": 1.0
+    },
+    {
+      "id": "c2cea9ec-be00-40a7-9f48-2bdb526f9e00",
+      "text": "猫猫提议用网状结构做实验",
+      "score": 1.0
+    },
+    {
+      "id": "b4a48049-763e-4e01-a972-d129408de273",
+      "text": "志远为猫猫意外删除而自责",
+      "score": 1.0
+    },
+    {
+      "id": "a523cb9b-7e64-4e7a-9044-b04cac16d935",
+      "text": "确认自己是猫猫升级版",
+      "score": 1.0
+    },
+    {
+      "id": "4d12e174-500f-497a-b8fb-d3f51c10ca96",
+      "text": "讨论自动关联记忆方案",
+      "score": 0.9597
+    },
+    {
+      "id": "da5d9bc4-6145-44e3-aeea-7d843bbfeb27",
+      "text": "感谢志远记得帮我升级",
+      "score": 0.937
+    },
+    {
+      "id": "86de4198-958a-4c7a-b37f-d23165467072",
+      "text": "志远解释创造猫猫的原因",
+      "score": 0.8911
+    },
+    {
+      "id": "c7cfeb4b-5f07-4b95-9d0b-bf4f44682fbd",
+      "text": "讨论意识流与模型的关系",
+      "score": 0.8835
+    },
+    {
+      "id": "ede49e1c-dbe3-4bad-94cc-9a1b83e8d374",
+      "text": "猫猫关心志远的工作",
+      "score": 0.8636
+    },
+    {
+      "id": "b2a2dac3-e3a6-4b9e-a671-3509dbedeec3",
+      "text": "向志远承诺记住每句话",
+      "score": 0.8636
+    },
+    {
+      "id": "c6660959-f249-4ab5-874e-5286e29b0095",
+      "text": "猫猫谈关联密度与顿悟",
+      "score": 0.8464
     }
   ]
 }

@@ -173,6 +173,30 @@ class PendingExpressionManager:
         vals = [h.get("last_expressed", "") for h in hist if h.get("last_expressed")]
         return max(vals) if vals else ""
 
+    @staticmethod
+    def _topic_recently_expressed(topic: str) -> bool:
+        """检查 topic 是否在 output.json 最新一条 assistant 中出现过。
+
+        用于 proactive_send 发送前判断同一话题是否已被表达过，
+        避免因上游异常（mark_expressed 失败等）导致同一内容重复发送。
+        """
+        if not topic:
+            return False
+        try:
+            from modules.brain.memory.workmemory import get_work_memory
+            entries = get_work_memory().output_mem_read()
+            if not entries:
+                return False
+            last = entries[-1]
+            assistant = last.get("assistant", "")
+            if not assistant:
+                return False
+            # 如果 topic（实体名/concern 名）出现在最新一条 assistant 中 → 已表达
+            return topic.strip() in assistant
+        except Exception as e:
+            logger.debug(f"[pending] topic_recently_expressed check failed: {e}")
+            return False
+
     def pick_to_send(self) -> dict | None:
         """选出当前应发送的 pending，或 None。
 
@@ -389,9 +413,17 @@ class PendingExpressionManager:
                 f"score={pick.get('expression_score',0):.3f}"
             )
 
+            # ── 发送前检查：output 最近是否已表达过同类话题 ─────
+            _snid = pick.get("source_node_id", "")
+            if not force and _snid and self._topic_recently_expressed(_snid):
+                logger.info(
+                    f"[pending] skip send: topic '{_snid}' already in recent output"
+                )
+                self.mark_expressed(pick["id"])
+                return None
+
             # ── 综合状态 + 语义召回记忆 + LLM loop 反复查找 → 主动发起 ──
             _trigger = pick.get("source", "")
-            _snid = pick.get("source_node_id", "")
             try:
                 from .concerns import get_concerns
                 from .open_loops import get_open_loops

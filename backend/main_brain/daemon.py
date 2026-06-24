@@ -131,6 +131,16 @@ class LifeLoopDaemon:
         if activity == "reflect" and not dry_run:
             return self._run_reflect_activity(run, tick_type, reason, tick_input)
 
+        # 5a-bis: 注入程序记忆匹配（不阻塞主流程）
+        try:
+            from .procedural_memory.policy import enrich_tick_context_with_procedures
+            ctx_data = ctx.__dict__
+            ctx_data["mode"] = run.mode
+            ctx_data["actions"] = [c.action for c in run.cycles]
+            enrich_tick_context_with_procedures(ctx_data, dry_run=dry_run)
+        except Exception:
+            pass
+
         # 5b. controller 跑循环（其他活动）
         stop_reason = "max_cycles"
         try:

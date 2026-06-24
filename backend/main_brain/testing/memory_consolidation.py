@@ -18,7 +18,7 @@ import logging
 
 from modules.brain.memory.consolidation import (
     MemoryCandidate,
-    collect_from_entries, redaction,
+    collect_from_entries, redaction, source_hash,
     ValuePolicy, get_default_policy,
     get_consolidation_judge,
     DedupeGate,
@@ -71,57 +71,71 @@ def run_replay(
         }
     """
     policy = policy or get_default_policy()
-    candidates, _scanned, _max = collect_from_entries(samples, last_processed_seq=0,
-                                                      window_size=len(samples) or 20)
 
-    # 敏感预筛
-    for c in candidates:
-        masked, score, _r = redaction.analyze(c.summary)
-        c.sensitivity = score
-        if score >= 0.6:
-            c.decision = DECISION_REDACTED
-            c.reason = f"敏感风险 {score:.2f}"
+    # 构建对话记录（敏感屏蔽）
+    transcript = []
+    for e in samples:
+        if not isinstance(e, dict):
             continue
-        if masked and masked != c.summary:
-            c.summary = masked
+        user = str(e.get("user", "") or "").strip()
+        assistant = str(e.get("assistant", "") or "").strip()
+        if user:
+            user = redaction.mask(user)
+        if assistant:
+            assistant = redaction.mask(assistant)
+        if user or assistant:
+            transcript.append({"seq": int(e.get("seq", 0) or 0), "user": user, "assistant": assistant})
 
-    # 判断
+    # LLM 统一提炼（或规则兜底）
     llm_used = False
-    llm_input = [c for c in candidates if c.decision != DECISION_REDACTED]
-    decisions: dict[int, dict] = {}
-    if use_llm and llm_input:
-        res = get_consolidation_judge().judge(llm_input, mock_response=mock_llm)
+    candidates: list = []
+    if use_llm:
+        res = get_consolidation_judge().extract(transcript, mock_response=mock_llm)
         llm_used = bool(res.get("ok"))
-        decisions = res.get("decisions", {}) if llm_used else {}
+        if llm_used:
+            for i, m in enumerate(res.get("extracted", []) or []):
+                summary = (m.get("summary") or "").strip()[:240]
+                if not summary:
+                    continue
+                candidates.append(MemoryCandidate(
+                    candidate_id=f"cand_ext_{m.get('source_seq', 0)}_{i}",
+                    source_seq=int(m.get("source_seq", 0) or 0),
+                    summary=summary,
+                    memory_kind=m.get("memory_kind", "other"),
+                    source_hash=source_hash(summary),
+                    importance=float(m.get("importance", 0.6) or 0.6),
+                    reason=m.get("reason", "LLM 提炼"),
+                    decision=DECISION_SAVE,
+                ))
+
+    if not llm_used:
+        # 规则兜底：从 user 文本抽候选
+        rule_cands, _s, _m = collect_from_entries(samples, last_processed_seq=0,
+                                                  window_size=len(samples) or 20)
+        for c in rule_cands:
+            masked, score, _r = redaction.analyze(c.summary)
+            c.sensitivity = score
+            if score >= 0.6:
+                c.decision = DECISION_REDACTED
+                c.reason = f"敏感风险 {score:.2f}"
+                candidates.append(c)
+                continue
+            if masked and masked != c.summary:
+                c.summary = masked
+            policy.score(c, novelty=c.novelty or None)
+            decision, reason, _need = policy.decide(c)
+            c.decision = decision
+            c.reason = reason
+            candidates.append(c)
 
     gate = DedupeGate(seen_hashes=set(), semantic_check=semantic_check)
 
     for c in candidates:
         if c.decision == DECISION_REDACTED:
             continue
-        if use_llm and llm_used:
-            idx = llm_input.index(c) if c in llm_input else -1
-            dec = decisions.get(idx)
-            if dec is None or not dec.get("save"):
-                c.decision = DECISION_SKIP
-                c.reason = (dec.get("reason") if dec else "LLM 未标记保存") or "无需保存"
-                continue
-            if dec.get("summary"):
-                c.summary = dec["summary"]
-            c.memory_kind = dec.get("memory_kind", c.memory_kind)
-            c.importance = float(dec.get("importance", 0.6))
-            c.reason = dec.get("reason") or "LLM 判定保存"
-            c.decision = DECISION_SAVE
-        else:
-            # 规则评分
-            policy.score(c, novelty=c.novelty or None)
-            decision, reason, _need = policy.decide(c)
-            c.decision = decision
-            c.reason = reason
-            if decision != DECISION_SAVE:
-                continue
+        if c.decision != DECISION_SAVE:
+            continue
 
-        # 去重
         status, novelty, dedup_reason = gate.check(c)
         c.novelty = novelty
         if status == "duplicate":

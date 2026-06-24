@@ -181,7 +181,7 @@ def register(app, ready_state, logger, stats_db):
             trigger = body.get("trigger", "manual")
             window_size = int(body.get("window_size", 20))
             dry_run = bool(body.get("dry_run", False))
-            if window_size <= 0 or window_size > 100:
+            if window_size <= 0 or window_size > 10000:
                 return jsonify({"error": "window_size 必须在 1..100"}), 400
             from main_brain.consolidation import consolidate_memory
             return jsonify(consolidate_memory(trigger, dry_run=dry_run, window_size=window_size))
@@ -196,7 +196,7 @@ def register(app, ready_state, logger, stats_db):
             body = request.get_json(silent=True) or {}
             trigger = body.get("trigger", "manual")
             window_size = int(body.get("window_size", 20))
-            if window_size <= 0 or window_size > 100:
+            if window_size <= 0 or window_size > 10000:
                 return jsonify({"error": "window_size 必须在 1..100"}), 400
             from main_brain.consolidation import preview_memory_consolidation
             return jsonify(preview_memory_consolidation(trigger, window_size=window_size))
@@ -234,6 +234,129 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] memory/consolidation/recent failed: {e}")
             return jsonify({"runs": [], "error": str(e)}), 500
+
+    # ── procedural memory debug routes ────────────────────
+    @app.route('/brain/procedural/mine', methods=['POST'])
+    def brain_procedural_mine():
+        try:
+            body = request.get_json(silent=True) or {}
+            window = int(body.get("window", 50))
+            min_support = int(body.get("min_support", 3))
+            min_success_rate = float(body.get("min_success_rate", 0.7))
+            dry_run = bool(body.get("dry_run", False))
+            if window <= 0 or window > 10000:
+                return jsonify({"error": "window must be 1..10000"}), 400
+            from main_brain.procedural_memory.scheduler import run_mining
+            result = run_mining(window=window, min_support=min_support,
+                                min_success_rate=min_success_rate, dry_run=dry_run)
+            return jsonify(result)
+        except Exception as e:
+            logger.warning(f"[brain] procedural/mine failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/procedural/state', methods=['GET'])
+    def brain_procedural_state():
+        try:
+            from main_brain.procedural_memory.scheduler import get_module_state
+            return jsonify(get_module_state())
+        except Exception as e:
+            logger.warning(f"[brain] procedural/state failed: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/brain/procedural/templates', methods=['GET'])
+    def brain_procedural_templates():
+        try:
+            from modules.brain.memory.procedural.store import get_procedure_store
+            store = get_procedure_store()
+            status = request.args.get("status")
+            risk = request.args.get("risk")
+            limit = int(request.args.get("limit", 50))
+            templates = store.get_all_templates()
+            if status:
+                templates = [t for t in templates if t.status == status]
+            if risk:
+                templates = [t for t in templates if t.risk_level == risk]
+            return jsonify({"count": len(templates), "templates": [t.to_dict() for t in templates[:limit]]})
+        except Exception as e:
+            logger.warning(f"[brain] procedural/templates failed: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/brain/procedural/match', methods=['POST'])
+    def brain_procedural_match():
+        try:
+            body = request.get_json(silent=True) or {}
+            context = body.get("context", {})
+            top_k = int(body.get("top_k", 5))
+            if not context:
+                return jsonify({"error": "context required"}), 400
+            from main_brain.procedural_memory.matcher import match_procedure_templates
+            from modules.brain.memory.procedural.store import get_procedure_store
+            store = get_procedure_store()
+            templates = store.get_templates_by_status("proposed", "active", "cooling")
+            matches = match_procedure_templates(context, templates=templates, top_k=top_k)
+            return jsonify({"ok": True, "matches": matches, "count": len(matches)})
+        except Exception as e:
+            logger.warning(f"[brain] procedural/match failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/procedural/feedback', methods=['POST'])
+    def brain_procedural_feedback():
+        try:
+            body = request.get_json(silent=True) or {}
+            template_id = body.get("template_id", "")
+            run_id = body.get("run_id", "")
+            result = body.get("result", "success")
+            reward_delta = float(body.get("reward_delta", 0.2))
+            notes = body.get("notes", "")
+            if not template_id or not run_id:
+                return jsonify({"error": "template_id and run_id required"}), 400
+            from main_brain.procedural_memory.feedback import record_procedure_feedback
+            res = record_procedure_feedback(template_id=template_id, run_id=run_id,
+                                            result=result, reward_delta=reward_delta, notes=notes)
+            return jsonify(res)
+        except Exception as e:
+            logger.warning(f"[brain] procedural/feedback failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/procedural/promote', methods=['POST'])
+    def brain_procedural_promote():
+        try:
+            body = request.get_json(silent=True) or {}
+            template_id = body.get("template_id", "")
+            if not template_id:
+                return jsonify({"error": "template_id required"}), 400
+            from main_brain.procedural_memory.feedback import promote_template
+            return jsonify(promote_template(template_id))
+        except Exception as e:
+            logger.warning(f"[brain] procedural/promote failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/procedural/retire', methods=['POST'])
+    def brain_procedural_retire():
+        try:
+            body = request.get_json(silent=True) or {}
+            template_id = body.get("template_id", "")
+            reason = body.get("reason", "")
+            if not template_id:
+                return jsonify({"error": "template_id required"}), 400
+            from main_brain.procedural_memory.feedback import retire_template
+            return jsonify(retire_template(template_id, reason=reason))
+        except Exception as e:
+            logger.warning(f"[brain] procedural/retire failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/procedural/export-skill', methods=['POST'])
+    def brain_procedural_export_skill():
+        try:
+            body = request.get_json(silent=True) or {}
+            template_id = body.get("template_id", "")
+            if not template_id:
+                return jsonify({"error": "template_id required"}), 400
+            from main_brain.procedural_memory.exporter import export_procedure_skill_draft
+            return jsonify(export_procedure_skill_draft(template_id))
+        except Exception as e:
+            logger.warning(f"[brain] procedural/export-skill failed: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ── 小工具 ───────────────────────────────────────────────────

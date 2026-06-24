@@ -134,11 +134,20 @@ class BrainJudge:
                 .replace("{activity}", activity or "wait"))
 
     def _user_prompt(self, judge_view: dict) -> str:
-        return (
+        prompt = (
             "当前上下文（JSON）：\n"
             + json.dumps(judge_view, ensure_ascii=False, default=str)
-            + "\n\n请输出本轮决策 JSON。"
         )
+        matches = judge_view.get("procedure_matches") or []
+        if matches:
+            try:
+                from .procedural_memory.policy import format_procedure_matches_for_prompt
+
+                prompt += "\n" + format_procedure_matches_for_prompt(matches)
+            except Exception as e:
+                logger.warning(f"[judge] format procedure matches failed: {e}")
+        prompt += "\n\n请输出本轮决策 JSON。"
+        return prompt
 
     # ── 主调用 ───────────────────────────────────────────────
     def decide(

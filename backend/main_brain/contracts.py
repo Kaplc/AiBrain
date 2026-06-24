@@ -173,6 +173,7 @@ class BrainRunContext:
     cycles: list[BrainCycle] = field(default_factory=list)
     memory_context: list[dict] = field(default_factory=list)
     tool_results: list[dict] = field(default_factory=list)
+    procedure_matches: list[dict] = field(default_factory=list)
     pending_expressions: list[dict] = field(default_factory=list)
     budgets: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)
@@ -187,6 +188,19 @@ class BrainRunContext:
     def to_judge_view(self) -> dict:
         """喂给 BrainJudge 的精简视图（避免把整个 context 丢进 prompt）。"""
         last = self.cycles[-1] if self.cycles else None
+        matches = []
+        for m in (self.procedure_matches or [])[:3]:
+            if not isinstance(m, dict):
+                continue
+            matches.append({
+                "template_id": str(m.get("template_id", "")),
+                "score": round(float(m.get("score", 0.0) or 0.0), 3),
+                "context_fit": round(float(m.get("context_fit", 0.0) or 0.0), 3),
+                "success_fit": round(float(m.get("success_fit", 0.0) or 0.0), 3),
+                "reason": str(m.get("reason", ""))[:180],
+                "action_hint": str(m.get("action_hint", ""))[:120],
+                "step_preview": [str(s)[:60] for s in (m.get("step_preview", []) or [])[:5]],
+            })
         return {
             "mode": self.run.mode,
             "tick_type": self.tick_type,
@@ -204,6 +218,7 @@ class BrainRunContext:
                 {"name": t.get("name", ""), "summary": str(t.get("result", ""))[:160]}
                 for t in self.tool_results[:4]
             ],
+            "procedure_matches": matches,
             "pending_count": len(self.pending_expressions),
             "errors": self.errors[-3:],
             "budgets": self.budgets,
