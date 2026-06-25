@@ -20,7 +20,7 @@ class ExpressionAdapter:
     """主动表达 adapter（包装 pending / expression_history / gate）。"""
 
     def _pending(self):
-        from modules.brain.state import get_pending
+        from main_brain.state import get_pending
         return get_pending()
 
     # ── 创建 pending（judge 意图 → 现有队列）──────────────
@@ -116,7 +116,7 @@ class ExpressionAdapter:
     def _recent_assistant(self, limit: int = 8) -> list[dict]:
         """读最近系统回复/主动消息（重复度判定用）。"""
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             entries = get_work_memory().output_mem_read()
             out = []
             for e in entries[-limit:]:

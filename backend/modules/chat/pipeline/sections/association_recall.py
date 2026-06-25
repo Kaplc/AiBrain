@@ -21,7 +21,7 @@ def execute(ctx: PromptContext) -> None:
         return
 
     try:
-        from modules.brain.graph import get_graph
+        from main_brain.memory.graph import get_graph
     except Exception:
         return
 
@@ -55,7 +55,7 @@ def execute(ctx: PromptContext) -> None:
 
     # 从 Qdrant 取 display_text（图不再存文本）
     try:
-        from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
+        from modules.qdrant.store import get_qdrant_client, NEW_COLLECTION
         client = get_qdrant_client()
         points = client.retrieve(collection_name=NEW_COLLECTION, ids=related_mem_ids)
     except Exception:

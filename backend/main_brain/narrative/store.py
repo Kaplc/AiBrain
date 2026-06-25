@@ -142,7 +142,7 @@ class SelfNarrativeStore:
                 return None
 
             from .prompts import INITIAL_AUTOBIOGRAPHY_PROMPT
-            from modules.brain.llm import call_llm
+            from main_brain.memory.llm import call_llm
 
             user_prompt = INITIAL_AUTOBIOGRAPHY_PROMPT.format(memories=memories_text)
             raw = call_llm("你是一个 JSON 生成助手，只输出 JSON。", user_prompt, timeout=30)

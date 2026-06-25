@@ -5,7 +5,7 @@ from ..context import PromptContext
 def execute(ctx: PromptContext) -> None:
     """读取自传文档，将关键状态注入 system prompt"""
     try:
-        from modules.brain.memory.self_narrative import get_self_narrative
+        from main_brain.narrative import get_self_narrative
         store = get_self_narrative()
         if store is None:
             return

@@ -7,17 +7,22 @@ import logging
 logger = logging.getLogger('narrative')
 
 
+def _is_ready(ready_state) -> bool:
+    """ready_state 是 dict {model, qdrant, device}，两者皆 True 才算就绪（与 scene_routes 对齐）"""
+    return bool(ready_state.get("model")) and bool(ready_state.get("qdrant"))
+
+
 def register(app, ready_state, _logger, stats_db):
     """注册自我叙事 API 路由"""
 
     @app.route('/narrative/autobiography', methods=['GET'])
     def narrative_autobiography():
         """获取完整自传 JSON"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -30,11 +35,11 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/state', methods=['GET'])
     def narrative_state():
         """获取当前状态 (mood, thinking 等)"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -47,11 +52,11 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/chapters', methods=['GET'])
     def narrative_chapters():
         """获取所有人生章节"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -68,11 +73,11 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/milestones', methods=['GET'])
     def narrative_milestones():
         """获取里程碑列表"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -85,11 +90,11 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/core-memories', methods=['GET'])
     def narrative_core_memories():
         """获取核心记忆列表"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -102,7 +107,7 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/anchors', methods=['GET'])
     def narrative_anchors():
         """获取所有叙事锚点（分页）"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
@@ -110,7 +115,7 @@ def register(app, ready_state, _logger, stats_db):
             limit = int(request.args.get('limit', 200))
             offset = int(request.args.get('offset', 0))
 
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -123,11 +128,11 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/stats', methods=['GET'])
     def narrative_stats():
         """获取叙事模块统计信息"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}
@@ -139,7 +144,7 @@ def register(app, ready_state, _logger, stats_db):
     @app.route('/narrative/reflect', methods=['POST'])
     def narrative_reflect():
         """手动触发反思（转调统一反思核心函数 run_reflection）"""
-        if not ready_state.is_set():
+        if not _is_ready(ready_state):
             return json.dumps({"error": "系统尚未就绪"}), 503, {'Content-Type': 'application/json'}
 
         try:
@@ -147,7 +152,7 @@ def register(app, ready_state, _logger, stats_db):
             body = request.get_json(silent=True) or {}
             force = bool(body.get("force", False))
 
-            from modules.brain.memory.self_narrative import get_self_narrative
+            from main_brain.narrative import get_self_narrative
             sn = get_self_narrative()
             if not sn:
                 return json.dumps({"error": "叙事模块未初始化"}), 503, {'Content-Type': 'application/json'}

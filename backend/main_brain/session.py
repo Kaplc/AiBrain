@@ -20,7 +20,7 @@ logger = logging.getLogger("main_brain.session")
 
 
 def _new_run_id(mode: str) -> str:
-    from modules.brain.state import times
+    from main_brain.state import times
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     prefix = "br" if mode == REACTIVE else "bg"
     # 加 4 位后缀区分同一秒多次
@@ -81,7 +81,7 @@ class BrainSession:
 
         # 附加最近对话上下文，让 judge 的 recall_memory query 更准确
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             entries = get_work_memory().output_mem_read()
             recent = []
             for e in entries[-6:]:
@@ -164,5 +164,5 @@ class BrainSession:
 
 
 def _now() -> str:
-    from modules.brain.state import times
+    from main_brain.state import times
     return times.now_iso()

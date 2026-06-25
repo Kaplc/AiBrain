@@ -208,7 +208,7 @@ def register(app, ready_state, logger, stats_db):
     def brain_memory_consolidation_state():
         """沉淀检查点状态。"""
         try:
-            from modules.brain.memory.consolidation import get_trace_store
+            from main_brain.memory.consolidation import get_trace_store
             state = get_trace_store().get_state()
             return jsonify({
                 "last_processed_seq": state.last_processed_seq,
@@ -229,7 +229,7 @@ def register(app, ready_state, logger, stats_db):
         """最近几次沉淀运行摘要（调试/回放）。query: limit。"""
         try:
             limit = int(request.args.get("limit", 10))
-            from modules.brain.memory.consolidation import get_trace_store
+            from main_brain.memory.consolidation import get_trace_store
             return jsonify({"runs": get_trace_store().recent_runs(limit=limit)})
         except Exception as e:
             logger.warning(f"[brain] memory/consolidation/recent failed: {e}")
@@ -266,7 +266,7 @@ def register(app, ready_state, logger, stats_db):
     @app.route('/brain/procedural/templates', methods=['GET'])
     def brain_procedural_templates():
         try:
-            from modules.brain.memory.procedural.store import get_procedure_store
+            from main_brain.memory.procedural.store import get_procedure_store
             store = get_procedure_store()
             status = request.args.get("status")
             risk = request.args.get("risk")
@@ -290,7 +290,7 @@ def register(app, ready_state, logger, stats_db):
             if not context:
                 return jsonify({"error": "context required"}), 400
             from main_brain.procedural_memory.matcher import match_procedure_templates
-            from modules.brain.memory.procedural.store import get_procedure_store
+            from main_brain.memory.procedural.store import get_procedure_store
             store = get_procedure_store()
             templates = store.get_templates_by_status("proposed", "active", "cooling")
             matches = match_procedure_templates(context, templates=templates, top_k=top_k)

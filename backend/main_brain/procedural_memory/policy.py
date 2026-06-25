@@ -13,7 +13,7 @@
 import logging
 
 from main_brain.procedural_memory.matcher import match_procedure_templates
-from modules.brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.store import get_procedure_store
 
 logger = logging.getLogger("main_brain.procedural.policy")
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from modules.brain.memory.consolidation import (
+from main_brain.memory.consolidation import (
     MemoryCandidate,
     collect_from_entries, redaction, source_hash,
     ValuePolicy, get_default_policy,

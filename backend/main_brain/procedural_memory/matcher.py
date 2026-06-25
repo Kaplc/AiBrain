@@ -13,8 +13,8 @@ import logging
 from typing import Optional
 
 from main_brain.procedural_memory.contracts import ProcedureTemplate, ProcedureMatch
-from modules.brain.memory.procedural.store import get_procedure_store
-from modules.brain.memory.procedural.index import ProcedureIndex
+from main_brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.index import ProcedureIndex
 
 logger = logging.getLogger("main_brain.procedural.matcher")
 

@@ -4,7 +4,7 @@
 import logging
 import threading
 
-from modules.brain.memory.pipeline.context import StepDef
+from main_brain.memory.pipeline.context import StepDef
 
 from .store import get_self_narrative
 from .prompts import NARRATIVE_SIGNIFICANCE_PROMPT
@@ -35,7 +35,7 @@ def _execute_significance(ctx) -> None:
     chapter_title = chapter.get("title", "")
 
     def _bg_tag(events_list, ch_title):
-        from modules.brain.llm import call_llm
+        from main_brain.memory.llm import call_llm
         for ev in events_list:
             try:
                 mem_text = ev.get("memory", "")

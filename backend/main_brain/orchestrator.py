@@ -222,7 +222,7 @@ class Orchestrator:
             return {"recalled": False, "items": []}
 
         try:
-            from modules.brain.memory.core import search_memory
+            from main_brain.memory.core import search_memory
 
             # 用事件内容搜索相关记忆
             memories = search_memory(content)[:5]

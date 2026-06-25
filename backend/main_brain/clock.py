@@ -50,7 +50,7 @@ class BrainClock:
     def _load(self) -> None:
         """从 internal_state.json 加载 brain_clock 节点到内存。"""
         try:
-            from modules.brain.state import get_state
+            from main_brain.state import get_state
             node = get_state().snapshot().get(_STATE_NODE)
             if isinstance(node, dict):
                 times = node.get("last_run_times", {})
@@ -65,7 +65,7 @@ class BrainClock:
         if not self._dirty:
             return
         try:
-            from modules.brain.state import get_state
+            from main_brain.state import get_state
             with get_state().transaction() as data:
                 data[_STATE_NODE] = data.get(_STATE_NODE, {})
                 data[_STATE_NODE]["last_run_times"] = dict(self._last_run_iso)
@@ -96,7 +96,7 @@ class BrainClock:
             return True  # 首次运行（或新 tick 类型），需要触一次
 
         try:
-            from modules.brain.state import times
+            from main_brain.state import times
             from datetime import datetime, timezone
             last_dt = times.parse_iso(last_iso)
             if last_dt is None:
@@ -112,7 +112,7 @@ class BrainClock:
 
         short_tick 只写内存（30s 心跳不写盘）；medium/long/daily 写盘。
         """
-        from modules.brain.state import times
+        from main_brain.state import times
         now = times.now_iso()
         with self._lock:
             self._last_run_iso[tick_type] = now

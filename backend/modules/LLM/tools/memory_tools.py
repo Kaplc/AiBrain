@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def _memory_search_fn(query: str) -> str:
     """搜索长期记忆库，返回 top 5 结果摘要"""
-    from modules.brain.memory.core import search_memory
+    from main_brain.memory.core import search_memory
     results = search_memory(query)
     if not results:
         return "没有找到相关记忆"
@@ -27,7 +27,7 @@ def _memory_search_fn(query: str) -> str:
 
 def _memory_store_fn(text: str) -> str:
     """保存信息到长期记忆库"""
-    from modules.brain.memory.core import store_memory
+    from main_brain.memory.core import store_memory
     result = store_memory(text, memory_meta={"source": "chat_tool"})
     return result.get("result", "已处理")
 

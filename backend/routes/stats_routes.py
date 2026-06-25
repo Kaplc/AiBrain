@@ -11,7 +11,7 @@ def _anchor_to_actual(data: list) -> list:
     if not data:
         return data
     try:
-        from modules.brain.memory import get_memory_count
+        from main_brain.memory import get_memory_count
         actual = get_memory_count()
         if actual <= 0:
             return data

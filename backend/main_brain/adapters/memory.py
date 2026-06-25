@@ -20,7 +20,7 @@ class MemoryAdapter:
         if not query or not query.strip():
             return []
         try:
-            from modules.brain.memory.core import search_memory
+            from main_brain.memory.core import search_memory
             hits = search_memory(query)
         except Exception as e:
             logger.warning(f"[mem_adapter] recall failed for {query!r}: {e}")

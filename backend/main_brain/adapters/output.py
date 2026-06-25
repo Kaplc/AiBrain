@@ -20,7 +20,7 @@ class OutputAdapter:
     def read_all(self) -> list[dict]:
         """读取 output.json 全部条目（原始 dict）。失败返回 []。"""
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             return get_work_memory().output_mem_read()
         except Exception as e:
             logger.warning(f"[output_adapter] read output.json failed: {e}")

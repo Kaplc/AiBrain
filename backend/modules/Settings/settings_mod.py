@@ -239,7 +239,7 @@ class SettingsManager:
                 stats_db = StatsDB.get_instance(db_path)
                 mgr.init_agentloop(stats_db, chat_cfg)
                 try:
-                    from modules.brain.mem0_adapter import get_mem0_client
+                    from modules.qdrant.store import get_qdrant_client
                     m = get_mem0_client()
                     if m:
                         mgr.set_mem0_add_fn(lambda **kw: m.add(**kw))

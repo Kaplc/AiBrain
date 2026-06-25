@@ -4,7 +4,7 @@
 """
 
 import logging
-from modules.brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.store import get_procedure_store
 
 logger = logging.getLogger("main_brain.procedural.trace")
 

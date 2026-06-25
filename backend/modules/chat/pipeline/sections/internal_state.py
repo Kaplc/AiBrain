@@ -21,7 +21,7 @@ def _collect_entities(ctx: PromptContext) -> list[str]:
     if not mem_ids:
         return []
     try:
-        from modules.brain.graph import get_graph
+        from main_brain.memory.graph import get_graph
         graph = get_graph()
         if graph is None:
             return []
@@ -37,7 +37,7 @@ def _collect_entities(ctx: PromptContext) -> list[str]:
 def _activate_and_collect(top_entities: list[str]) -> tuple[list, list]:
     """激活 concern、刷 working_set、生成 pending；返回 (top_concerns, open_loops)。"""
     try:
-        from modules.brain.state import (
+        from main_brain.state import (
             get_concerns, get_working_set, get_open_loops, get_pending,
         )
     except Exception:

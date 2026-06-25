@@ -471,7 +471,7 @@ class BrainCycleContext:
 
 def _new_event_id() -> str:
     import hashlib
-    from modules.brain.state import times
+    from main_brain.state import times
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     suffix = hashlib.md5(stamp.encode()).hexdigest()[:6]
     return f"evt_{stamp}_{suffix}"
@@ -479,7 +479,7 @@ def _new_event_id() -> str:
 
 def _new_trace_id() -> str:
     import hashlib
-    from modules.brain.state import times
+    from main_brain.state import times
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     suffix = hashlib.md5(stamp.encode()).hexdigest()[:8]
     return f"trace_{stamp}_{suffix}"

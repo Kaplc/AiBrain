@@ -81,7 +81,7 @@ class RebuildService:
 
         def _run():
             try:
-                from modules.brain.rebuild_graph import rebuild
+                from main_brain.memory.graph_rebuild import rebuild
                 rebuild(self.state, self._stop_flag,
                         workers=workers, batch_size=batch_size, delay_between_batches=delay)
                 # rebuild 完成后，根据 stop_flag 决定状态

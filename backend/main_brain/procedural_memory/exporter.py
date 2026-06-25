@@ -16,7 +16,7 @@ import os
 from typing import Optional
 
 from main_brain.procedural_memory.contracts import ProcedureTemplate
-from modules.brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.store import get_procedure_store
 
 logger = logging.getLogger("main_brain.procedural.exporter")
 

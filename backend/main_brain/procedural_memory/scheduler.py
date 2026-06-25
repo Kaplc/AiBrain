@@ -15,8 +15,8 @@ from typing import Optional
 
 from main_brain.procedural_memory.collector import collect_procedure_examples
 from main_brain.procedural_memory.miner import mine_procedure_templates
-from modules.brain.memory.procedural.store import get_procedure_store
-from modules.brain.memory.procedural.decay import apply_decay, check_archive, refresh_state_counts
+from main_brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.decay import apply_decay, check_archive, refresh_state_counts
 from main_brain.procedural_memory.trace import (
     get_last_processed_run_id,
     set_last_processed_run_id,

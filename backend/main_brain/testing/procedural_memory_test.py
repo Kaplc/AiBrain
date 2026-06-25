@@ -24,9 +24,9 @@ from main_brain.procedural_memory.contracts import (
     ProcedureFeedback, ProcedureState, TEMPLATE_STATUS, RISK_LEVELS,
 )
 from main_brain.contracts import BrainRun, BrainRunContext
-from modules.brain.memory.procedural.store import ProcedureStore
-from modules.brain.memory.procedural.index import ProcedureIndex
-from modules.brain.memory.procedural.decay import apply_decay, check_feedback_decay
+from main_brain.memory.procedural.store import ProcedureStore
+from main_brain.memory.procedural.index import ProcedureIndex
+from main_brain.memory.procedural.decay import apply_decay, check_feedback_decay
 from main_brain.procedural_memory.collector import _build_example, _classify_outcome, _fetch_recent_runs
 from main_brain.procedural_memory.miner import mine_procedure_templates, _build_signature, _action_sequence_sig
 from main_brain.procedural_memory.matcher import match_procedure_templates, _preconditions_met

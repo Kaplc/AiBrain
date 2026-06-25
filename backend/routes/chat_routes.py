@@ -39,7 +39,7 @@ def _write_chat_history(user_msg: str, reply_text: str) -> None:
         pass
     # 2. 写入 output.json
     try:
-        from modules.brain.memory.workmemory import get_work_memory
+        from main_brain.memory.workmemory import get_work_memory
         get_work_memory().output_mem_write(reply_text, user_prompt=user_msg)
     except Exception:
         pass
@@ -49,7 +49,7 @@ def _write_chat_history(user_msg: str, reply_text: str) -> None:
 def _get_drives_summary() -> dict:
     """获取驱动力全量值"""
     try:
-        from modules.brain.state import get_drives
+        from main_brain.state import get_drives
         return get_drives().get_all()
     except Exception:
         return {}
@@ -58,7 +58,7 @@ def _get_drives_summary() -> dict:
 def _get_top_concerns(n: int = 5) -> list[dict]:
     """获取 top N 当前关注（node_id + effective 值）"""
     try:
-        from modules.brain.state import get_concerns
+        from main_brain.state import get_concerns
         top = get_concerns().all_effective(n)
         return [{"node_id": node_id, "effective": round(eff, 4)} for node_id, eff in top if eff > 0]
     except Exception:
@@ -97,7 +97,7 @@ def register(app, ready_state, logger, stats_db):
             {"messages": [{role, content, time}, ...]}  user/assistant 交替
         """
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             wm = get_work_memory()
             outputs = wm.output_mem_read()
 
@@ -315,7 +315,7 @@ def register(app, ready_state, logger, stats_db):
     def trigger_proactive():
         """手动触发猫猫主动消息：生成 + 写 output.json 给用户（强制发送，不受冷却限制）"""
         try:
-            from modules.brain.state import get_pending, get_concerns, get_drives
+            from main_brain.state import get_pending, get_concerns, get_drives
             p = get_pending()
             # 先生成 pending
             p.evaluate_and_generate()

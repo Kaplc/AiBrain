@@ -48,8 +48,8 @@ def register(app, ready_state, _logger, stats_db):
         if not query:
             return {"ok": False, "error": "query 不能为空"}, 400
         try:
-            from modules.brain.memory.store import memory_search
-            from modules.brain.memory.scene_diffusion import get_scene_diffusion
+            from main_brain.memory.store import memory_search
+            from main_brain.memory.scene_diffusion import get_scene_diffusion
             sem = memory_search(query, top_k=15, threshold=0.55)
             diff = get_scene_diffusion()
             if not diff or not diff.available():
@@ -74,8 +74,8 @@ def register(app, ready_state, _logger, stats_db):
         if not query:
             return {"ok": False, "error": "query 不能为空"}, 400
         try:
-            from modules.brain.memory.store import memory_search
-            from modules.brain.memory.scene_diffusion import get_scene_diffusion
+            from main_brain.memory.store import memory_search
+            from main_brain.memory.scene_diffusion import get_scene_diffusion
             sem = memory_search(query, top_k=15, threshold=0.55)
             diff = get_scene_diffusion()
             if not diff or not diff.available():
@@ -106,7 +106,7 @@ def register(app, ready_state, _logger, stats_db):
     def scene_graph_stats():
         """图规模与边数 + reindex 进度（FR-012 运行观测）"""
         try:
-            from modules.brain.memory.scene_graph import get_scene_graph
+            from main_brain.memory.scene_graph import get_scene_graph
             sg = get_scene_graph()
             stats = sg.get_stats() if sg else {}
             with _reindex_lock:
@@ -121,7 +121,7 @@ def register(app, ready_state, _logger, stats_db):
     def scene_anchor(name):
         """查询某锚点关联的情景列表"""
         try:
-            from modules.brain.memory.scene_graph import get_scene_graph
+            from main_brain.memory.scene_graph import get_scene_graph
             sg = get_scene_graph()
             if not sg:
                 return {"ok": False, "error": "scene graph 未初始化"}, 503
@@ -140,8 +140,8 @@ def register(app, ready_state, _logger, stats_db):
     def scene_detail(scene_id):
         """查询单条情景详情（Qdrant payload + 图锚点）"""
         try:
-            from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
-            from modules.brain.memory.scene_graph import get_scene_graph
+            from modules.qdrant.store import get_qdrant_client, NEW_COLLECTION
+            from main_brain.memory.scene_graph import get_scene_graph
             client = get_qdrant_client()
             points = client.retrieve(
                 collection_name=NEW_COLLECTION, ids=[scene_id],
@@ -164,7 +164,7 @@ def register(app, ready_state, _logger, stats_db):
 def _run_reindex():
     """后台执行 reindex，更新模块级状态"""
     try:
-        from modules.brain.memory.scene_graph import get_scene_graph
+        from main_brain.memory.scene_graph import get_scene_graph
         sg = get_scene_graph()
         if not sg:
             raise RuntimeError("scene graph 未初始化")
@@ -194,7 +194,7 @@ def _fetch_scene_texts(scene_ids: list[str]) -> dict:
     if not scene_ids:
         return {}
     try:
-        from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
+        from modules.qdrant.store import get_qdrant_client, NEW_COLLECTION
         client = get_qdrant_client()
         points = client.retrieve(
             collection_name=NEW_COLLECTION, ids=scene_ids,

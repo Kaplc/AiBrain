@@ -9,8 +9,8 @@ import logging
 from typing import Optional
 
 from main_brain.procedural_memory.contracts import ProcedureFeedback, TEMPLATE_STATUS
-from modules.brain.memory.procedural.store import get_procedure_store
-from modules.brain.memory.procedural.decay import check_feedback_decay
+from main_brain.memory.procedural.store import get_procedure_store
+from main_brain.memory.procedural.decay import check_feedback_decay
 
 logger = logging.getLogger("main_brain.procedural.feedback")
 

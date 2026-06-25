@@ -2,13 +2,13 @@
 import logging
 import threading
 from flask import request, jsonify, Response, stream_with_context
-from modules.brain.memory import (
+from main_brain.memory import (
     store_memory, search_memory, list_memories,
     delete_memory, update_memory, organize_memories,
     dedup_memories, refine_memories, apply_organize,
     get_memory_settings, update_memory_settings,
 )
-from modules.brain.dedup import dedup_memories_iter, _dedup_pause_flag, _dedup_stop_flag
+from main_brain.memory.dedup import dedup_memories_iter, _dedup_pause_flag, _dedup_stop_flag
 
 logger = logging.getLogger('memory')
 
@@ -226,7 +226,7 @@ def register(app, ready_state, logger, stats_db):
     @app.route('/memory/count', methods=['GET'])
     def memory_count():
         try:
-            from modules.brain.memory import get_memory_count
+            from main_brain.memory import get_memory_count
             count = get_memory_count()
             return jsonify({"count": count})
         except Exception as e:
@@ -373,7 +373,7 @@ def register(app, ready_state, logger, stats_db):
         if not entity_name:
             return jsonify({"error": "实体名称不能为空"})
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -387,7 +387,7 @@ def register(app, ready_state, logger, stats_db):
     def graph_list_entities():
         """列出所有实体及其关联记忆数量"""
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -401,7 +401,7 @@ def register(app, ready_state, logger, stats_db):
     def graph_visualization():
         """返回图谱可视化数据（节点+边）"""
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -418,7 +418,7 @@ def register(app, ready_state, logger, stats_db):
         entity_a = (data.get('entity_a', '')).strip()
         entity_b = (data.get('entity_b', '')).strip()
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -436,7 +436,7 @@ def register(app, ready_state, logger, stats_db):
         if not entity_a or not entity_b:
             return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -450,7 +450,7 @@ def register(app, ready_state, logger, stats_db):
     def entity_stats():
         """返回实体相关数据库统计和 NetworkX 内存图状态"""
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({
@@ -490,7 +490,7 @@ def register(app, ready_state, logger, stats_db):
     def rebuild_entity_counts():
         """全量重建实体计数器（从 mentions 表聚合），用于初始化或修复统计"""
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if graph:
                 graph.rebuild_entity_counts()
@@ -508,7 +508,7 @@ def register(app, ready_state, logger, stats_db):
         search = request.args.get('search', '', type=str)
         offset = (page - 1) * page_size
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化", "links": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
@@ -549,7 +549,7 @@ def register(app, ready_state, logger, stats_db):
         if not entity_a or not entity_b:
             return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})
@@ -568,7 +568,7 @@ def register(app, ready_state, logger, stats_db):
         if not entity_a or not entity_b:
             return jsonify({"error": "entity_a 和 entity_b 都不能为空"})
         try:
-            from modules.brain.graph import get_graph
+            from main_brain.memory.graph import get_graph
             graph = get_graph()
             if not graph:
                 return jsonify({"error": "图数据库未初始化"})

@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from modules.brain.memory.consolidation import (
+from main_brain.memory.consolidation import (
     MemoryCandidate, ConsolidationRun,
     collect_from_entries, normalize_text, source_hash,
     redaction,
@@ -412,13 +412,13 @@ def _summary(run: ConsolidationRun, *, llm_used: bool) -> dict:
 
 
 def _now_iso() -> str:
-    from modules.brain.state import times
+    from main_brain.state import times
     return times.now_iso()
 
 
 def _synthetic_run_id() -> str:
     """dry-run 用的合成 run_id（不递增 run_seq，不污染状态）。"""
-    from modules.brain.state import times
+    from main_brain.state import times
     import hashlib
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")[:15]
     suffix = hashlib.md5(stamp.encode()).hexdigest()[:4]

@@ -36,7 +36,7 @@ class StateAdapter:
         life = self._life_node()
         merged = dict(life)
         try:
-            from modules.brain.state import (
+            from main_brain.state import (
                 get_working_set, get_open_loops, get_goals, get_pending,
             )
             merged["working_set"] = get_working_set().get_active()
@@ -50,7 +50,7 @@ class StateAdapter:
     def _life_node(self) -> dict:
         """读 life 节点，缺失则初始化默认骨架。"""
         try:
-            from modules.brain.state import get_state
+            from main_brain.state import get_state
             data = get_state().snapshot()
             life = data.get("life")
             if not isinstance(life, dict):
@@ -68,7 +68,7 @@ class StateAdapter:
         if not isinstance(delta, dict) or not delta:
             return self._life_node()
         try:
-            from modules.brain.state import get_state
+            from main_brain.state import get_state
             with get_state().transaction() as data:
                 life = data.setdefault("life", default_life_state())
                 for k, v in delta.items():
@@ -85,8 +85,8 @@ class StateAdapter:
         if not summary:
             return
         try:
-            from modules.brain.state import get_state
-            from modules.brain.state import times
+            from main_brain.state import get_state
+            from main_brain.state import times
             with get_state().transaction() as data:
                 life = data.setdefault("life", default_life_state())
                 thoughts = life.setdefault("recent_thoughts", [])
@@ -104,19 +104,19 @@ class StateAdapter:
     # ── 便捷写（scheduler / session 用）────────────────────
     def mark_user_contact(self) -> None:
         """用户输入或主动联系发生时刷新 last_user_contact_at / idle_seconds。"""
-        from modules.brain.state import times
+        from main_brain.state import times
         self.update_life_node({
             "last_user_contact_at": times.now_iso(),
             "idle_seconds": 0,
         })
 
     def mark_proactive_contact(self) -> None:
-        from modules.brain.state import times
+        from main_brain.state import times
         self.update_life_node({"last_proactive_contact_at": times.now_iso()})
 
     def set_loop_status(self, status: str, *, activity: str = "",
                         focus: str = "") -> None:
-        from modules.brain.state import times
+        from main_brain.state import times
         delta = {"life_loop_status": status, "last_activity_at": times.now_iso()}
         if activity:
             delta["current_activity"] = activity
@@ -153,7 +153,7 @@ class StateAdapter:
         for loop in state_updates.get("open_loops", []) or []:
             if isinstance(loop, dict):
                 try:
-                    from modules.brain.state import get_open_loops
+                    from main_brain.state import get_open_loops
                     get_open_loops().create(
                         loop.get("content", ""),
                         loop.get("node_ids", []) or [],
@@ -165,7 +165,7 @@ class StateAdapter:
         for w in state_updates.get("working_set", []) or []:
             if isinstance(w, dict) and w.get("ref_id"):
                 try:
-                    from modules.brain.state import get_working_set
+                    from main_brain.state import get_working_set
                     get_working_set().upsert(
                         w.get("type", "node"), w["ref_id"],
                         score=float(w.get("score", 0.5)),
@@ -178,7 +178,7 @@ class StateAdapter:
         for c in state_updates.get("concerns", []) or []:
             if isinstance(c, dict) and c.get("node_id"):
                 try:
-                    from modules.brain.state import get_concerns
+                    from main_brain.state import get_concerns
                     get_concerns().activate(
                         c["node_id"], boost=float(c.get("boost", 0.15)))
                     delta.setdefault("concerns_activated", []).append(c["node_id"][:24])

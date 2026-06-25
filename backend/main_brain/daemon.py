@@ -335,7 +335,7 @@ class LifeLoopDaemon:
     # ── TickInput 构造 ───────────────────────────────────────
     def _build_tick_input(self, tick_type: str):
         from .contracts import TickInput
-        from modules.brain.state import times
+        from main_brain.state import times
         life_state = self._state.read_life_state()
         recent_runs = get_event_log().recent_runs(limit=8, mode=BACKGROUND)
         recent_user, recent_assistant = self._recent_messages()
@@ -344,7 +344,7 @@ class LifeLoopDaemon:
         memory_items = []
         if life_state.get("open_loops"):
             try:
-                from modules.brain.memory.core import search_memory
+                from main_brain.memory.core import search_memory
                 q = (life_state["open_loops"][0].get("content", "")
                      if isinstance(life_state["open_loops"][0], dict) else "")
                 if q:
@@ -374,7 +374,7 @@ class LifeLoopDaemon:
 
     def _recent_messages(self, limit: int = 8) -> tuple[list[dict], list[dict]]:
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             entries = get_work_memory().output_mem_read()
             users, assts = [], []
             for e in entries[-limit:]:
@@ -391,7 +391,7 @@ class LifeLoopDaemon:
         if not last:
             return int(life_state.get("idle_seconds", 0) or 0) + 30
         try:
-            from modules.brain.state import times
+            from main_brain.state import times
             return int(times.hours_since(last) * 3600)
         except Exception:
             return 0
@@ -422,7 +422,7 @@ def _next_tick(tick_type: str) -> str:
 
 
 def _new_run_id(mode: str) -> str:
-    from modules.brain.state import times
+    from main_brain.state import times
     import hashlib
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     prefix = "br" if mode == "reactive" else "bg"
@@ -431,5 +431,5 @@ def _new_run_id(mode: str) -> str:
 
 
 def _now() -> str:
-    from modules.brain.state import times
+    from main_brain.state import times
     return times.now_iso()

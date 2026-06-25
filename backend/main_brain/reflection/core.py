@@ -1,13 +1,13 @@
 """反思核心 — LifeLoopDaemon 的 reflect 活动入口
 
 从近期重要记忆中提炼长期认知状态，更新自传的 beliefs/interests/goals。
-归属于 main_brain 并依赖 modules.brain.memory.qdrant_store 和
+归属于 main_brain 并依赖 modules.qdrant.store 和
 SelfNarrativeStore 接口，不依赖旧 self_narrative.reflection 模块。
 """
 import logging
 from datetime import datetime
 
-from modules.brain.llm import call_llm
+from main_brain.memory.llm import call_llm
 from main_brain.narrative import parse_json
 
 logger = logging.getLogger('main_brain.reflection')
@@ -137,7 +137,7 @@ def _reflect_result(ok, *, skipped=False, updated_fields=None, reason="", summar
 def _get_recent_memories(limit: int = 30) -> list[str]:
     """从 Qdrant aibrain_memories 取最近 importance > 0.4 的记忆文本"""
     try:
-        from modules.brain.memory.qdrant_store import get_qdrant_client, NEW_COLLECTION
+        from modules.qdrant.store import get_qdrant_client, NEW_COLLECTION
         from qdrant_client.http import models as q
         client = get_qdrant_client()
         points, _ = client.scroll(

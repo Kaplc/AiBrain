@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def _try_proactive_send():
     """回复结束后闲时触发：不阻塞、不等待、不抛异常。"""
     try:
-        from modules.brain.state import get_pending
+        from main_brain.state import get_pending
         p = get_pending()
         sent = p.proactive_send()
         logger.info(f"[chat_loop] _try_proactive_send: {'sent' if sent else 'nothing to send'}")
@@ -98,7 +98,7 @@ def send_message(
             from .compression.context_compress import reload_if_needed
             if not _conversation_history:
                 # 首次对话：从 output.json 加载历史
-                from modules.brain.memory.workmemory import get_work_memory
+                from main_brain.memory.workmemory import get_work_memory
                 entries = get_work_memory().output_mem_read()
                 if entries:
                     for e in entries:
@@ -115,7 +115,7 @@ def send_message(
         # 0.1 写入工作记忆 + 触发 package 搜索
         _set_status("分析记忆")
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             wm = get_work_memory()
             wm.handle_packagemem(query=prompt)
             logger.info("[loop] workmemory updated")
@@ -133,7 +133,7 @@ def send_message(
         # 1. 获取工作记忆
         work_memory = {}
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             work_memory = get_work_memory().get_workmem()
         except Exception as e:
             logger.warning(f"[loop] get workmemory failed: {e}")
@@ -242,7 +242,7 @@ def send_message(
 
         # 写入工作记忆 output.md
         try:
-            from modules.brain.memory.workmemory import get_work_memory
+            from main_brain.memory.workmemory import get_work_memory
             get_work_memory().output_mem_write(assistant_text, user_prompt=prompt)
             logger.info("[loop] assistant reply written to workmemory output.md")
         except Exception as e:
@@ -430,7 +430,7 @@ def _tool_loop(
 
     # 4. 写入工作记忆
     try:
-        from modules.brain.memory.workmemory import get_work_memory
+        from main_brain.memory.workmemory import get_work_memory
         get_work_memory().output_mem_write(final_text, user_prompt=prompt)
         logger.info("[loop] tool loop output written to workmemory")
     except Exception as e:

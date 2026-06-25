@@ -1,0 +1,8 @@
+{
+  "last_processed_run_id": "bg_20260624T181043.1905600000_cd77",
+  "last_ingested_at": "2026-06-24T18:15:34.563097+00:00",
+  "event_count": 1,
+  "relation_count": 1,
+  "llm_writes": 1,
+  "fallback_writes": 0
+}

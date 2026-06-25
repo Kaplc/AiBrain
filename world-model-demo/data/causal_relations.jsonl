@@ -1,0 +1,1 @@
+{"relation_id": "cr_cb9675c5ac71c2c9", "event_id": "cev_bg_20260624T181043.1905600000_cd77", "run_id": "bg_20260624T181043.1905600000_cd77", "cause": "cycle1创建pending(编程与认知类比)", "effect": "cycle2创建pending(记忆系统与节点类型)", "relation_type": "temporal", "confidence": 0.9, "evidence": "cycles索引1和2顺序执行", "writer": "llm", "llm_used": true, "created_at": "2026-06-24T18:15:34.559669+00:00"}

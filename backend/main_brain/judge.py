@@ -45,7 +45,7 @@ _IDLE_PROMPT = _load_prompt("brain_judge_idle.md")
 def _persona() -> dict:
     """轻量人格（name / traits），注入 prompt。失败回退默认。"""
     try:
-        from modules.brain.state import get_self_model
+        from main_brain.state import get_self_model
         sm = get_self_model().get()
         return {
             "name": sm.get("name", "猫猫"),

@@ -314,7 +314,7 @@ def _preload():
     if _ready["qdrant"]:
         try:
             # 确保 collection 存在
-            from modules.brain.memory import get_client
+            from main_brain.memory import get_client
             get_client()
             count = stats_db.sync_qdrant_count()
             if count is not None:
@@ -339,14 +339,14 @@ def _preload():
 
     # 预热记忆数量缓存（模型加载后 mem0 client 已就绪）
     try:
-        from modules.brain.memory import warmup_memory_count
+        from main_brain.memory import warmup_memory_count
         warmup_memory_count()
     except Exception as e:
         logger.warning(f"warmup_memory_count failed (non-fatal): {e}")
 
     # 初始化图记忆层（FalkorDBLite）
     try:
-        from modules.brain.graph import get_graph
+        from main_brain.memory.graph import get_graph
         get_graph()
     except Exception as e:
         logger.warning(f"graph init failed (non-fatal): {e}")
@@ -354,7 +354,7 @@ def _preload():
 
     # 初始化记忆流水线引擎（步骤注册 + 配置加载）
     try:
-        from modules.brain.memory.pipeline import init_pipelines
+        from main_brain.memory.pipeline import init_pipelines
         init_pipelines()
         logger.info("PipelineEngine initialized")
     except Exception as e:
@@ -396,7 +396,7 @@ def _preload():
     #         _log = _lg.getLogger('app.proactive')
     #         while True:
     #             try:
-    #                 from modules.brain.state import get_pending
+    #                 from main_brain.state import get_pending
     #                 p = get_pending()
     #                 p.evaluate_and_generate()
     #                 sent = p.proactive_send()
@@ -466,8 +466,8 @@ def _preload():
 
     # ── 初始化自我叙事模块 ──────────────────────────────────
     try:
-        from modules.brain.memory.self_narrative import init_self_narrative
-        from modules.brain.graph import get_graph
+        from main_brain.narrative import init_self_narrative
+        from main_brain.memory.graph import get_graph
         _graph = get_graph()
         if _graph:
             init_self_narrative(_graph)

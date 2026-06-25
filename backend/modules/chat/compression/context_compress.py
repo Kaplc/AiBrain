@@ -180,7 +180,7 @@ def _compress_background(conversation_history: list, prompt_tokens: int, max_tok
 
         # ── 4. 原子写入 output.json ──
         try:
-            from modules.brain.memory.workmemory import get_work_memory, get_base_dir
+            from main_brain.memory.workmemory import get_work_memory, get_base_dir
             wm = get_work_memory()
             _BASE_DIR = get_base_dir()
             raw = wm.output_mem_read()
@@ -244,7 +244,7 @@ def reload_if_needed(conversation_history: list) -> bool:
         return False
 
     try:
-        from modules.brain.memory.workmemory import get_work_memory
+        from main_brain.memory.workmemory import get_work_memory
         entries = get_work_memory().output_mem_read()
 
         with _history_lock:
