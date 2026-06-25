@@ -12,7 +12,7 @@ import logging
 
 logger = logging.getLogger('memory.pipeline')
 
-_MERGE_THRESHOLD = 0.85
+_MERGE_THRESHOLD = 0.80
 _MERGE_TOP_K = 5
 
 _MERGE_PROMPT = """你是一个记忆合并助手。给定多条描述同一件事或相关话题的记忆文本，将它们合并成一条精炼、完整的记忆。
@@ -36,12 +36,6 @@ def execute(ctx) -> None:
             input_data: str (原始记忆文本)
             metadata: {"infer": bool, ...}
     """
-    meta = ctx.metadata or {}
-    use_infer = meta.get("infer", True)
-    if not use_infer:
-        logger.info("[step:episodic_merge] infer=false, skip")
-        return
-
     text = ctx.input_data
     if not text or not str(text).strip():
         logger.info("[step:episodic_merge] empty text, skip")

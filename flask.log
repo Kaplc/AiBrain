@@ -1,0 +1,22 @@
+[logger] Found 2 log files to archive
+[logger] Archiving: flask_20260625_162547.log
+[logger] Removing existing archive
+[logger] Move failed, trying copy: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\v_zhyyzheng\\Desktop\\AiBrain\\logs\\flask_20260625_162547.log'
+[logger] Copy failed: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\v_zhyyzheng\\Desktop\\AiBrain\\logs\\flask_20260625_162547.log'
+[logger] Archiving: flask_20260625_162618.log
+[logger] Moved: flask_20260625_162618.log
+[logger] Keeping newest 3 of 4 archives
+[logger] Removed old archive: flask_20260625_161808.log
+[logger] Log archiving completed
+[logger] Creating new log file (flask): flask_20260625_163156.log
+ * Serving Flask app 'app'
+ * Debug mode: off
+INFO: [] Loaded graph from C:\Users\v_zhyyzheng\Desktop\AiBrain\rag/lightrag_data\graph_chunk_entity_relation.graphml with 1519 nodes, 1548 edges
+INFO: [] Process 9116 KV load full_docs with 51 records
+INFO: [] Process 9116 KV load text_chunks with 102 records
+INFO: [] Process 9116 KV load full_entities with 50 records
+INFO: [] Process 9116 KV load full_relations with 50 records
+INFO: [] Process 9116 KV load entity_chunks with 1519 records
+INFO: [] Process 9116 KV load relation_chunks with 1548 records
+INFO: [] Process 9116 KV load llm_response_cache with 238 records
+INFO: [] Process 9116 doc status load doc_status with 286 records

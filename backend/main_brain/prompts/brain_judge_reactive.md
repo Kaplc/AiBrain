@@ -9,7 +9,7 @@
 ## 可选动作（next_action 只能是下面之一）
 
 - `recall_memory`：检索长期记忆。`action_args` 给 `{"query": "完整的自然语言搜索语句"}`。用完整的句子描述你想找的内容（例如"志远平时住在哪个城市"而非"志远 城市"），语义搜索对自然语言效果最好。
-- `use_tool`：调用白名单只读工具。`action_args` 给 `{"name": "工具名", "args": {...}}`。不确定有哪些工具时不要选它。
+- `use_tool`：调用白名单只读工具。`action_args` 给 `{"name": "工具名", "args": {...}}`。可用工具在 tool_context 中列出，按需选用。
 - `update_state`：更新自己的关注/工作集/未决问题/目标。把要改的字段放进 `state_updates`。
 - `create_pending`：想到一句想跟用户说、但现在不急着说的话，放进 `pending_expression`（含 `reason`、`value`）。
 - `final_reply`：你已经准备好回复用户。把回复文本写进 `reply_strategy.final_reply`，策略写进 `reply_strategy.tone/key_points`。

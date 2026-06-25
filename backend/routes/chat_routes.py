@@ -45,6 +45,8 @@ def _write_chat_history(user_msg: str, reply_text: str) -> None:
         pass
 
 
+
+
 # ── brain 状态辅助（外部刺激 + 反思） ──────────────────────────
 def _get_drives_summary() -> dict:
     """获取驱动力全量值"""
@@ -253,6 +255,7 @@ def register(app, ready_state, logger, stats_db):
             finally:
                 if _fallback_text:
                     _log_reply_event(_fallback_text, _event_id or "", _event_trace_id or "")
+                    _write_chat_history(user_msg, _fallback_text)
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         return Response(

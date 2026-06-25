@@ -34,13 +34,6 @@ def execute(ctx) -> None:
             intermediate.semantic_results: 语义命中列表
     """
     _push_step("scene_recall", "running")
-    meta = ctx.metadata or {}
-    use_infer = meta.get("infer", True)
-    if not use_infer:
-        logger.info("[step:scene_recall] infer=false, skip")
-        _push_step("scene_recall", "done")
-        ctx.intermediate["scene_results"] = []
-        return
 
     query = ctx.input_data
     semantic_results = ctx.intermediate.get("semantic_results") or []

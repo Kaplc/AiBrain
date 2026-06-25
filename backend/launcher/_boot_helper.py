@@ -123,6 +123,7 @@ def check_deps():
             pkg = re.sub(r'[<>=!].*$', '', line).strip().lower()
             # 包名到 import 名的映射（pip 包名与 Python import 名不一致的情况）
             alias_map = {
+                'websocket-client': 'websocket',
                 'flask': 'flask',
                 'flask-cors': 'flask_cors',
                 'pywebview': 'webview',

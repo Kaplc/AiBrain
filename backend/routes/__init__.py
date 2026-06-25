@@ -8,3 +8,4 @@ from .logs_routes import register as reg_logs
 from .settings_routes import register as reg_settings
 from .wiki_routes import register as reg_wiki
 from .stats_routes import register as reg_stats
+from .gate_routes import register as reg_gate

@@ -58,6 +58,9 @@ python-dotenv==1.2.2
 # E2E testing
 playwright
 
+# WebSocket 客户端（企业微信智能机器人长连接）
+websocket-client>=1.8.0
+
 # LLM SDKs（backend.modules.LLM 调用）
 openai>=1.50.0          # OpenAI 兼容协议（openai/deepseek/ollama/lmstudio/minimax/...）
 anthropic>=0.40.0       # Anthropic 原生协议（Claude 系列）

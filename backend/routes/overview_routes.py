@@ -175,8 +175,8 @@ def register(app, ready_state, logger, stats_db):
             logger.info(f"[balance] auth: Bearer {api_key[:8]}...")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-            logger.info(f"[balance] response: is_available={data.get('is_available')}, "
-                        f"infos={[f'{b['currency']}={b['total_balance']}' for b in data.get('balance_infos', [])]}")
+            _info_str = "; ".join([f"{b.get('currency','?')}={b.get('total_balance','?')}" for b in data.get('balance_infos', [])])
+            logger.info(f"[balance] response: is_available={data.get('is_available')}, infos=[{_info_str}]")
             # 附加今日 Token 消耗费用
             try:
                 today_cost = stats_db.get_today_cost()

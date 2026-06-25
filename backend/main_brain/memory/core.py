@@ -19,7 +19,6 @@ _SETTINGS_PATH = os.path.join(
 )
 
 _DEFAULT_MEMORY_SETTINGS: dict = {
-    "infer": True,
     "showGraphAnimation": True,
 }
 
@@ -32,8 +31,6 @@ def _load_settings_from_disk() -> dict:
                 data = json.load(f)
             # 只取已知字段，忽略未知键
             result = dict(_DEFAULT_MEMORY_SETTINGS)
-            if "infer" in data:
-                result["infer"] = bool(data["infer"])
             if "showGraphAnimation" in data:
                 result["showGraphAnimation"] = bool(data["showGraphAnimation"])
             logger.info(f"[memory_settings] loaded from disk: {result}")
@@ -65,8 +62,6 @@ def get_memory_settings() -> dict:
 
 def update_memory_settings(data: dict) -> dict:
     """更新记忆设置（仅覆盖已知字段），持久化到磁盘，返回更新后的设置"""
-    if "infer" in data:
-        _memory_settings["infer"] = bool(data["infer"])
     if "showGraphAnimation" in data:
         _memory_settings["showGraphAnimation"] = bool(data["showGraphAnimation"])
     _save_settings_to_disk(_memory_settings)
@@ -165,15 +160,13 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
         dict: 包含 result 消息和实际存入的原始文本列表
             {"result": "已记住: 新增 N 条记忆", "stored_texts": [...]}
     """
-    use_infer = _memory_settings.get("infer", True)
-    logger.info(f"[store_memory] START | text={text[:60]!r} | infer={use_infer}")
+    logger.info(f"[store_memory] START | text={text[:60]!r}")
 
     # 创建 PipelineContext
     from .pipeline.context import PipelineContext
     ctx = PipelineContext(
         input_data=text,
         metadata={
-            "infer": use_infer,
             "memory_meta": memory_meta,
         },
     )
@@ -240,31 +233,29 @@ def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
     msg = f"已记住: {', '.join(parts)}" if parts else "已处理"
 
     all_entity_names = []
-    use_infer = _memory_settings.get("infer", True)
-    if use_infer:
-        try:
-            from main_brain.memory.graph import get_graph
-            graph = get_graph()
-            if graph:
-                for ev in events:
-                    if ev.get("event") == "ADD" and ev.get("id"):
-                        mem_text = ev.get("memory", "")
-                        auto_entity_names = []
-                        root_entity = '用户'
-                        try:
-                            from main_brain.memory.llm import extract_entities_llm
-                            result = extract_entities_llm(mem_text)
-                            auto_entity_names = result.get("entities", [])
-                            root_entity = result.get("root", "用户")
-                        except Exception:
-                            pass
-                        if not auto_entity_names:
-                            continue
-                        graph.link_memory(ev["id"], mem_text, link_entities=auto_entity_names, root_entity=root_entity)
-                        all_entity_names.extend(auto_entity_names)
-                        graph.increment_entity_counts(auto_entity_names)
-        except Exception as e:
-            logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
+    try:
+        from main_brain.memory.graph import get_graph
+        graph = get_graph()
+        if graph:
+            for ev in events:
+                if ev.get("event") == "ADD" and ev.get("id"):
+                    mem_text = ev.get("memory", "")
+                    auto_entity_names = []
+                    root_entity = '用户'
+                    try:
+                        from main_brain.memory.llm import extract_entities_llm
+                        result = extract_entities_llm(mem_text)
+                        auto_entity_names = result.get("entities", [])
+                        root_entity = result.get("root", "用户")
+                    except Exception:
+                        pass
+                    if not auto_entity_names:
+                        continue
+                    graph.link_memory(ev["id"], mem_text, link_entities=auto_entity_names, root_entity=root_entity)
+                    all_entity_names.extend(auto_entity_names)
+                    graph.increment_entity_counts(auto_entity_names)
+    except Exception as e:
+        logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
 
     return {
         "result": msg,
@@ -286,16 +277,13 @@ def search_memory(query: str) -> list[dict]:
     Returns:
         list[dict]: [{id, text, score}, ...]
     """
-    use_infer = _memory_settings.get("infer", True)
-    logger.info(f"[search] START | query={query[:60]!r} | infer={use_infer}")
+    logger.info(f"[search] START | query={query[:60]!r}")
 
     # 创建 PipelineContext
     from .pipeline.context import PipelineContext
     ctx = PipelineContext(
         input_data=query,
-        metadata={
-            "infer": use_infer,
-        },
+        metadata={},
     )
 
     # 尝试通过引擎执行
@@ -311,11 +299,6 @@ def search_memory(query: str) -> list[dict]:
         graph_results = ctx.intermediate.get("graph_results")
         if graph_results:
             memories.extend(graph_results)
-
-        # 非 infer 模式下确保 entities 字段存在
-        if not use_infer:
-            for m in memories:
-                m.setdefault("entities", [])
 
         logger.info(
             f"[search] DONE (pipeline) | 返回 {len(memories)} 条结果 | "
@@ -348,37 +331,31 @@ def _search_memory_legacy(query: str) -> list[dict]:
         memories.sort(key=lambda x: x["score"], reverse=True)
         memories = memories[:MIN_COUNT]
 
-    use_infer = _memory_settings.get("infer", True)
-
     # Phase 3: 图增强
-    if use_infer:
-        try:
-            from main_brain.memory.graph import get_graph
-            graph = get_graph()
-            if graph:
-                mem_ids = [m["id"] for m in memories if m.get("id")]
-                entity_map = graph.get_entities_for_memories(mem_ids)
-                all_entities = []
-                for m in memories:
-                    m["entities"] = entity_map.get(m["id"], [])
-                    all_entities.extend(m["entities"])
-                all_entities = list(dict.fromkeys(all_entities))
-                candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=50)
-                if candidates:
-                    related_map = {c["id"]: c for c in candidates}
-                    semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
-                    min_semantic = min(semantic_scores) if semantic_scores else 0.5
-                    graph_base_score = min_semantic * 0.8
-                    for i, c in enumerate(candidates[:10]):
-                        c["score"] = round(graph_base_score - i * 0.001, 4)
-                        c["source"] = "graph"
-                        c["entities"] = entity_map.get(c["id"], [])
-                        memories.append(c)
-        except Exception as e:
-            logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
-    else:
-        for m in memories:
-            m["entities"] = []
+    try:
+        from main_brain.memory.graph import get_graph
+        graph = get_graph()
+        if graph:
+            mem_ids = [m["id"] for m in memories if m.get("id")]
+            entity_map = graph.get_entities_for_memories(mem_ids)
+            all_entities = []
+            for m in memories:
+                m["entities"] = entity_map.get(m["id"], [])
+                all_entities.extend(m["entities"])
+            all_entities = list(dict.fromkeys(all_entities))
+            candidates = graph.search_related_new(mem_ids, all_entities, max_candidates=50)
+            if candidates:
+                related_map = {c["id"]: c for c in candidates}
+                semantic_scores = [m["score"] for m in memories if m.get("source") == "semantic"]
+                min_semantic = min(semantic_scores) if semantic_scores else 0.5
+                graph_base_score = min_semantic * 0.8
+                for i, c in enumerate(candidates[:10]):
+                    c["score"] = round(graph_base_score - i * 0.001, 4)
+                    c["source"] = "graph"
+                    c["entities"] = entity_map.get(c["id"], [])
+                    memories.append(c)
+    except Exception as e:
+        logger.warning(f"[graph] search enhancement failed (non-fatal): {e}")
 
 
     logger.info(f"[search] DONE (legacy) | 返回 {len(memories)} 条结果")
@@ -495,20 +472,6 @@ def dedup_memories(threshold: float = 0.85) -> dict:
 
 def refine_memories(groups: list[dict]) -> dict:
     """LLM 精炼合并相似记忆组（两步法第二步）"""
-    use_infer = _memory_settings.get("infer", True)
-    if not use_infer:
-        return {
-            "refined": [
-                {
-                    "group_id": group.get("group_id", 0),
-                    "refined_text": "",
-                    "category": "reference",
-                    "refined": False,
-                    "hint": "LLM模式已关闭，请手动编辑合并文本",
-                }
-                for group in groups
-            ]
-        }
     from .llm import refine_group
 
     refined = []

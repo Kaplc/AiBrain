@@ -9,45 +9,11 @@ const settingsTab = memoryViewModel.settingsTab
     <div v-if="settingsTab.loading.value" class="panel-loading">加载中...</div>
 
     <template v-else>
-      <!-- ── LLM 模式开关 ── -->
       <div class="settings-section">
         <div class="section-title">记忆存储模式</div>
-
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">LLM 模式</span>
-            <span class="setting-desc">
-              开启后，保存时调用大模型拆分事实+提取实体，搜索时启用图增强，合并时支持AI精炼。<br>
-              关闭后，全部操作仅依赖向量相似度，不消耗大模型额度。
-            </span>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" v-model="settingsTab.form.infer" />
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-          </label>
+        <div class="notice">
+          ✨ LLM 编码已固定开启 — 保存时自动提取情景节点，搜索时启用图增强
         </div>
-
-        <div class="infer-hint" :class="settingsTab.form.infer ? 'hint-on' : 'hint-off'">
-          <template v-if="settingsTab.form.infer">
-            ✨ 当前：<b>智能模式</b> — 大模型提取实体 + 图增强搜索 + AI精炼合并
-          </template>
-          <template v-else>
-            ⚡ 当前：<b>纯向量模式</b> — 搜索/保存/精炼均不调用大模型
-          </template>
-        </div>
-      </div>
-
-      <!-- ── 操作按钮 ── -->
-      <div class="settings-actions">
-        <button
-          class="btn btn-primary"
-          :disabled="settingsTab.saving.value"
-          @click="settingsTab.save()"
-        >
-          {{ settingsTab.saving.value ? '保存中...' : '保存设置' }}
-        </button>
       </div>
     </template>
   </div>
@@ -162,53 +128,14 @@ const settingsTab = memoryViewModel.settingsTab
   transform: translateX(20px);
 }
 
-/* ── 状态提示 ── */
-.infer-hint {
-  font-size: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  line-height: 1.5;
-}
-
-.hint-on {
-  background: #1e1b4b;
-  color: #a78bfa;
-  border: 1px solid #4c1d95;
-}
-
-.hint-off {
-  background: #1c2a1c;
-  color: #6ee7b7;
-  border: 1px solid #065f46;
-}
-
-/* ── 操作按钮 ── */
-.settings-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.btn {
-  padding: 8px 20px;
-  border: none;
-  border-radius: 8px;
+/* ── 提示信息 ── */
+.notice {
   font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: #7c3aed;
-  color: #fff;
-}
-
-.btn-primary:not(:disabled):hover {
-  opacity: 0.85;
+  color: #a78bfa;
+  padding: 12px 16px;
+  background: #1e1b4b;
+  border: 1px solid #4c1d95;
+  border-radius: 8px;
+  line-height: 1.6;
 }
 </style>

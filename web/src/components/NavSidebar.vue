@@ -9,6 +9,7 @@ const navItems = [
   { name: 'memory', label: '记忆' },
   { name: 'chat', label: '对话' },
   { name: 'brain', label: '大脑' },
+  { name: 'gate', label: 'Gate' },
   { name: 'stream', label: '流' },
   { name: 'stats', label: '用量' },
   { name: 'logs', label: '日志' },

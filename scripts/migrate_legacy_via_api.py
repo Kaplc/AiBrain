@@ -21,14 +21,14 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 
-BACKEND_URL = "http://localhost:19398"
+BACKEND_URL = os.environ.get("MIGRATE_BACKEND_URL", "http://localhost:18980")
 CHECKPOINT = os.path.join(
     PROJECT_ROOT, "1-logs", "migrations", "legacy_scene", "checkpoint_api.json"
 )
 
 # 清除之前通过 store_vector 写入的检验点，因为这次要经编码器重写
 # 已有 checkpoint 则读取（幂等恢复）
-_RESUME_CLEAR = True  # 清理旧 checkpoint 以全量重跑
+_RESUME_CLEAR = False  # 清理旧 checkpoint 以全量重跑（设为 False 则断点续跑）
 
 
 def post_store(text: str) -> dict:
@@ -48,12 +48,17 @@ def post_store(text: str) -> dict:
 
 
 def migrate(limit: int | None = None):
-    from modules.brain.memory.qdrant_store import get_qdrant_client, LEGACY_COLLECTION
+    from modules.qdrant.store import get_qdrant_client, LEGACY_COLLECTION
 
     client = get_qdrant_client()
     offset = None
     total = 0
     migrated = 0
+
+    # 清理旧 checkpoint（如果 _RESUME_CLEAR 为 True）
+    if _RESUME_CLEAR and os.path.exists(CHECKPOINT):
+        os.remove(CHECKPOINT)
+        logger.info("_RESUME_CLEAR=True, cleared old checkpoint for full re-run")
 
     # 读取 checkpoint
     seen = set()

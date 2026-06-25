@@ -91,6 +91,7 @@ except Exception as _wiki_err:
     logger.warning(f"[app] wiki_routes import failed (wiki disabled): {_wiki_err}")
     reg_wiki = None
 from routes.stats_routes import register as reg_stats
+from routes.gate_routes import register as reg_gate
 from routes.chat_routes import register as reg_chat
 from routes.narrative_routes import register as reg_narrative
 from routes.brain_routes import register as reg_brain
@@ -108,6 +109,7 @@ if reg_wiki:
     except Exception as _wiki_reg_err:
         logger.warning(f"[app] wiki_routes register failed (wiki disabled): {_wiki_reg_err}")
 reg_stats(app, _ready, logger, stats_db)
+reg_gate(app, _ready, logger, stats_db)
 reg_chat(app, _ready, logger, stats_db)
 reg_narrative(app, _ready, logger, stats_db)
 reg_brain(app, _ready, logger, stats_db)
@@ -142,6 +144,7 @@ def index():
 @app.route('/stats')
 @app.route('/settings')
 @app.route('/chat')
+@app.route('/gate')
 @app.route('/brain')
 def spa_shortcut():
     """前端路由快捷方式：无 / 前缀时转发到 SPA"""
@@ -411,19 +414,27 @@ def _preload():
     # except Exception as e:
     #     logger.warning(f"[proactive_send] scheduler failed (non-fatal): {e}")
 
-    # 初始化 Chat 工具注册表
+    # 初始化 Chat 工具注册表（逐一注册，各自失败不影响其他）
     try:
         from modules.LLM.tools.memory_tools import register_memory_tools
-        from modules.LLM.tools.file_tools import register_file_tools
-        from modules.LLM.tools.plan_tools import register_plan_tools
-        from modules.LLM.tools.skill_tools import register_skill_tools
         register_memory_tools()
-        register_file_tools()
-        register_plan_tools()
-        register_skill_tools()
-        logger.info("Chat tools registered")
     except Exception as e:
-        logger.warning(f"Chat tools registration failed (non-fatal): {e}")
+        logger.warning(f"memory_tools failed: {e}")
+    try:
+        from modules.LLM.tools.file_tools import register_file_tools
+        register_file_tools()
+    except Exception as e:
+        logger.warning(f"file_tools failed: {e}")
+    try:
+        from modules.LLM.tools.plan_tools import register_plan_tools
+        register_plan_tools()
+    except Exception as e:
+        logger.warning(f"plan_tools failed (expected): {e}")
+    try:
+        from modules.LLM.tools.skill_tools import register_skill_tools
+        register_skill_tools()
+    except Exception as e:
+        logger.warning(f"skill_tools failed (expected): {e}")
 
     # ── 初始化 ChatManager ──────────────────────────────────
     try:

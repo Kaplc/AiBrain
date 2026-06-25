@@ -16,6 +16,16 @@ const showScrollBtn = ref(false)
 const ticker = ref(0)
 let tickerTimer: ReturnType<typeof setInterval> | null = null
 
+const weworkConnected = ref(false)
+
+async function loadWeworkStatus() {
+  try {
+    const r = await fetch('/gate/status')
+    const d = await r.json()
+    weworkConnected.value = d.connected
+  } catch {}
+}
+
 function onScroll() {
   const el = messagesEl.value
   if (!el) return
@@ -26,6 +36,7 @@ onMounted(async () => {
   chatViewModel.setScrollFn(scrollToBottom)
   await chatViewModel.loadMessages()
   chatViewModel.startStatePolling()
+  await loadWeworkStatus()
   // 启动计时器，实时更新 streaming 消息的耗时
   tickerTimer = setInterval(() => {
     ticker.value++
@@ -319,6 +330,7 @@ function formatMsgTime(time: string): string {
       <template v-if="chatViewModel.loopState.idle_enabled && chatViewModel.loopState.last_thought_at">
         <span class="status-detail">上次 {{ timeAgo(chatViewModel.loopState.last_thought_at) }}</span>
       </template>
+
       <button class="status-btn" @click="openSettings" title="系统提示词">⚙</button>
       <button class="status-btn" @click="handleClear" title="清空对话">🗑</button>
     </div>

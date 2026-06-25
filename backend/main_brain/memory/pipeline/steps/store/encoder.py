@@ -236,12 +236,6 @@ def execute(ctx) -> None:
             input_data: str (记忆文本，vector_store 之前的原文)
             metadata: {"infer": bool, ...}
     """
-    meta = ctx.metadata or {}
-    use_infer = meta.get("infer", True)
-    if not use_infer:
-        logger.info("[step:encoder] infer=false, skip")
-        return
-
     text = ctx.input_data
     if not text or not str(text).strip():
         logger.info("[step:encoder] empty text, skip")

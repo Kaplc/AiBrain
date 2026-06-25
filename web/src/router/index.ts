@@ -47,6 +47,11 @@ const router = createRouter({
       name: 'brain',
       component: () => import('@/views/BrainView/BrainView.vue'),
     },
+    {
+      path: '/gate',
+      name: 'gate',
+      component: () => import('@/views/GateView/GateView.vue'),
+    },
   ],
 })
 

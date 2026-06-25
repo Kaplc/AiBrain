@@ -355,13 +355,15 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/memory/settings', methods=['GET'])
     def memory_settings_get():
-        """获取记忆运行时设置（如 infer 开关）"""
+        """获取记忆运行时设置"""
         return jsonify(get_memory_settings())
 
     @app.route('/memory/settings', methods=['POST'])
     def memory_settings_post():
-        """更新记忆运行时设置（如 infer 开关）"""
+        """更新记忆运行时设置（如 showGraphAnimation）"""
         data = request.get_json() or {}
+        # infer 已废弃，始终为 True（LLM 编码始终开启）
+        data.pop("infer", None)
         result = update_memory_settings(data)
         return jsonify(result)
 

@@ -21,10 +21,6 @@ def execute(ctx) -> None:
             metadata.memory_meta: encoder 产出的 {nodes, affect, importance, ...}
     """
     meta = ctx.metadata or {}
-    use_infer = meta.get("infer", True)
-    if not use_infer:
-        logger.info("[step:scene_link] infer=false, skip")
-        return
 
     mem_meta = meta.get("memory_meta") or {}
     nodes = mem_meta.get("nodes") or []
