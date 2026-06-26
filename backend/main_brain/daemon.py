@@ -115,6 +115,7 @@ class LifeLoopDaemon:
             pending_expressions=tick_input.pending_expressions,
             config={"_state_adapter": self._state},
             budgets={"max_tools": 1},
+            tool_context=tick_input.tool_context,
         )
 
         # 4. 状态切到 active_reflecting

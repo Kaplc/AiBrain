@@ -177,6 +177,7 @@ class BrainRunContext:
     pending_expressions: list[dict] = field(default_factory=list)
     budgets: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)
+    tool_context: dict = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     selected_activity: str = ""
     tick_type: str = ""
@@ -222,6 +223,7 @@ class BrainRunContext:
             "pending_count": len(self.pending_expressions),
             "errors": self.errors[-3:],
             "budgets": self.budgets,
+            "tool_context": self.tool_context,
         }
 
 

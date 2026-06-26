@@ -435,6 +435,11 @@ def _preload():
         register_skill_tools()
     except Exception as e:
         logger.warning(f"skill_tools failed (expected): {e}")
+    try:
+        from modules.LLM.tools.wework_tools import register_wework_tools
+        register_wework_tools()
+    except Exception as e:
+        logger.warning(f"wework_tools failed: {e}")
 
     # ── 初始化 ChatManager ──────────────────────────────────
     try:

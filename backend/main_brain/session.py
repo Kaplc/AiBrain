@@ -35,6 +35,8 @@ class BrainSession:
     def __init__(self):
         from .adapters.state import get_state_adapter
         self._state = get_state_adapter()
+        from .adapters.tools import get_tool_adapter
+        self._tools = get_tool_adapter()
 
     def run_reactive(
         self,
@@ -77,6 +79,7 @@ class BrainSession:
             trigger={"user_message": user_msg[:500]},
             config={"_state_adapter": self._state},
             budgets={"max_tools": int(cfg.get("brain_session_max_cycles", 3))},
+            tool_context={"available": self._tools.available_tools()},
         )
 
         # 附加最近对话上下文，让 judge 的 recall_memory query 更准确
