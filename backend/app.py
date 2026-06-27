@@ -440,6 +440,21 @@ def _preload():
         register_wework_tools()
     except Exception as e:
         logger.warning(f"wework_tools failed: {e}")
+    try:
+        from modules.LLM.tools.bash_tools import register_bash_tools
+        register_bash_tools()
+    except Exception as e:
+        logger.warning(f"bash_tools failed: {e}")
+    try:
+        from modules.LLM.tools.web_search_tools import register_web_search_tools
+        register_web_search_tools()
+    except Exception as e:
+        logger.warning(f"web_search_tools failed: {e}")
+    try:
+        from modules.LLM.tools.execute_code_tools import register_execute_code_tools
+        register_execute_code_tools()
+    except Exception as e:
+        logger.warning(f"execute_code_tools failed: {e}")
 
     # ── 初始化 ChatManager ──────────────────────────────────
     try:

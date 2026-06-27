@@ -83,6 +83,20 @@ class BrainCycleRunner:
                 logger.info(f"[runner] timeout at cycle {i} (run={ctx.run.run_id})")
                 break
 
+            # 外部打断：用户开始聊天时提前退出循环（中断响应）
+            # 至少完成 1 个完整 cycle 后才允许打断，防止后台任务被饿死
+            if i > 1 and not dry_run and ctx.run.mode == BACKGROUND:
+                try:
+                    if _is_chat_busy():
+                        stop_reason = "preempted"
+                        logger.info(
+                            f"[runner] preempted at cycle {i} — user chatting "
+                            f"(run={ctx.run.run_id})"
+                        )
+                        break
+                except Exception:
+                    pass
+
             # 预算检查
             if _budget_exhausted(ctx, budgets):
                 stop_reason = "timeout"
@@ -118,6 +132,7 @@ class BrainCycleRunner:
             if decision.next_action in _TERMINAL_ACTIONS:
                 self._apply_terminal(decision, ctx, cycle, dry_run)
                 ctx.run.cycles.append(cycle)
+                self._emit_cycle(cycle, ctx)
                 stop_reason = self._terminal_stop_reason(decision.next_action)
                 logger.info(
                     f"[runner] terminal {decision.next_action} at cycle {i} "
@@ -155,6 +170,7 @@ class BrainCycleRunner:
                 # 单步失败降级：继续下一轮而非整体崩（plan 非功能 #4）
 
             ctx.run.cycles.append(cycle)
+            self._emit_cycle(cycle, ctx)
 
             # 收集 learning_hints（caller 在 run 结束后统一沉淀）
             if decision.learning_hints:
@@ -169,6 +185,58 @@ class BrainCycleRunner:
         else:
             # for 循环正常跑满（未 break）
             stop_reason = "max_cycles"
+
+        # ── Auto-recall：reactive 模式没出 final_reply 且没搜过记忆时自动补一轮 ──
+        if (stop_reason != "ready"
+                and ctx.run.mode == REACTIVE
+                and not any(c.action == "recall_memory" for c in ctx.run.cycles)):
+            try:
+                user_msg = ctx.trigger.get("user_message", "")
+                if user_msg:
+                    from main_brain.memory.core import search_memory
+                    memories = search_memory(user_msg)[:3]
+                    if memories:
+                        auto_recall_ctx = [
+                            {"text": m.get("text", "")[:160],
+                             "score": m.get("score", 0.0)}
+                            for m in memories if m.get("text")
+                        ]
+                        ctx.memory_context = auto_recall_ctx
+                        ctx.run.memory_context = list(auto_recall_ctx)
+                        # 用更新后的 memory_context 再跑一轮 judge
+                        i = len(ctx.run.cycles) + 1
+                        view = ctx.to_judge_view()
+                        jr = judge.decide(view, mode=ctx.run.mode,
+                                          activity=ctx.selected_activity)
+                        decision = jr.decision
+                        cycle = BrainCycle(
+                            cycle_index=i,
+                            thought_summary=decision.thought_summary,
+                            focus=decision.focus,
+                            action=decision.next_action,
+                            action_args=decision.action_args,
+                            confidence=decision.confidence,
+                            latency_ms=jr.latency_ms,
+                        )
+                        if jr.error:
+                            cycle.error = jr.error
+                        if decision.next_action == "final_reply":
+                            self._apply_terminal(decision, ctx, cycle, dry_run)
+                            ctx.run.cycles.append(cycle)
+                            self._emit_cycle(cycle, ctx)
+                            stop_reason = "ready"
+                        elif decision.next_action not in ACTIONS:
+                            cycle.error = f"auto-recall judge gave invalid action: {decision.next_action}"
+                            ctx.add_error(cycle.error)
+                        else:
+                            ctx.run.cycles.append(cycle)
+                            self._emit_cycle(cycle, ctx)
+                        logger.info(
+                            f"[runner] auto-recall at cycle {i} "
+                            f"action={decision.next_action} stop={stop_reason}"
+                        )
+            except Exception as e:
+                logger.warning(f"[runner] auto-recall failed (non-fatal): {e}")
 
         ctx.run.stop_reason = stop_reason
         return stop_reason
@@ -200,6 +268,22 @@ class BrainCycleRunner:
         if action == "sleep":
             return "sleep"
         return "error"
+
+    @staticmethod
+    def _emit_cycle(cycle: "BrainCycle", ctx: BrainRunContext) -> None:
+        """通过 EventBus 发射当前 cycle 的动作事件。"""
+        try:
+            from core.event_bus import get_event_bus
+            get_event_bus().emit("brain", "cycle", {
+                "action": cycle.action,
+                "focus": cycle.focus,
+                "thought_summary": cycle.thought_summary[:80],
+                "confidence": cycle.confidence,
+                "run_id": ctx.run.run_id,
+                "mode": ctx.run.mode,
+            })
+        except Exception:
+            pass
 
     @staticmethod
     def _default_mock_judge(mode: str):
@@ -257,6 +341,15 @@ def _budget_exhausted(ctx: BrainRunContext, budgets: dict) -> bool:
     if max_tools is not None and len(ctx.tool_results) >= int(max_tools):
         return True
     return False
+
+
+def _is_chat_busy() -> bool:
+    """用户是否正在 SSE 聊天（中断响应用）。"""
+    try:
+        from modules.chat import ChatManager
+        return bool(ChatManager.get_instance().get_status())
+    except Exception:
+        return False
 
 
 # ── 单例 ─────────────────────────────────────────────────────

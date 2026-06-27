@@ -86,8 +86,6 @@ class TestChatSendSSE(unittest.TestCase):
         patchers = [
             patch("modules.chat.loop.get_llm_manager", return_value=mock_llm),
             patch("modules.brain.memory.workmemory.get_work_memory", return_value=wm),
-            patch("modules.chat.compression.context_compress.try_spawn_compress", return_value=False),
-            patch("modules.chat.compression.context_compress.reload_if_needed", return_value=False),
             patch("core.settings.ConfigManager.get_instance", return_value=cfg_mgr),
             patch("main_brain.config.get_brain_config", return_value=brain_cfg),
         ]
@@ -97,7 +95,6 @@ class TestChatSendSSE(unittest.TestCase):
         """完整链路：多 system block 送到 LLM + SSE 事件序列正确"""
         import modules.chat.loop as loop
         loop._conversation_history.clear()
-        loop._tool_memory.clear()
 
         captured: dict = {}
         patchers = self._patches(captured)
@@ -146,7 +143,6 @@ class TestChatSendSSE(unittest.TestCase):
         import os
         import modules.chat.loop as loop
         loop._conversation_history.clear()
-        loop._tool_memory.clear()
 
         # 临时 skills 目录 → skills_inject 必然产出 skills_available 块
         tmp = tempfile.TemporaryDirectory()

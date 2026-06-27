@@ -11,7 +11,16 @@ from __future__ import annotations
 
 import json
 
-from flask import request, jsonify
+from flask import request, jsonify, Response, stream_with_context
+
+
+def _get_activity_count() -> int:
+    """获取已注册活动数量（惰性加载，失败返回 0）。"""
+    try:
+        from main_brain.activities.registry import list_activities
+        return len(list_activities())
+    except Exception:
+        return 0
 
 
 def register(app, ready_state, logger, stats_db):
@@ -93,6 +102,7 @@ def register(app, ready_state, logger, stats_db):
                 "last_reactive_run_id": elog.last_run_id("reactive"),
                 "last_background_run_id": elog.last_run_id("background"),
                 "log_path": elog.log_path(),
+                "activities_count": _get_activity_count(),
             })
         except Exception as e:
             logger.warning(f"[brain] state failed: {e}")
@@ -109,6 +119,36 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] runs/recent failed: {e}")
             return jsonify({"runs": [], "error": str(e)}), 500
+
+    @app.route('/brain/activities', methods=['GET'])
+    def brain_activities():
+        """列出所有已注册的活动定义（自省调试用）。
+
+        从 activities/*.md frontmatter 发现的全部活动，含 metadata、
+        allowed_tools、conditions。handler 状态：registered / fallback。
+        """
+        try:
+            from main_brain.activities.registry import list_activities
+            acts = list_activities()
+            result = {}
+            for name, act in sorted(acts.items()):
+                result[name] = {
+                    "description": act.description[:200],
+                    "handler": act.handler_name,
+                    "handler_ready": act.handler is not None,
+                    "tick_types": act.tick_types,
+                    "autonomy_min": act.autonomy_min,
+                    "max_cycles": act.max_cycles,
+                    "allowed_tools": list(act.allowed_tools),
+                    "conditions": dict(act.conditions) if isinstance(act.conditions, dict) else {},
+                }
+            return jsonify({
+                "count": len(result),
+                "activities": result,
+            })
+        except Exception as e:
+            logger.warning(f"[brain] activities failed: {e}")
+            return jsonify({"error": str(e)}), 500
 
     @app.route('/brain/runs/<run_id>', methods=['GET'])
     def brain_run_detail(run_id):
@@ -146,6 +186,54 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] events/ingest failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/events/stream', methods=['GET'])
+    def brain_events_stream():
+        """SSE 实时事件流 — 订阅 EventBus 所有事件并推送到前端。"""
+        import queue
+        from core.event_bus import get_event_bus
+
+        q = queue.Queue(maxsize=256)
+
+        def handler(ev):
+            try:
+                q.put_nowait(json.dumps({
+                    "source": ev.source,
+                    "type": ev.type,
+                    "data": ev.data,
+                    "timestamp": ev.timestamp,
+                }, ensure_ascii=False))
+            except queue.Full:
+                pass  # 客户端太慢，丢事件
+
+        bus = get_event_bus()
+        bus.on("*", "*", handler)
+
+        def generate():
+            try:
+                # 发送初始连接确认
+                yield f"event: connected\ndata: {json.dumps({'status': 'ok'})}\n\n"
+                while True:
+                    try:
+                        payload = q.get(timeout=30)
+                        yield f"event: brain_event\ndata: {payload}\n\n"
+                    except queue.Empty:
+                        # 30 秒无事件 → 发送心跳保持连接
+                        yield ": heartbeat\n\n"
+            except GeneratorExit:
+                pass
+            finally:
+                bus.off("*", "*", handler)
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
+            },
+        )
 
     @app.route('/brain/events/recent', methods=['GET'])
     def brain_events_recent():

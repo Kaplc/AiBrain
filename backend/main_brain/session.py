@@ -57,6 +57,16 @@ class BrainSession:
         max_cycles = max_cycles if max_cycles is not None else int(cfg.get("brain_session_max_cycles", 3))
         timeout = timeout_seconds if timeout_seconds is not None else float(cfg.get("brain_session_timeout_seconds", 60))
 
+        # 发射 session 开始事件
+        try:
+            from core.event_bus import get_event_bus
+            get_event_bus().emit("brain", "session_started", {
+                "message": user_msg[:200],
+                "max_cycles": max_cycles,
+            })
+        except Exception:
+            pass
+
         run = BrainRun(
             run_id=_new_run_id(REACTIVE),
             mode=REACTIVE,
@@ -149,6 +159,18 @@ class BrainSession:
                 self._state.set_loop_status("idle_thinking", activity="wait")
             except Exception:
                 pass
+
+        # 发射 session 完成事件
+        try:
+            from core.event_bus import get_event_bus
+            get_event_bus().emit("brain", "session_completed", {
+                "stop_reason": stop_reason,
+                "cycle_count": len(run.cycles),
+                "actions": summary.get("actions", []),
+                "has_final_reply": any(c.action == "final_reply" for c in run.cycles),
+            })
+        except Exception:
+            pass
 
         reply_strategy = run.final_strategy or {}
         return {

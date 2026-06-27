@@ -213,7 +213,9 @@
       "Bash(xargs grep -l \"def search\\\\|def file_\\\\|tool.*search\\\\|search.*file\\\\|file_search\\\\|grep\\\\|glob\")",
       "Bash(xargs grep -l \"app.route.*encode\\\\|/encode\\\\|def encode\")",
       "Bash(reg delete *)",
-      "Bash(reg.exe delete *)"
+      "Bash(reg.exe delete *)",
+      "Bash(./venv312/Scripts/python _test_tools.py)",
+      "Bash(./venv312/Scripts/python _test_bash_full.py)"
     ]
   },
   "enableAllProjectMcpServers": true,

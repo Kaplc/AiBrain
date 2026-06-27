@@ -136,6 +136,25 @@ def _get_search_options():
 # ── PipelineEngine 兼容层 ──────────────────────────────────
 
 
+def _record_store_stream(text: str, memory_meta: dict | None, entities: list):
+    """Record store operation to stream table (all store paths unified)"""
+    try:
+        meta = memory_meta or {}
+        if meta.get('_skip_core_stream'):
+            return
+        from core.database import StatsDB
+        _path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'stats.db'
+        )
+        _sdb = StatsDB.get_instance(_path)
+        if _sdb:
+            _entities_str = ','.join(entities) if entities else ''
+            _sdb.append_stream('store', content=text[:500], status='done', entities=_entities_str)
+    except Exception as e:
+        logger.debug(f"[store_memory] stream record skipped: {e}")
+
+
 def _try_pipeline_run(pipeline_name: str, ctx):
     """尝试通过 PipelineEngine 执行，引擎未初始化时返回 False"""
     try:
@@ -191,6 +210,8 @@ def store_memory(text: str, memory_meta: dict = None) -> dict:
         entities = ctx.intermediate.get("entities", [])
 
         logger.info(f"[store_memory] DONE (pipeline) | added={len(added)} deleted={len(deleted)}")
+        # record stream for all store paths
+        _record_store_stream(ctx.input_data, memory_meta, entities)
         return {
             "result": msg,
             "stored_texts": stored_texts,
@@ -257,13 +278,26 @@ def _store_memory_legacy(text: str, memory_meta: dict = None) -> dict:
     except Exception as e:
         logger.warning(f"[graph] link_memory failed (non-fatal): {e}")
 
+    entities = list(dict.fromkeys(all_entity_names))
+    # record stream for all store paths
+    _record_store_stream(text, memory_meta, entities)
     return {
         "result": msg,
         "stored_texts": stored_texts,
         "added_count": len(added),
         "deleted_count": len(deleted),
-        "entities": list(dict.fromkeys(all_entity_names)),
+        "entities": entities,
     }
+
+
+def _boost_self_learn_memories(memories: list[dict], factor: float = 1.15) -> None:
+    """提升自学习记忆的 score 并重新排序，使其更易出现在 top-k 结果中。"""
+    for m in memories:
+        payload = m.get("payload") or {}
+        source = payload.get("source", "")
+        if source == "self_learn":
+            m["score"] = min(1.0, m.get("score", 0) * factor)
+    memories.sort(key=lambda x: x.get("score", 0), reverse=True)
 
 
 def search_memory(query: str) -> list[dict]:
@@ -275,7 +309,7 @@ def search_memory(query: str) -> list[dict]:
         query: 自然语言搜索语句
 
     Returns:
-        list[dict]: [{id, text, score}, ...]
+        list[dict]: [{id, text, score, payload?}, ...]
     """
     logger.info(f"[search] START | query={query[:60]!r}")
 
@@ -300,6 +334,9 @@ def search_memory(query: str) -> list[dict]:
         if graph_results:
             memories.extend(graph_results)
 
+        # 自学习记忆加权（内部已排序）
+        _boost_self_learn_memories(memories)
+
         logger.info(
             f"[search] DONE (pipeline) | 返回 {len(memories)} 条结果 | "
             f"sources={dict.fromkeys(m.get('source', 'unknown') for m in memories)}"
@@ -308,7 +345,9 @@ def search_memory(query: str) -> list[dict]:
 
     # ── Fallback：引擎不可用时使用旧逻辑 ──
     logger.warning("[search] pipeline engine unavailable, using legacy path")
-    return _search_memory_legacy(query)
+    memories = _search_memory_legacy(query)
+    _boost_self_learn_memories(memories)  # 内部已排序
+    return memories
 
 
 def _search_memory_legacy(query: str) -> list[dict]:

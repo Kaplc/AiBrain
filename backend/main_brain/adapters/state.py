@@ -38,7 +38,9 @@ class StateAdapter:
         try:
             from main_brain.state import (
                 get_working_set, get_open_loops, get_goals, get_pending,
+                get_drives,
             )
+            merged["drives"] = get_drives().get_all()
             merged["working_set"] = get_working_set().get_active()
             merged["open_loops"] = get_open_loops().get_open()
             merged["goals"] = get_goals().get_all()

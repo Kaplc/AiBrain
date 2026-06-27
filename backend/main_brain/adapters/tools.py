@@ -12,7 +12,11 @@ from ..contracts import BrainJudgeDecision, BrainRunContext
 logger = logging.getLogger("main_brain.adapter.tools")
 
 # 默认白名单：只读、无副作用的安全工具 + wework_send（主动推送）
-DEFAULT_WHITELIST = ["memory_search", "web_fetch", "wework_send"]
+DEFAULT_WHITELIST = [
+    "memory_search", "web_fetch", "web_search", "bash", "wework_send",
+    "read_file", "file_search", "list_directory", "write_file", "patch",
+    "execute_code",
+]
 
 
 class ToolAdapter:

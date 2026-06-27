@@ -285,14 +285,18 @@ const TOOL_ICONS: Record<string, string> = {
   memory_search: '🔍', memory_store: '💾',
   file_search: '📁', read_file: '📖',
   list_directory: '📂', web_fetch: '🌐',
-  plan: '📋',
+  plan: '📋', bash: '⌨️',
+  write_file: '✏️', patch: '🩹', execute_code: '▶️',
+  web_search: '🔎', wework_send: '💬',
 }
 
 const TOOL_LABELS: Record<string, string> = {
   memory_search: '搜索记忆', memory_store: '保存记忆',
   file_search: '搜索文件', read_file: '读取文件',
   list_directory: '浏览目录', web_fetch: '获取网页',
-  plan: '计划管理',
+  plan: '计划管理', bash: '执行命令',
+  write_file: '写入文件', patch: '修改文件', execute_code: '执行代码',
+  web_search: '搜索网络', wework_send: '发送企微',
 }
 
 function toolIcon(name: string): string {
@@ -310,6 +314,9 @@ function toolArgsText(args: Record<string, any>): string {
   if (args.path) parts.push(args.path)
   if (args.file_pattern) parts.push(args.file_pattern)
   if (args.url) parts.push(args.url)
+  if (args.command) parts.push(String(args.command).slice(0, 120))
+  if (args.code) parts.push(String(args.code).slice(0, 80))
+  if (args.shell) parts.push(String(args.shell).slice(0, 120))
   return parts.join('  ') || ''
 }
 

@@ -52,8 +52,7 @@ def register(app, ready_state, logger, stats_db):
                 added=result.get('added_count', 0),
                 deleted=result.get('deleted_count', 0),
             )
-            entities = result.get('entities', [])
-            stats_db.append_stream('store', content=text[:500], status='done', entities=','.join(entities))
+            # stream recording moved to core.py store_memory()
             return jsonify(result)
         except Exception as e:
             logger.error(f"[memory/store] error: {e}")
@@ -120,7 +119,7 @@ def register(app, ready_state, logger, stats_db):
 
         def _bg_store():
             try:
-                meta = {"source": "mcp"}
+                meta = {"source": "mcp", "_skip_core_stream": True}
                 result = store_memory(text, memory_meta=meta)
                 stored = result.get("stored_texts", [])
                 if stored:

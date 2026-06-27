@@ -20,8 +20,7 @@ from .pipeline.context import PromptContext
 # 保留最近 N 轮对话（一个轮次 = user msg + 后续所有非 user msg）
 MAX_HISTORY_TURNS = 10
 MAX_TOOL_ROUNDS = 999
-_conversation_history: list[dict] = []
-_tool_memory: list[dict] = []  # 最近一轮 Tool Loop 的工具消息，不落盘
+_conversation_history: list[dict] = []  # 会话历史（user/assistant 纯文本写 output.json，工具消息仅内存）
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +92,9 @@ def send_message(
     try:
         logger.info(f"[loop] send_message start: prompt={prompt[:60]!r} tools={tools_enabled}")
 
-        # 0. 加载/重载对话历史到内存
-        try:
-            from .compression.context_compress import reload_if_needed
-            if not _conversation_history:
-                # 首次对话：从 output.json 加载历史
+        # 0. 从 output.json 加载对话历史到内存
+        if not _conversation_history:
+            try:
                 from main_brain.memory.workmemory import get_work_memory
                 entries = get_work_memory().output_mem_read()
                 if entries:
@@ -107,10 +104,8 @@ def send_message(
                         if e.get("assistant"):
                             _conversation_history.append({"role": "assistant", "content": e["assistant"]})
                     logger.info(f"[loop] loaded {len(entries)} entries from output.json → {len(_conversation_history)} msgs")
-            else:
-                reload_if_needed(_conversation_history)
-        except Exception as e:
-            logger.warning(f"[loop] history load failed: {e}")
+            except Exception as e:
+                logger.warning(f"[loop] history load failed: {e}")
 
         # 0.1 写入工作记忆 + 触发 package 搜索
         _set_status("分析记忆")
@@ -153,9 +148,6 @@ def send_message(
         from datetime import datetime
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         composition.history_messages = list(_conversation_history)
-        if _tool_memory:
-            composition.tool_memory_messages = list(_tool_memory)
-            logger.info(f"[loop] injected tool memory: {len(_tool_memory)} msgs")
         composition.user_message = f"[{now_str}] {prompt}"
         composition.metadata["provider"] = provider
         msgs = composition.render(provider)
@@ -200,8 +192,6 @@ def send_message(
         # ════════════════════════════════════════════════════════
         # 流式路径（tools_enabled=False 或无工具注册）
         # ════════════════════════════════════════════════════════
-        if _tool_memory:
-            logger.info(f"[loop] stream path with {len(_tool_memory)} tool memory msgs injected")
         _set_status("生成回复")
         full_response: list[str] = []
         token_count = 0
@@ -231,14 +221,12 @@ def send_message(
         _conversation_history.append({"role": "user", "content": prompt})
         _conversation_history.append({"role": "assistant", "content": assistant_text})
 
-        # 后台压缩检查 + token 用量记录
+        # token 用量记录
         try:
-            from .compression.context_compress import try_spawn_compress
-            try_spawn_compress(_conversation_history, last_prompt_tokens)
             from .chat_mod import ChatManager
             ChatManager.get_instance().set_token_usage(last_prompt_tokens, token_count)
         except Exception as e:
-            logger.warning(f"[loop] compress spawn failed: {e}")
+            logger.warning(f"[loop] token usage record failed: {e}")
 
         # 写入工作记忆 output.md
         try:
@@ -389,20 +377,18 @@ def _tool_loop(
 
     # ── Tool Loop 结束后 ──
 
-    # 0. 提取本轮 Tool Loop 的工具消息 → _tool_memory
-    #    只有本轮确实调了工具才更新，没调则保留上一轮的记忆
-    global _tool_memory
-    _new_tool_msgs = [
+    # 将本轮工具消息拼入 _conversation_history（仅内存，不写 output.json）
+    # 像 LearnSystem 一样，按时间顺序：user → tool_calls → tool_results → assistant
+    _tool_related = [
         msg for msg in msgs[pre_tool_len:]
-        if (msg["role"] in ("assistant", "tool") and msg["role"] != "assistant")
-        or msg.get("tool_calls")
+        if msg.get("tool_calls") or msg["role"] == "tool"
     ]
-    if _new_tool_msgs:
-        _tool_memory = _new_tool_msgs
-        tool_roles = sorted(set(m.get("role", "?") for m in _tool_memory))
-        logger.info(f"[loop] tool memory updated: {len(_tool_memory)} msgs [{', '.join(tool_roles)}]")
-    else:
-        logger.info(f"[loop] tool memory unchanged ({len(_tool_memory)} msgs, no tool calls this round)")
+    _conversation_history.append({"role": "user", "content": prompt})
+    if _tool_related:
+        _conversation_history.extend(_tool_related)
+        logger.info(f"[loop] appended {len(_tool_related)} tool msgs to conversation history")
+    _conversation_history.append({"role": "assistant", "content": final_text})
+    logger.info(f"[loop] conversation history now has {len(_conversation_history)} msgs")
 
     # 1. yield tool_history
     if tool_history:
@@ -414,21 +400,14 @@ def _tool_loop(
 
     logger.info(f"[loop] LLM final response ({len(final_text)} chars): {final_text[:200]}{'...' if len(final_text) > 200 else ''}")
 
-    # 3. 保存对话到 _conversation_history（只存 user + assistant 文本，不存 tool 消息）
-    _conversation_history.append({"role": "user", "content": prompt})
-    _conversation_history.append({"role": "assistant", "content": final_text})
-
-    # 后台压缩检查 + token 用量记录（取最后一轮）
-    logger.info(f"[loop] compress: check with last_prompt_tokens={last_prompt_tokens}")
+    # token 用量记录（取最后一轮）
     try:
-        from .compression.context_compress import try_spawn_compress
-        try_spawn_compress(_conversation_history, last_prompt_tokens)
         from .chat_mod import ChatManager
         ChatManager.get_instance().set_token_usage(last_prompt_tokens, last_completion_tokens)
     except Exception as e:
-        logger.warning(f"[loop] compress spawn failed: {e}")
+        logger.warning(f"[loop] token usage record failed: {e}")
 
-    # 4. 写入工作记忆
+    # 3. 写入工作记忆（只写 user/assistant 纯文本，不写工具消息）
     try:
         from main_brain.memory.workmemory import get_work_memory
         get_work_memory().output_mem_write(final_text, user_prompt=prompt)

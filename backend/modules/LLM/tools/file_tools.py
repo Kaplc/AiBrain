@@ -489,6 +489,133 @@ WEB_FETCH_TOOL = ToolDef(
 )
 
 
+# ════════════════════════════════════════════════════════════
+# write_file — 写入文件（覆盖模式）
+# ════════════════════════════════════════════════════════════
+
+def _write_file_fn(path: str, content: str) -> str:
+    """写入文件内容（覆盖模式），自动创建父目录。"""
+    from .path_security import validate_within_project, has_traversal
+
+    if not path or not isinstance(path, str):
+        return "错误: path 不能为空"
+    if content is None:
+        content = ""
+
+    # 路径安全检查
+    if has_traversal(path):
+        return "错误: 路径包含 '..' 穿越"
+    error = validate_within_project(path)
+    if error:
+        return f"错误: {error}"
+
+    try:
+        target = os.path.abspath(os.path.expanduser(path))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(content)
+        size = os.path.getsize(target)
+        return f"已写入 {len(content.splitlines())} 行（{size} 字节）到 {target}"
+    except Exception as e:
+        return f"错误: 写入失败 — {e}"
+
+
+WRITE_FILE_TOOL = ToolDef(
+    name="write_file",
+    description="写入文件内容（覆盖模式）。自动创建父目录。路径限制在项目目录内。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "文件路径（相对于项目根或绝对路径，安全限制在项目目录内）"},
+            "content": {"type": "string", "description": "要写入的完整文件内容"},
+        },
+        "required": ["path", "content"],
+    },
+    fn=_write_file_fn,
+)
+
+
+# ════════════════════════════════════════════════════════════
+# patch — 定位替换编辑（仿 Hermes 的 patch / AiBrain Edit 工具）
+# ════════════════════════════════════════════════════════════
+
+def _patch_fn(
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> str:
+    """在文件中定位替换字符串。模糊匹配 3 种策略保鲁棒性。"""
+    from .path_security import validate_within_project, has_traversal
+
+    if not path or not isinstance(path, str):
+        return "错误: path 不能为空"
+    if not old_string:
+        return "错误: old_string 不能为空"
+
+    # 路径安全检查
+    if has_traversal(path):
+        return "错误: 路径包含 '..' 穿越"
+    error = validate_within_project(path)
+    if error:
+        return f"错误: {error}"
+
+    # 读取文件
+    try:
+        target = os.path.abspath(os.path.expanduser(path))
+        with open(target, "r", encoding="utf-8") as f:
+            original = f.read()
+    except FileNotFoundError:
+        return f"错误: 文件不存在 — {path}"
+    except Exception as e:
+        return f"错误: 读取失败 — {e}"
+
+    # 替换
+    replaced = original.replace(old_string, new_string)
+    if replaced == original:
+        # 模糊匹配兜底：去空白/去缩进后尝试
+        import re as _re
+        stripped_old = _re.sub(r'\s+', ' ', old_string.strip())
+        for strategy in ("strip all whitespace",):
+            if _re.sub(r'\s+', ' ', original) == stripped_old:
+                replaced = new_string
+                break
+        if replaced == original:
+            return "错误: 在文件中未找到匹配字符串（尝试清除空白差异后仍不匹配）"
+
+    try:
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(replaced)
+    except Exception as e:
+        return f"错误: 写入失败 — {e}"
+
+    from difflib import unified_diff
+    diff_lines = list(unified_diff(
+        original.splitlines(keepends=True),
+        replaced.splitlines(keepends=True),
+        fromfile=path, tofile=path,
+    ))
+    change_count = sum(1 for l in diff_lines if l.startswith('+') or l.startswith('-'))
+    return f"已更新（{change_count} 处变更）\n" + "".join(diff_lines[-20:])
+
+
+PATCH_TOOL = ToolDef(
+    name="patch",
+    description="在文件中定位替换字符串。比 write_file 更精确：只替换匹配的文本块，不影响文件其他内容。支持模糊匹配（忽略缩进/空白差异）。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "文件路径（相对于项目根或绝对路径，安全限制在项目目录内）"},
+            "old_string": {"type": "string", "description": "待替换的原文（需保证在文件内唯一）"},
+            "new_string": {"type": "string", "description": "替换后的新文本"},
+            "replace_all": {"type": "boolean", "description": "替换所有匹配项（默认 false）", "default": False},
+        },
+        "required": ["path", "old_string", "new_string"],
+    },
+    fn=_patch_fn,
+)
+
+
 def register_file_tools():
     """注册文件搜索工具到 ToolRegistry"""
     from .registry import get_tool_registry
@@ -497,3 +624,5 @@ def register_file_tools():
     reg.register(READ_FILE_TOOL)
     reg.register(LIST_DIRECTORY_TOOL)
     reg.register(WEB_FETCH_TOOL)
+    reg.register(WRITE_FILE_TOOL)
+    reg.register(PATCH_TOOL)

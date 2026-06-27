@@ -49,6 +49,24 @@ DEFAULT_BRAIN = {
     "memory_consolidation_enabled": True,
     "memory_consolidation_daily_tick": True,    # 日 tick 沉淀
     "memory_consolidation_window_size": 20,      # 单次扫描窗口
+
+    # 自主学习（self_learn）
+    "self_learn_enabled": True,                  # 总开关
+    "self_learn_min_tension": 0.15,              # open_loop 触发 threshold
+    "self_learn_curiosity_threshold": 0.6,       # 好奇心触发阈值（curiosity 固定 0.8，节流靠 max_per_day）
+    "self_learn_cooldown_hours": 12,             # 同一 topic 冷却(hours)
+    "self_learn_max_per_day": 3,                 # 单日次数上限
+    "self_learn_max_chars_per_topic": 3000,      # web_fetch 截断
+    "self_learn_timeout_seconds": 45,            # 单次软超时
+
+    # 复习已学知识（review_learned）
+    "review_learned_enabled": True,              # 总开关
+
+    # 前额叶仲裁层（Arbiter / FR-014-r2）
+    "arbiter_enabled": True,                     # 总开关
+    "arbiter_threshold": 0.55,                   # 规则式 selector 置信度低于此值时触发仲裁
+    "arbiter_temperature": 0.4,                  # 仲裁 LLM temperature（略高于 judge）
+    "arbiter_timeout_seconds": 15,               # 单次仲裁超时
 }
 
 

@@ -1,12 +1,14 @@
 /* 记忆流视图模型（协调器）
  *
  * 作用：顶层协调器，管理 3 种流的轮询与 knownIds 动画
+ *       同时提供保存/搜索/删除长时记忆的交互操作方法
  * 依赖：StoreStream / SearchStream / DeleteStream（各自独立文件）
  */
 
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { usePolling } from '@/composables/usePolling'
+import { useToast } from '@/composables/useToast'
 import type { StreamResponse, StreamItemData } from './types'
 import type { StreamItemBase } from './StreamItemBase'
 import { StoreStream } from './StoreStream'
@@ -20,6 +22,15 @@ export { DeleteStream } from './DeleteStream'
 export { StoreStreamItem } from './StoreStreamItem'
 export { SearchStreamItem } from './SearchStreamItem'
 export { DeleteStreamItem } from './DeleteStreamItem'
+
+/** 搜索结果条目 */
+export interface MemorySearchResult {
+  memory_id: string
+  text: string
+  score: number
+  source: string
+  created_at: string
+}
 
 export class StreamViewModel {
   // 3种流实例
@@ -38,8 +49,25 @@ export class StreamViewModel {
     `MCP ${this.storeStream.total.value} 条 / 搜索 ${this.searchStream.total.value} 条 / 删除 ${this.deleteStream.total.value} 条`
   )
 
+  // ── 操作状态 ──
+
+  /** 保存输入文本 */
+  readonly storeInput = ref('')
+  readonly storeLoading = ref(false)
+
+  /** 搜索输入 */
+  readonly searchInput = ref('')
+  readonly searchLoading = ref(false)
+  readonly searchResults = ref<MemorySearchResult[]>([])
+  readonly searchShowResults = ref(false)
+
+  /** 删除输入 */
+  readonly deleteInput = ref('')
+  readonly deleteLoading = ref(false)
+
   // Private
   private _api = useApi()
+  private _toast = useToast()
   private _statusPoll = usePolling(() => this.pollStatus(), 1000)
   private _streamPoll = usePolling(() => this.loadStream(), 2000)
 
@@ -52,9 +80,7 @@ export class StreamViewModel {
     items.forEach(item => this.knownIds.value.add(String(item.id)))
   }
 
-  /* loadStream：并行拉取 3 种操作流
-   * 流程：Promise.all → 各 stream.load → requestAnimationFrame 标记已知 ID
-   */
+  /* loadStream：并行拉取 3 种操作流 */
   async loadStream(): Promise<void> {
     try {
       const [storeRes, searchRes, deleteRes] = await Promise.all([
@@ -76,9 +102,7 @@ export class StreamViewModel {
     }
   }
 
-  /* pollStatus：轮询更新 pending 状态
-   * 流程：检查是否有 pending 项 → 并行拉取最新数据 → 构建 statusMap → 各 stream.applyStatusMap
-   */
+  /* pollStatus：轮询更新 pending 状态 */
   async pollStatus(): Promise<void> {
     const allItems = [
       ...this.storeStream.items.value,
@@ -106,14 +130,79 @@ export class StreamViewModel {
     }
   }
 
-  /* onMounted：启动轮询 */
+  /* ── 交互操作方法 ── */
+
+  /** 保存文本到长时记忆 */
+  async storeMemory(): Promise<void> {
+    const text = this.storeInput.value.trim()
+    if (!text) return
+    this.storeLoading.value = true
+    try {
+      await this._api.postJson<any>('/memory/store', { text })
+      this.storeInput.value = ''
+      this._toast.show('记忆已保存', 'success')
+      // 刷新流以看到新条目
+      setTimeout(() => this.loadStream(), 600)
+    } catch (e: any) {
+      this._toast.show('保存失败: ' + (e.message || '未知错误'), 'error')
+    } finally {
+      this.storeLoading.value = false
+    }
+  }
+
+  /** 搜索长时记忆 */
+  async searchMemory(): Promise<void> {
+    const query = this.searchInput.value.trim()
+    if (!query) return
+    this.searchLoading.value = true
+    this.searchResults.value = []
+    this.searchShowResults.value = true
+    try {
+      const res = await this._api.postJson<{ results: any[] }>('/memory/search', { query })
+      this.searchResults.value = (res.results || []).map((r: any) => ({
+        memory_id: r.id || r.memory_id || '',
+        text: r.text || r.content || '',
+        score: r.score || 0,
+        source: r.source || '',
+        created_at: r.created_at || r.timestamp || '',
+      }))
+    } catch (e: any) {
+      this._toast.show('搜索失败: ' + (e.message || '未知错误'), 'error')
+    } finally {
+      this.searchLoading.value = false
+    }
+  }
+
+  /** 关闭搜索结果 */
+  closeSearchResults(): void {
+    this.searchShowResults.value = false
+    this.searchResults.value = []
+  }
+
+  /** 按 memory_id 删除长时记忆 */
+  async deleteMemory(memoryId?: string): Promise<void> {
+    const id = (memoryId || this.deleteInput.value).trim()
+    if (!id) return
+    this.deleteLoading.value = true
+    try {
+      await this._api.postJson<any>('/memory/delete', { memory_id: id })
+      this.deleteInput.value = ''
+      this._toast.show('记忆已删除', 'success')
+      setTimeout(() => this.loadStream(), 600)
+    } catch (e: any) {
+      this._toast.show('删除失败: ' + (e.message || '未知错误'), 'error')
+    } finally {
+      this.deleteLoading.value = false
+    }
+  }
+
+  /* 生命周期 */
   onMounted(): void {
     this.loadStream()
     this._streamPoll.start()
     this._statusPoll.start()
   }
 
-  /* onUnmounted：停止轮询 */
   onUnmounted(): void {
     this._streamPoll.stop()
     this._statusPoll.stop()

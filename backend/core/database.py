@@ -1,6 +1,7 @@
 """SQLite 统计数据库（单例）：存储每日统计、操作流、搜索历史"""
 import os
 import sqlite3
+import threading
 import datetime as _dt
 import logging
 import traceback as _tb
@@ -10,6 +11,7 @@ _db_logger = logging.getLogger('memory')
 
 class StatsDB:
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __init__(self, db_path):
         self._path = db_path
@@ -19,7 +21,9 @@ class StatsDB:
     @classmethod
     def get_instance(cls, db_path):
         if cls._instance is None:
-            cls._instance = cls(db_path)
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls(db_path)
         return cls._instance
 
     @property
@@ -36,6 +40,8 @@ class StatsDB:
     def _init_db(self):
         """初始化数据库表结构：daily_stats、stream、search_history"""
         db = self._get_conn()
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA busy_timeout=5000")
         db.execute('''
             CREATE TABLE IF NOT EXISTS daily_stats (
                 date TEXT PRIMARY KEY,

@@ -171,11 +171,7 @@ class ChatManager:
                 logger.warning(f"[token] db fallback failed: {e}")
         state['prompt_tokens'] = prompt_tokens
         state['completion_tokens'] = completion_tokens
-        try:
-            from .compression.compress_config import MAX_CONTEXT_TOKENS
-            state['max_context_tokens'] = MAX_CONTEXT_TOKENS
-        except Exception:
-            state['max_context_tokens'] = 400000
+        state['max_context_tokens'] = 400000
         return state
 
     def reload_agentloop_config(self, config: dict):

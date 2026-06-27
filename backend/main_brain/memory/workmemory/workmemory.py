@@ -15,6 +15,7 @@ import os
 import tempfile
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,16 @@ _BASE_DIR = Path(__file__).parent.parent.parent / "data"
 
 # 默认文件
 DEFAULT_FILES = ["output.json", "package.json"]
+
+
+def _parse_time(time_str: str) -> Optional[datetime]:
+    """解析 output.json 中的 time 字段，失败返回 None"""
+    if not time_str:
+        return None
+    try:
+        return datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -232,7 +243,7 @@ class WorkMemoryManager:
     # ── output.json 专用方法 ──────────────────────────────
 
     def output_mem_write(self, content: str, user_prompt: str = "") -> dict:
-        """向 output.json 滚动追加对话记录，超过 100 条自动删除最旧
+        """向 output.json 滚动追加对话记录，超过 2 天的条目自动删除
         使用临时文件 + 原子替换，防止崩溃损坏。
 
         Args:
@@ -257,8 +268,8 @@ class WorkMemoryManager:
         # 计算最大序号
         max_seq = max((e.get("seq", 0) for e in entries), default=0)
         seq = max_seq + 1
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S")
         entries.append({
             "seq": seq,
             "user": user_prompt,
@@ -266,11 +277,21 @@ class WorkMemoryManager:
             "time": ts,
         })
 
-        # 超出 100 条，删最旧
+        # 删除超过 2 天的条目
+        cutoff = now - timedelta(days=2)
         removed = 0
-        while len(entries) > 100:
-            entries.pop(0)
-            removed += 1
+        before = len(entries)
+        kept = []
+        for e in entries:
+            t = _parse_time(e.get("time", ""))
+            if t is not None and t >= cutoff:
+                kept.append(e)
+        entries = kept
+        removed = before - len(entries)
+
+        # 安全硬上限：防止时间解析异常导致无限增长
+        if len(entries) > 1000:
+            entries = entries[-1000:]
 
         # 原子写入：临时文件 + os.replace
         fd, tmp = tempfile.mkstemp(dir=str(_BASE_DIR), suffix=".json")
@@ -283,7 +304,8 @@ class WorkMemoryManager:
             raise
 
         self._refresh_registry("output.json")
-        logger.info(f"[workmemory] output_mem_write: total={len(entries)} removed={removed}")
+        if removed:
+            logger.info(f"[workmemory] output_mem_write: total={len(entries)} removed={removed} (超过2天)")
 
         return {
             "total": len(entries),

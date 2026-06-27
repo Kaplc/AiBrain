@@ -25,8 +25,6 @@ def register_all_agents():
     mgr.register(MemoryRelationAgent())
     from .info_sufficient_agent import InfoSufficientAgent
     mgr.register(InfoSufficientAgent())
-    from .context_compress_agent import ContextCompressAgent
-    mgr.register(ContextCompressAgent())
     import logging
     logging.getLogger(__name__).info(
         "[AgentManager] register_all_agents done, total=%d", len(mgr._registry)

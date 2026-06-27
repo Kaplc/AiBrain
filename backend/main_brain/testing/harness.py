@@ -112,13 +112,13 @@ def select_activity_probe(
 ) -> dict:
     """测试 ActivitySelector 选择。Returns: {ok, selected_activity, reason}。"""
     try:
-        activity, reason = get_activity_selector().select(
+        activity, reason, confidence = get_activity_selector().select(
             life_state, tick_type,
             recent_runs=recent_runs,
             pending_expressions=pending_expressions,
             autonomy_level=autonomy_level,
         )
-        return {"ok": True, "selected_activity": activity, "reason": reason}
+        return {"ok": True, "selected_activity": activity, "reason": reason, "confidence": confidence}
     except Exception as e:
         return {"ok": False, "selected_activity": "", "reason": str(e)}
 

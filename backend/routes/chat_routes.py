@@ -27,20 +27,13 @@ def _log_reply_event(text: str, source_event_id: str, trace_id: str = "") -> Non
 
 
 def _write_chat_history(user_msg: str, reply_text: str) -> None:
-    """把本轮对话写回对话历史和 work memory（同步 brain-first 与旧链路的行为）。"""
+    """把本轮对话追加到 _conversation_history（不写 output.json，由 loop.py 负责）。"""
     if not reply_text:
         return
-    # 1. 追加到 _conversation_history
     try:
         from modules.chat.loop import _conversation_history
         _conversation_history.append({"role": "user", "content": user_msg})
         _conversation_history.append({"role": "assistant", "content": reply_text})
-    except Exception:
-        pass
-    # 2. 写入 output.json
-    try:
-        from main_brain.memory.workmemory import get_work_memory
-        get_work_memory().output_mem_write(reply_text, user_prompt=user_msg)
     except Exception:
         pass
 
@@ -225,9 +218,15 @@ def register(app, ready_state, logger, stats_db):
                 _write_chat_history(user_msg, brain_reply)
                 logger.info(f"[chat] brain-first done: tokens={token_count}")
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                try:
+                    from modules.chat import ChatManager as _CM
+                    _CM.get_instance().set_status("")
+                except Exception:
+                    pass
                 return
 
             # 3. Fallback：旧 ChatManager.send()（保留 brain 上下文注入 prompt）
+            # 记忆检索已在 controller BrainCycleRunner.run() 的 auto-recall 环节完成
             mgr.set_brain_context(_brain_result or {"fallback": True})
             _fallback_text = ""
             try:
@@ -257,6 +256,13 @@ def register(app, ready_state, logger, stats_db):
                     _log_reply_event(_fallback_text, _event_id or "", _event_trace_id or "")
                     _write_chat_history(user_msg, _fallback_text)
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            # 清除 busy 状态，让大脑恢复后台活动
+            try:
+                from modules.chat import ChatManager as _CM
+                _CM.get_instance().set_status("")
+            except Exception:
+                pass
 
         return Response(
             stream_with_context(generate()),

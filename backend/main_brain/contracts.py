@@ -34,10 +34,36 @@ ACTIONS = (
 )
 
 # 自主活动类型（ActivitySelector 输出）
-ACTIVITIES = (
+# 优先从 activities/registry 动态发现，fallback 到硬编码列表
+_ACTIVITIES_FALLBACK = (
     "wait", "reflect", "organize_memory", "advance_open_loop",
-    "maintain_goal", "prepare_expression", "proactive_contact", "use_tool",
+    "maintain_goal", "prepare_expression", "proactive_contact",
+    "self_learn", "review_learned", "use_tool",
 )
+
+
+def get_activities() -> tuple[str, ...]:
+    """从 activities registry 获取所有已注册活动（动态发现优先）。
+
+    文件化活动定义取代硬编码列表：activities/*.md 的 frontmatter 定义全部活动。
+    如果 registry 尚未加载（early boot），返回硬编码 fallback 保证不崩。
+    """
+    try:
+        from .activities.registry import ensure_loaded, get_active_activity_names
+        ensure_loaded()
+        names = get_active_activity_names()
+        if names:
+            return tuple(names)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return _ACTIVITIES_FALLBACK
+
+
+# 别名：保持向后兼容，代码仍可写 `from .contracts import ACTIVITIES`
+ACTIVITIES = _ACTIVITIES_FALLBACK
+
 
 STOP_REASONS = ("ready", "sleep", "max_cycles", "error", "timeout", "fallback")
 
