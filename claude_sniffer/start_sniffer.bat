@@ -10,5 +10,5 @@ timeout /t 1 /nobreak >nul
 echo 清理完成
 
 echo 正在启动拦截脚本...
-powershell -ExecutionPolicy Bypass -Command "cd '%~dp0'; python sniff_claude.py"
+powershell -ExecutionPolicy Bypass -Command "cd '%~dp0'; $python='..\venv312\Scripts\python.exe'; if (-not (Test-Path $python)) { $python='python' }; & $python sniff_claude.py"
 pause

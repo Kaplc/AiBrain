@@ -27,6 +27,7 @@ CHECKPOINT = os.path.join(PROJECT_ROOT, "1-logs", "migrations", "legacy_scene", 
 
 def post_store(text: str) -> dict:
     payload = json.dumps({"text": text, "memory_meta": {"source": "reencode"}}).encode("utf-8")
+    
     req = Request(BACKEND_URL + "/memory/store", data=payload,
                   headers={"Content-Type": "application/json"}, method="POST")
     with urlopen(req, timeout=120) as resp:

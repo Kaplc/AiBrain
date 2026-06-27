@@ -11,4 +11,14 @@ if ($connections) {
 
 # 启动拦截脚本
 Write-Host "正在启动拦截脚本..." -ForegroundColor Cyan
-python "$PSScriptRoot\sniff_claude.py"
+$venvPython = Join-Path $PSScriptRoot "..\venv312\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    $venvPython = "python"
+}
+try {
+    & $venvPython "$PSScriptRoot\sniff_claude.py"
+} catch {
+    Write-Host "脚本异常: $_" -ForegroundColor Red
+}
+Write-Host "`n脚本已退出，按 Enter 键关闭窗口..." -ForegroundColor Yellow
+Read-Host

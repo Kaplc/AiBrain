@@ -46,7 +46,11 @@ def finish():
         with open(CHECKPOINT_API) as f:
             migrated_set = set(json.load(f).get("ids", []))
     logger.info(f"API-migrated legacy ids: {len(migrated_set)}")
-
+    logger.info(f"Legacy collection: {LEGACY_COLLECTION}")
+    logger.info(f"Finish checkpoint: {CHECKPOINT}")
+    logger.info(f"Backend URL: {BACKEND_URL}")
+    logger.info(f"Start migration...")
+    
     # 自身 checkpoint（断点续跑）
     done = set()
     if os.path.exists(CHECKPOINT):
