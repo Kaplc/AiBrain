@@ -10,7 +10,7 @@ Prompt："最近脑海里浮现：海马体、实体关系、长期记忆"。
 import logging
 
 from .store import get_state
-from . import times
+from .. import clock
 
 logger = logging.getLogger('state.working_set')
 
@@ -36,8 +36,8 @@ class WorkingSetManager:
         if type_ not in ("node", "memory", "open_loop"):
             logger.warning(f"[working_set] unknown type {type_!r}, skip")
             return
-        now_iso = times.now_iso()
-        expire_at = times.now_plus_hours_iso(WORKING_SET_TTL_HOURS)
+        now_iso = clock.now_iso()
+        expire_at = clock.now_plus_hours_iso(WORKING_SET_TTL_HOURS)
         with self._state.transaction() as data:
             ws = data.setdefault("working_set", [])
             # 顺手清掉过期项（一次写覆盖「插入 + 清理」）
@@ -50,7 +50,7 @@ class WorkingSetManager:
                     data["working_set"] = ws
                     return
             ws.append({
-                "id": f"evt_{times.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
+                "id": f"evt_{clock.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
                 "type": type_,
                 "ref_id": ref_id,
                 "score": float(score),
@@ -61,13 +61,13 @@ class WorkingSetManager:
 
     def get_active(self) -> list[dict]:
         """返回未过期条目（纯读，不落盘）。"""
-        now_iso = times.now_iso()
+        now_iso = clock.now_iso()
         ws = self._state.snapshot().get("working_set", [])
         return [w for w in ws if w.get("expire_at", "") >= now_iso]
 
     def prune(self) -> int:
         """移除过期条目。Returns: 移除数。"""
-        now_iso = times.now_iso()
+        now_iso = clock.now_iso()
         removed = 0
         with self._state.transaction() as data:
             ws = data.get("working_set", [])

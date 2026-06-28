@@ -11,7 +11,7 @@
 import logging
 
 from .store import get_state
-from . import times
+from .. import clock
 
 logger = logging.getLogger('state.refractory')
 
@@ -31,7 +31,7 @@ class ExpressionHistoryManager:
     def is_in_refractory(self, expression_type: str, node_id: str) -> bool:
         """该 (type, node_id) 是否还在冷却期内。"""
         key = self._key(expression_type, node_id)
-        now_iso = times.now_iso()
+        now_iso = clock.now_iso()
         for h in self._state.snapshot().get("expression_history", []):
             if h.get("key") == key:
                 return h.get("refractory_until", "") > now_iso
@@ -43,8 +43,8 @@ class ExpressionHistoryManager:
         if not expression_type or not node_id:
             return
         key = self._key(expression_type, node_id)
-        now_iso = times.now_iso()
-        until = times.now_plus_hours_iso(hours)
+        now_iso = clock.now_iso()
+        until = clock.now_plus_hours_iso(hours)
         with self._state.transaction() as data:
             hist = data.setdefault("expression_history", [])
             for h in hist:
@@ -64,7 +64,7 @@ class ExpressionHistoryManager:
 
     def prune(self) -> int:
         """移除已过冷却期的记录。Returns: 移除数。"""
-        now_iso = times.now_iso()
+        now_iso = clock.now_iso()
         removed = 0
         with self._state.transaction() as data:
             hist = data.get("expression_history", [])

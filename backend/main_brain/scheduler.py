@@ -64,6 +64,8 @@ class LifeScheduler:
         # 格式：若 now.hour >= 23 则使用当天日期，否则使用昨天日期
         self._last_sleep_session: str = ""
         self._last_alive_at: str = ""  # 上次 tick 完成后的时间戳（重启恢复靠 tick_log）
+        self._sleep_mode: bool = False  # 深夜睡眠模式（sleep_tick 设 True，day_tick 清 False）
+        self._woke_from_sleep: bool = False  # 本"夜"是否已被唤醒过（_sleep_tick 重置）
 
     # ── 日志初始化 ───────────────────────────────────────────
     @staticmethod
@@ -135,12 +137,21 @@ class LifeScheduler:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    @property
+    def sleep_mode(self) -> bool:
+        """深夜睡眠模式。True 时意识流 tick 不调 LLM（除非用户消息唤醒）。"""
+        return self._sleep_mode
+
+    @sleep_mode.setter
+    def sleep_mode(self, value: bool) -> None:
+        self._sleep_mode = bool(value)
+
     # ── 主循环 ───────────────────────────────────────────────
     def _loop(self) -> None:
         """昼夜节律循环：Day Tick → 意识流 tick 循环 → Sleep Tick。
 
-        取代旧的 short/medium/long/daily 四种 tick。用户消息回复走独立 reactive 路径，
-        不经此处；意识流 tick 不受用户活跃度影响（两条路径并行，状态写经事务串行）。
+        睡眠模式下意识流 tick 完全暂停，只轮询用户消息。
+        用户发消息 → 重建上下文 + 唤醒 AI → 正常回复 → 无回复则自然睡回去。
         """
         if self._clock is None:
             from .clock import get_brain_clock
@@ -150,18 +161,60 @@ class LifeScheduler:
         # 启动后先等一个短预热，再开始第一次意识流 tick
         self._sleep(min(60, max(15, int(cfg.get("short_tick_seconds", 30)))))
 
-        # Day Tick：醒来仪式（无 LLM），构建初始 Working Memory
+        # Day Tick：构建初始 Working Memory（启动时不触发 consolidation，避免每次重启都整理记忆）
         if cfg.get("day_tick_enabled", True):
-            self._day_tick()
+            self._day_tick(consolidate=False)
+
+        # 重启检测：如果在清晨 day_tick 之前，补设睡眠模式
+        # （重启后 _sleep_mode 默认 False，而 _maybe_sleep_tick 在
+        #  深夜 deep night 窗口 23-02 过去后就不再触发，需要这里补）
+        if cfg.get("sleep_tick_enabled", True) and not self._sleep_mode:
+            _h = self._clock.local_hour()
+            _day_start = int(cfg.get("day_tick_hour_start", 6))
+            if 0 <= _h < _day_start:
+                logger.info(f"[scheduler] startup at h={_h} before day_tick ({_day_start}), "
+                            f"entering sleep mode")
+                self._sleep_tick(reason="restart_during_sleep_hours")
+
+        from .autonomous_mind import get_autonomous_mind
 
         while not self._stop.is_set():
+            # ── 睡眠模式：意识流 tick 完全暂停 ──
+            if self._sleep_mode:
+                if get_autonomous_mind().has_pending_messages:
+                    logger.info("[scheduler] 🔔 wake signal: pending message detected")
+                    # 首次唤醒：重建上下文（身份 + 环境 + 睡眠感知）
+                    if not self._woke_from_sleep:
+                        logger.info("[scheduler] 🌅 first wake this night: rebuilding context")
+                        self._wake_context()
+                        self._woke_from_sleep = True
+                    # 执行一次 tick 处理用户消息，完成后自然睡回去
+                    self._alive_tick()
+                    self._last_alive_at = self._clock.now_iso_local()
+                    logger.info("[scheduler] 🌙 wake tick done, returning to sleep poll")
+                else:
+                    logger.debug("[scheduler] 💤 sleep poll: 60s wait for message")
+                    self._sleep(60)
+
+                if self._stop.is_set():
+                    break
+                # 昼夜节律检查（维持 tick_log 连续性，day_tick 负责清除睡眠标记）
+                try:
+                    if cfg.get("sleep_tick_enabled", True):
+                        self._maybe_sleep_tick()
+                    if cfg.get("day_tick_enabled", True):
+                        self._maybe_day_tick()
+                except Exception:
+                    pass
+                continue
+
+            # ── 正常清醒模式 ──
             self._alive_tick()
             if self._stop.is_set():
                 break
 
             # 有用户消息待处理 → 不 sleep，立即下一轮
             try:
-                from .autonomous_mind import get_autonomous_mind
                 if get_autonomous_mind().has_pending_messages:
                     continue
             except Exception:
@@ -179,8 +232,7 @@ class LifeScheduler:
             self._sleep_until_next_alive()
 
             # 记录本轮 tick 完成时间（供下次 sleep 计算）
-            from .clock import get_brain_clock
-            self._last_alive_at = get_brain_clock().now_iso_local()
+            self._last_alive_at = self._clock.now_iso_local()
 
     def _alive_tick(self) -> None:
         """一次意识流 tick。"""
@@ -222,11 +274,15 @@ class LifeScheduler:
         self._sleep(interval)
 
     # ── 昼夜节律 ─────────────────────────────────────────────
-    def _day_tick(self) -> dict:
+    def _day_tick(self, *, consolidate: bool = True) -> dict:
         """Day Tick：醒来仪式（无 LLM）。
 
         读身份文件 + 环境信息 → 构建初始 Working Memory。
         清空 internal_dialogue，触发每日记忆 consolidation。
+
+        Args:
+            consolidate: 是否触发每日记忆 consolidation。启动时重建 WM 传 False，
+                        避免每次重启都触发整理。清晨自然触发时才传 True。
         """
         wm = []
 
@@ -252,17 +308,25 @@ class LifeScheduler:
         from .clock import get_brain_clock
         self._last_day_tick_date = get_brain_clock().today_str()
 
-        # 5. 写入 tick 日志
+        # 5. 退出睡眠模式（新的一天，正式醒来）
+        if self._sleep_mode:
+            self._sleep_mode = False
+            self._last_alive_at = self._clock.now_iso_local()
+            logger.info("[scheduler] sleep_mode cleared by day_tick")
+
+        # 6. 写入 tick 日志
         try:
             from .tick_log import record_tick
             record_tick("day_tick", wm_count=len(wm))
         except Exception:
             pass
 
-        # 6. 触发每日 consolidation（后台线程，不阻塞）
-        self._enqueue_consolidation("daily")
+        # 7. 触发每日 consolidation（只在天亮自然触发时执行，重启时跳过）
+        if consolidate:
+            self._enqueue_consolidation("daily")
 
-        logger.info(f"[scheduler] day_tick done: {len(wm)} wm items")
+        logger.info(f"[scheduler] day_tick done: {len(wm)} wm items"
+                    + ("" if consolidate else " (no consolidation)"))
         return {"ok": True, "wm_count": len(wm)}
 
     def _maybe_day_tick(self) -> None:
@@ -280,6 +344,12 @@ class LifeScheduler:
         if today != self._last_day_tick_date:
             logger.info(f"[scheduler] day changed {self._last_day_tick_date} -> {today}")
             self._day_tick()
+        elif self._sleep_mode:
+            # 睡眠模式下 day_tick 必须 firing 来清除标记
+            # （重启后 startup day_tick 已设 _last_day_tick_date，导致
+            #  上方日期比较不成立，但 sleep_mode 还未被清除）
+            logger.info(f"[scheduler] day_tick forced (sleep_mode=True, date={today})")
+            self._day_tick()
 
     def _sleep_tick(self, *, reason: str = "deep_night") -> dict:
         """Sleep Tick：睡前仪式（无 LLM）。
@@ -287,13 +357,13 @@ class LifeScheduler:
         触发 consolidation + 清空 Working Memory。
 
         Args:
-            reason: 触发原因（"deep_night" / "scheduler_stop"）
+            reason: 触发原因（"deep_night" / "scheduler_stop" / "restart_during_sleep_hours"）
         """
         from .adapters.state import get_state_adapter
         state = get_state_adapter()
 
-        # 1. 触发记忆 consolidation
-        if get_brain_config().get("sleep_tick_consolidate", True):
+        # 1. 触发记忆 consolidation（重启检测时跳过，避免每次重启都整理）
+        if reason != "restart_during_sleep_hours" and get_brain_config().get("sleep_tick_consolidate", True):
             self._enqueue_consolidation("idle")
 
         # 2. 清空 Working Memory
@@ -315,6 +385,11 @@ class LifeScheduler:
         else:
             from datetime import timedelta
             self._last_sleep_session = (clock.now_local() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # 进入睡眠模式：意识流 tick 完全暂停，用户消息可唤醒
+        self._sleep_mode = True
+        self._woke_from_sleep = False  # 新一晚，还未被唤醒过
+        logger.info(f"[scheduler] sleep_mode=True (reason={reason})")
 
         logger.info(f"[scheduler] sleep_tick done (reason={reason})")
         return {"ok": True, "reason": reason}
@@ -345,6 +420,31 @@ class LifeScheduler:
             return  # 这一晚已经睡过
         logger.info(f"[scheduler] deep night detected, running sleep_tick")
         self._sleep_tick(reason="deep_night")
+
+    def _wake_context(self) -> None:
+        """从睡眠中唤醒：重建 Working Memory + 注入睡眠感知。
+
+        类似 Day Tick 的身份文件读取流程，但追加"被唤醒"标记，
+        让 AI 在下一轮 tick 中感知自己刚被从睡梦中叫醒。
+        """
+        wm = []
+        for fname in ("self.md", "goals.md", "open_loops.md"):
+            content = _read_identity_file(fname)
+            if content:
+                wm.append(content)
+        wm.extend(self._scan_environment())
+        wm.append("被志远从睡梦中唤醒了")
+
+        from .adapters.state import get_state_adapter
+        state = get_state_adapter()
+        state.replace_working_memory(wm)
+
+        def _wake_fn(stream):
+            stream["internal_dialogue"] = []
+            stream["last_thought"] = "（刚从睡梦中被志远唤醒）"
+        state.mutate_stream(_wake_fn)
+
+        logger.info("[scheduler] wake_context: user message woke me from sleep")
 
     def _scan_environment(self) -> list[str]:
         """打包环境信息：日期、时段、用户活跃度、最后聊天。
@@ -413,6 +513,8 @@ class LifeScheduler:
             try:
                 from .autonomous_mind import get_autonomous_mind
                 if get_autonomous_mind().has_pending_messages:
+                    logger.info(f"[scheduler] sleep interrupted by pending message "
+                                f"({seconds:.0f}s timer, {end - _t.monotonic():.0f}s remaining)")
                     break
             except Exception:
                 pass

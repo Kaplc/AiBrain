@@ -313,6 +313,7 @@ class LifeLoopDaemon:
 
         # 意识流决策（autonomous_mind 内循环）；tick 异常不阻断后续状态恢复
         from .autonomous_mind import get_autonomous_mind
+
         try:
             result = get_autonomous_mind().tick({"life_state": life_state, "dry_run": dry_run})
         except Exception as e:
@@ -349,6 +350,9 @@ class LifeLoopDaemon:
                     "last_error": "",
                     "thought_summary": str(result.get("thought", ""))[:200],
                 }
+                cycles = result.get("cycles", [])
+                if cycles:
+                    summary["cycles"] = cycles
                 if result.get("output"):
                     summary["consciousness_output"] = str(result["output"])[:120]
                 get_event_log().append_run(summary)

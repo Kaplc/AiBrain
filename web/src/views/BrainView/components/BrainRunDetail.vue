@@ -15,11 +15,21 @@ function argsText(c: BrainCycle): string {
   if (a == null) return ''
   try { return typeof a === 'string' ? a : JSON.stringify(a, null, 2) } catch { return String(a) }
 }
+function cycleIdx(c: BrainCycle): number {
+  return c.cycle ?? c.cycle_index
+}
+function cycleThought(c: BrainCycle): string {
+  return c.thought || c.thought_summary || ''
+}
+function isConsciousness(c: BrainCycle): boolean {
+  return c.cycle !== undefined || ['think','speak','rest','create_activity','set_activity','use_tool'].includes(c.action || '')
+}
 function actionCls(action?: string): string {
   if (!action) return ''
-  if (action === 'final_reply' || action === 'create_pending') return 'ax-send'
-  if (action === 'recall_memory' || action === 'use_tool') return 'ax-active'
-  if (action === 'sleep') return 'ax-idle'
+  if (action === 'final_reply' || action === 'create_pending' || action === 'speak') return 'ax-send'
+  if (['recall_memory','use_tool','memory_search','web_search','read_file','grep_search','store_memory','list_files'].includes(action)) return 'ax-active'
+  if (['think','rest','wait'].includes(action)) return 'ax-idle'
+  if (['create_activity','set_activity'].includes(action)) return 'ax-create'
   if (action === 'abort' || action === 'error') return 'ax-err'
   return ''
 }
@@ -58,25 +68,38 @@ function actionCls(action?: string): string {
 
       <!-- cycle 时间线 -->
       <div class="timeline" v-if="vm.selectedRun.value.cycles?.length" data-testid="brain-cycle-timeline">
-        <div v-for="c in vm.selectedRun.value.cycles" :key="c.cycle_index" class="cycle" data-testid="brain-cycle-item">
-          <div class="cy-dot"></div>
+        <div v-for="c in vm.selectedRun.value.cycles" :key="cycleIdx(c)" class="cycle" data-testid="brain-cycle-item">
+          <div class="cy-dot" :class="actionCls(c.action)"></div>
           <div class="cy-body">
             <div class="cy-top">
-              <span class="cy-idx">#{{ c.cycle_index }}</span>
+              <span class="cy-idx">#{{ cycleIdx(c) }}</span>
               <span class="cy-action" :class="actionCls(c.action)" v-if="c.action">{{ c.action }}</span>
+              <!-- 旧 reactive 字段 -->
               <span class="cy-conf" v-if="typeof c.confidence === 'number'">置信 {{ vm.formatScore(c.confidence) }}</span>
               <span class="cy-lat" v-if="typeof c.latency_ms === 'number' && c.latency_ms > 0">{{ Math.round(c.latency_ms) }}ms</span>
               <span class="cy-flag" v-if="c.reply_ready">待回复</span>
             </div>
-            <div class="cy-thought" v-if="c.thought_summary">{{ c.thought_summary }}</div>
+            <!-- 新 consciousness 字段 -->
+            <div class="cy-tool" v-if="isConsciousness(c) && c.tool_name">
+              <span class="k">tool</span>{{ c.tool_name }}<span v-if="c.tool_args">({{ c.tool_args }})</span>
+            </div>
+            <div class="cy-activity" v-if="isConsciousness(c) && c.activity">
+              <span class="k">activity</span>{{ c.activity }}<span v-if="c.activity_context">: {{ c.activity_context }}</span>
+            </div>
+            <div class="cy-content" v-if="isConsciousness(c) && c.content">
+              <span class="k">speak</span>{{ c.content }}
+            </div>
+            <!-- 思考内容（兼容新旧字段名） -->
+            <div class="cy-thought" v-if="cycleThought(c)">{{ cycleThought(c) }}</div>
+            <!-- 旧 reactive 字段 -->
             <div class="cy-focus" v-if="c.focus"><span class="k">focus</span>{{ c.focus }}</div>
             <div class="cy-result" v-if="c.result_summary"><span class="k">result</span>{{ c.result_summary }}</div>
             <div class="cy-err" v-if="c.error">⚠ {{ c.error }}</div>
 
-            <button v-if="c.action_args && Object.keys(c.action_args).length" class="toggle" @click="toggleArgs(c.cycle_index)">
-              {{ expandedArgs[c.cycle_index] ? '▾ 收起参数' : '▸ 展开参数' }}
+            <button v-if="c.action_args && Object.keys(c.action_args).length" class="toggle" @click="toggleArgs(cycleIdx(c))">
+              {{ expandedArgs[cycleIdx(c)] ? '▾ 收起参数' : '▸ 展开参数' }}
             </button>
-            <pre v-if="c.action_args && Object.keys(c.action_args).length && expandedArgs[c.cycle_index]" class="cy-args">{{ argsText(c) }}</pre>
+            <pre v-if="c.action_args && Object.keys(c.action_args).length && expandedArgs[cycleIdx(c)]" class="cy-args">{{ argsText(c) }}</pre>
           </div>
         </div>
       </div>
@@ -131,12 +154,17 @@ function actionCls(action?: string): string {
 .cy-action.ax-send { color: #86efac; background: #22c55e22; }
 .cy-action.ax-active { color: #93c5fd; background: #60a5fa22; }
 .cy-action.ax-idle { color: #fde68a; background: #eab30822; }
+.cy-action.ax-create { color: #c4b5fd; background: #7c3aed22; }
 .cy-action.ax-err { color: #fca5a5; background: #ef444422; }
+.cy-dot.ax-active { background: #60a5fa; }
+.cy-dot.ax-send { background: #22c55e; }
+.cy-dot.ax-create { background: #7c3aed; }
+.cy-dot.ax-idle { background: #eab308; }
 .cy-conf, .cy-lat { font-size: 9px; color: #64748b; }
 .cy-flag { font-size: 9px; color: #a78bfa; border: 1px solid #7c3aed55; border-radius: 3px; padding: 0 5px; }
 .cy-thought { font-size: 12px; color: #e2e8f0; }
-.cy-focus, .cy-result { font-size: 11px; color: #94a3b8; word-break: break-word; }
-.cy-focus .k, .meta-line .k { color: #64748b; margin-right: 5px; font-size: 10px; }
+.cy-focus, .cy-result, .cy-tool, .cy-activity, .cy-content { font-size: 11px; color: #94a3b8; word-break: break-word; }
+.cy-tool .k, .cy-activity .k, .cy-content .k, .cy-focus .k, .meta-line .k { color: #64748b; margin-right: 5px; font-size: 10px; }
 .cy-err { font-size: 11px; color: #fca5a5; }
 
 .toggle { align-self: flex-start; background: none; border: none; color: #7c3aed; font-size: 10px; cursor: pointer; padding: 2px 0; }

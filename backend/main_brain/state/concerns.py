@@ -15,7 +15,7 @@ bias：搜索时记忆若命中高 concern 实体 → 加 concern_bias（见 gra
 import logging
 
 from .store import get_state
-from . import times
+from .. import clock
 
 logger = logging.getLogger('state.concerns')
 
@@ -46,7 +46,7 @@ class ConcernManager:
         with self._state.transaction() as data:
             concerns = data.setdefault("concerns", [])
             entry = next((c for c in concerns if c.get("node_id") == node_id), None)
-            now_iso = times.now_iso()
+            now_iso = clock.now_iso()
             if entry is None:
                 entry = {
                     "node_id": node_id,
@@ -79,7 +79,7 @@ class ConcernManager:
         if not entry:
             return 0.0
         base = entry.get("base_activation", 0.0)
-        days = times.days_since(entry.get("last_activated"))
+        days = clock.days_since(entry.get("last_activated"))
         return round(base * (DECAY_PER_DAY ** days), 4)
 
     def get_dormancy(self, node_id: str) -> float:
@@ -88,7 +88,7 @@ class ConcernManager:
         entry = next((c for c in data.get("concerns", []) if c.get("node_id") == node_id), None)
         if not entry:
             return 1.0
-        hours = times.hours_since(entry.get("last_activated"))
+        hours = clock.hours_since(entry.get("last_activated"))
         return round(min(1.0, hours / 24.0), 4)
 
     def concern_map(self) -> dict[str, float]:
@@ -148,7 +148,7 @@ class ConcernManager:
             kept = []
             for c in concerns:
                 base = c.get("base_activation", 0.0)
-                days = times.days_since(c.get("last_activated"))
+                days = clock.days_since(c.get("last_activated"))
                 eff = base * (DECAY_PER_DAY ** days)
                 if eff < EFFECTIVE_REMOVE_THRESHOLD and days > DORMANCY_DAYS_REMOVE:
                     removed += 1

@@ -14,7 +14,7 @@ uncertainty 由问句词估算：为什么/怎么→0.9，是不是/能不能→
 import logging
 
 from .store import get_state
-from . import times
+from .. import clock
 
 logger = logging.getLogger('state.open_loops')
 
@@ -75,18 +75,18 @@ class OpenLoopManager:
                     continue
                 if _jaccard(node_ids, loop.get("node_ids", [])) > MERGE_JACCARD_THRESHOLD:
                     loop["thought_count"] = loop.get("thought_count", 1) + 1
-                    loop["last_thought_at"] = times.now_iso()
+                    loop["last_thought_at"] = clock.now_iso()
                     logger.info(f"[open_loops] merge into existing {loop.get('id')} (Jaccard>{MERGE_JACCARD_THRESHOLD})")
                     return loop
 
             loop = {
-                "id": f"loop_{times.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
+                "id": f"loop_{clock.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
                 "content": content,
                 "node_ids": node_ids,
                 "uncertainty": _estimate_uncertainty(content),
-                "last_thought_at": times.now_iso(),
+                "last_thought_at": clock.now_iso(),
                 "thought_count": 1,
-                "created_at": times.now_iso()[:10],
+                "created_at": clock.now_iso()[:10],
                 "status": "open",
             }
             loops.append(loop)
@@ -140,7 +140,7 @@ class OpenLoopManager:
             for loop in data.get("open_loops", []):
                 if loop.get("id") == loop_id:
                     loop["thought_count"] = loop.get("thought_count", 1) + 1
-                    loop["last_thought_at"] = times.now_iso()
+                    loop["last_thought_at"] = clock.now_iso()
                     return True
         return False
 

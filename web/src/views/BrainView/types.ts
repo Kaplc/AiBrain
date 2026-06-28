@@ -84,18 +84,27 @@ export interface BrainRunSummary {
 }
 
 // ── 单轮 cycle（BrainCycle.to_dict，/brain/runs/<id>.cycles[]）──────────────
+// 兼容旧 reactive 循环（cycle_index/thought_summary）和新 consciousness 循环（cycle/thought/tool_name）
 export interface BrainCycle {
   cycle_index: number
-  thought_summary?: string
+  cycle?: number              // 新 consciousness 循环编号
+  thought_summary?: string    // 旧
+  thought?: string            // 新
   focus?: string
   action?: string
   action_args?: any
-  result_summary?: string
+  result_summary?: string     // 旧
   reply_ready?: boolean
   notify_candidate?: any
   confidence?: number
   latency_ms?: number
   error?: string
+  // 新 consciousness 字段
+  tool_name?: string
+  tool_args?: string
+  activity?: string
+  activity_context?: string
+  content?: string            // speak 时输出
 }
 
 // ── run 详情（BrainRun.to_full，/brain/runs/<id>）──────────────────────────

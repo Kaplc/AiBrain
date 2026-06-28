@@ -27,13 +27,20 @@ def _log_reply_event(text: str, source_event_id: str, trace_id: str = "") -> Non
 
 
 def _write_chat_history(user_msg: str, reply_text: str) -> None:
-    """把本轮对话追加到 _conversation_history（不写 output.json，由 loop.py 负责）。"""
+    """把本轮对话追加到 _conversation_history + 通知意识流（不写 output.json，由 loop.py 负责）。"""
     if not reply_text:
         return
     try:
         from modules.chat.loop import _conversation_history
         _conversation_history.append({"role": "user", "content": user_msg})
         _conversation_history.append({"role": "assistant", "content": reply_text})
+    except Exception:
+        pass
+
+    # 通知意识流：记录对话摘要 + 重置 _rest_streak（替代旧的 handle_user_message 入队路径）
+    try:
+        from main_brain.autonomous_mind import get_autonomous_mind
+        get_autonomous_mind().record_conversation(user_msg, reply_text)
     except Exception:
         pass
 
@@ -167,9 +174,10 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[chat] event creation skipped (non-fatal): {e}")
 
-        # ── T002/T003: 大脑优先 SSE 流 ─────────────────────────
-        # SSE start 立即返回（不等大脑处理）
-        # 然后 generate() 内部尝试 brain-first → 有 final_reply 则直接输出 → 否则 fallback
+        # ── 意识流路径：消息入队 → alive_tick 处理 → output_mem 变化检测 ──
+        # ChatManager 不再单独调 LLM，所有消息经由 handle_user_message 入队，
+        # 由后台 scheduler 在下一次 alive_tick 中处理，AI 自主决定 speak/think/rest。
+        # SSE 通过轮询 output_mem 检测 AI 的回应。
 
         from modules.chat import ChatManager
         mgr = ChatManager.get_instance()
@@ -183,84 +191,53 @@ def register(app, ready_state, logger, stats_db):
 
         def generate():
             yield f"data: {json.dumps({'type': 'start'})}\n\n"
-            token_count = 0
 
-            # 1. 尝试大脑主链路
-            brain_reply = None
-            brain_session_ok = False
-            _brain_result = None
+            # ── 1. 消息入队，等 consciousness tick 处理 ──
             try:
-                from main_brain.config import get_brain_config as _get_bc
                 from main_brain import get_brain_session
-                if _get_bc().get_chat_mode() == _get_bc().CHAT_MODE_BRAIN_FIRST:
-                    brain = get_brain_session().run_reactive(user_msg)
-                    if _event_id:
-                        brain["event_id"] = _event_id
-                    _brain_result = brain
-                    _strategy = brain.get("reply_strategy") or {}
-                    _reply_text = ""
-                    if isinstance(_strategy, dict):
-                        _reply_text = _strategy.get("final_reply") or _strategy.get("text") or ""
-                    if _reply_text:
-                        brain_reply = _reply_text
-                        brain_session_ok = True
-                        logger.info(f"[chat] brain-first: run={brain.get('run_id')}")
-                    else:
-                        logger.info(f"[chat] brain-first: no final_reply, fallback with brain context")
+                get_brain_session().run_reactive(user_msg)
+                logger.info(f"[chat] queued for consciousness: msg={user_msg[:40]}")
             except Exception as e:
-                logger.warning(f"[chat] brain-first failed (fallback): {e}")
+                logger.warning(f"[chat] queue failed: {e}")
 
-            # 2. 大脑有回复 → 直接输出
-            if brain_session_ok and brain_reply:
-                yield f"data: {json.dumps({'type': 'token', 'content': brain_reply})}\n\n"
-                token_count += 1
-                _log_reply_event(brain_reply, _event_id or "", _event_trace_id or "")
-                _write_chat_history(user_msg, brain_reply)
-                logger.info(f"[chat] brain-first done: tokens={token_count}")
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            # ── 2. output_mem 变化检测：等 AI 回应 ──
+            _reply_text = ""
+            try:
+                from main_brain.memory.workmemory import get_work_memory
+                wm = get_work_memory()
+                before = len(wm.output_mem_read())
+            except Exception:
+                before = 0
+
+            import time as _t
+            _deadline = _t.time() + 120  # 最长等 2 分钟
+            while _t.time() < _deadline:
                 try:
-                    from modules.chat import ChatManager as _CM
-                    _CM.get_instance().set_status("")
+                    entries = get_work_memory().output_mem_read()
+                    if len(entries) > before:
+                        _new = entries[-1]
+                        _reply_text = str(_new.get("assistant") or _new.get("content") or "")
+                        if _reply_text:
+                            logger.info(f"[chat] consciousness response: {_reply_text[:60]}")
+                            break
                 except Exception:
                     pass
-                return
+                _t.sleep(0.5)
 
-            # 3. Fallback：旧 ChatManager.send()（保留 brain 上下文注入 prompt）
-            # 记忆检索已在 controller BrainCycleRunner.run() 的 auto-recall 环节完成
-            mgr.set_brain_context(_brain_result or {"fallback": True})
-            _fallback_text = ""
-            try:
-                for event in mgr.send(user_msg):
-                    t = event.get('type')
-                    if t == 'token':
-                        token_count += 1
-                        _fallback_text += event.get('content', '')
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t in ('memory_step', 'tool_call', 'tool_history', 'token_estimate'):
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'usage':
-                        yield f"data: {json.dumps(event)}\n\n"
-                    elif t == 'done':
-                        logger.info(f"[chat] fallback done: tokens={token_count}")
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                        break
-                    elif t == 'error':
-                        logger.error(f"[chat] fallback error: {event.get('message')}")
-                        yield f"data: {json.dumps(event)}\n\n"
-                        break
-            except Exception as e:
-                logger.error(f"[chat/send] fallback stream error: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-            finally:
-                if _fallback_text:
-                    _log_reply_event(_fallback_text, _event_id or "", _event_trace_id or "")
-                    _write_chat_history(user_msg, _fallback_text)
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            # ── 3. SSE 输出 ──
+            if _reply_text:
+                yield f"data: {json.dumps({'type': 'token', 'content': _reply_text})}\n\n"
+                _log_reply_event(_reply_text, _event_id or "", _event_trace_id or "")
+                _write_chat_history(user_msg, _reply_text)
+            else:
+                logger.warning(f"[chat] no response from consciousness within 120s")
+                yield f"data: {json.dumps({'type': 'error', 'message': 'no response'})}\n\n"
 
-            # 清除 busy 状态，让大脑恢复后台活动
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            # 清除 busy 状态
             try:
-                from modules.chat import ChatManager as _CM
-                _CM.get_instance().set_status("")
+                mgr.set_status("")
             except Exception:
                 pass
 

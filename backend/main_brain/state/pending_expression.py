@@ -22,7 +22,7 @@ import logging
 import threading
 
 from .store import get_state
-from . import times
+from .. import clock
 
 logger = logging.getLogger('state.pending')
 
@@ -138,12 +138,12 @@ class PendingExpressionManager:
                         p["note"] = note
                     return False  # 已存在，未新增
             entry = {
-                "id": f"pe_{times.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
+                "id": f"pe_{clock.now_iso().replace(':', '').replace('-', '').replace('+', '')}",
                 "type": type_,
                 "source_node_id": source_node_id,
                 "expression_score": round(float(expression_score), 4),
                 "source": source,
-                "created_at": times.now_iso(),
+                "created_at": clock.now_iso(),
                 "expressed": False,
             }
             if note:
@@ -164,7 +164,7 @@ class PendingExpressionManager:
 
     def _age_score(self, pending: dict) -> float:
         """运行时 age_score = min(1.0, hours_since_created × 0.01)。"""
-        hours = times.hours_since(pending.get("created_at"))
+        hours = clock.hours_since(pending.get("created_at"))
         return min(1.0, hours * AGE_GROWTH_PER_HOUR)
 
     def _last_send_iso(self) -> str:
@@ -212,8 +212,8 @@ class PendingExpressionManager:
 
         # 距上次发送 < 1h → 不发
         last = self._last_send_iso()
-        if last and times.hours_since(last) < SEND_MIN_INTERVAL_HOURS:
-            hours_left = SEND_MIN_INTERVAL_HOURS - times.hours_since(last)
+        if last and clock.hours_since(last) < SEND_MIN_INTERVAL_HOURS:
+            hours_left = SEND_MIN_INTERVAL_HOURS - clock.hours_since(last)
             logger.info(f"[pending] pick_to_send: cooldown active, {hours_left:.1f}h remaining")
             return None
 

@@ -29,6 +29,8 @@ logger = logging.getLogger("main_brain.mind")
 _PROMPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts", "autonomous_mind.md")
 _ACTIVITIES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activities", "activity")
 _ACTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activities", "action")
+_PROJECT_ROOT = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
 # ── 动作描述缓存（模块级单次加载）────────────────────────────
 _ACTION_DESCRIPTIONS_CACHE: list[str] | None = None
@@ -184,7 +186,7 @@ _TERMINAL_ACTIONS = {"rest"}
 
 # 暴露给 AI 的工具说明（prompt 里也列了，这里供观测/日志）
 AVAILABLE_TOOLS = {
-    "read_file": "读取项目文件内容（相对路径）",
+    "read_file": "读取项目文件内容（相对路径），支持 path:offset,limit 指定行范围",
     "grep_search": "在代码库中按正则搜索内容",
     "memory_search": "在自己的长期记忆中搜索",
     "web_search": "搜索互联网获取新信息",
@@ -221,7 +223,7 @@ class AutonomousMind:
 
         # 2. 感知信号注入上下文
         loop_ctx = {"cycle": 0, "tool_results": {}, "last_result": "",
-                    "accumulated": [], "stuck": 0}
+                    "accumulated": [], "stuck": 0, "cycles_data": []}
         max_cycles = int(get_brain_config().get("consciousness_max_cycles", 30))
 
         # 内部循环：连续 use_tool 多轮，直到终止动作或卡住
@@ -235,6 +237,29 @@ class AutonomousMind:
             context = self._build_context(ctx, loop_ctx, signals)
             decision = self._llm_decide(context, dry_run=dry_run)
             action = str(decision.get("action", "rest")).strip()
+            # 每个周期日志：动作 + 详情 + 当前活动
+            detail = decision.get("action_detail", "") or decision.get("tool_name", "") or ""
+            cur_activity = context.get("activities", "")[:60].replace("\n", " ")
+            logger.info(
+                f"[mind] cycle {loop_ctx['cycle']}: {action}"
+                + (f" ({detail[:40]})" if detail else "")
+                + (f" | activity: {cur_activity}" if "当前：" in cur_activity else "")
+            )
+            # 记录 cycle 轨迹（供前端回放）
+            cycle_rec = {
+                "cycle": loop_ctx["cycle"],
+                "action": action,
+                "thought": str(decision.get("thought", ""))[:200],
+            }
+            if action == "use_tool":
+                cycle_rec["tool_name"] = str(decision.get("tool_name", ""))
+                cycle_rec["tool_args"] = str(decision.get("tool_args", ""))[:100]
+            elif action in ("create_activity", "set_activity"):
+                cycle_rec["activity"] = str(decision.get("action_detail", ""))
+                cycle_rec["activity_context"] = str(decision.get("activity_context", ""))[:200]
+            elif action == "speak":
+                cycle_rec["content"] = str(decision.get("action_detail", ""))[:200]
+            loop_ctx["cycles_data"].append(cycle_rec)
 
             # use_tool：执行并把结果注入下一轮（继续循环）
             if action == "use_tool":
@@ -357,6 +382,7 @@ class AutonomousMind:
             "mood": stream.get("mood", "平静"),
             "user_message": self._drain_message_queue() if not ctx.get("dry_run") else "",
             "recent_conversation": self._recent_chat(),
+            "dialogue_history": self._dialogue_for_prompt(stream),
             "memory_surfaced": self._recall(focus or last_thought),
             "concerns": self._concerns_snapshot(),
             "already_said": self._recent_outputs(),
@@ -434,6 +460,7 @@ class AutonomousMind:
              f"- 你在意的事：{context.get('concerns')}\n"
              f"- 环境变化：{context.get('perceive_signals')}"),
             f"【最近聊天】\n{context.get('recent_conversation')}",
+            f"【对话记录】\n{context.get('dialogue_history')}",
             f"【最近说过的话（最好别重复）】\n{context.get('already_said')}",
             f"【工作记忆（当前在意的几件事）】\n{context.get('working_memory')}",
             f"【你可以做的事】\n{chr(10).join(_get_action_descriptions()) or '（暂无可用动作）'}",
@@ -468,7 +495,41 @@ class AutonomousMind:
                 res = store_memory(args_raw, memory_meta={"source": "consciousness"})
                 result = res.get("result", "已记住") if isinstance(res, dict) else str(res)
             elif tool_name == "read_file":
-                result = self._tools.call("read_file", {"path": args_raw})
+                # 支持 path:offset,limit 格式，避免整篇文件全读
+                _path = args_raw
+                _offset = None
+                _limit = None
+                if ":" in args_raw:
+                    parts = args_raw.rsplit(":", 1)
+                    _path = parts[0]
+                    _range = parts[1].replace(" ", "")
+                    if "," in _range:
+                        try:
+                            _offset = int(_range.split(",", 1)[0])
+                            _limit = int(_range.split(",", 1)[1])
+                        except ValueError:
+                            pass
+                    else:
+                        try:
+                            _offset = int(_range)
+                        except ValueError:
+                            pass
+                _read_args = {"path": _path}
+                if _offset is not None:
+                    _read_args["offset"] = _offset
+                if _limit is not None:
+                    _read_args["limit"] = _limit
+                result = self._tools.call("read_file", _read_args)
+                # 在结果前附加文件总行数，供 AI 自行判断是否继续读
+                if result and not result.startswith("Error"):
+                    try:
+                        _full_path = os.path.join(
+                            _PROJECT_ROOT, _path)
+                        with open(_full_path, "r", encoding="utf-8") as _f:
+                            _total = sum(1 for _ in _f)
+                        result = f"=== {_path} (总共 {_total} 行) ===\n\n{result}"
+                    except Exception:
+                        pass
             elif tool_name == "grep_search":
                 result = self._tools.call("file_search", {"pattern": args_raw, "target": "content"})
             elif tool_name == "memory_search":
@@ -488,7 +549,7 @@ class AutonomousMind:
             result = f"工具执行失败：{e}"
 
         loop_ctx["tool_results"][cache_key] = result
-        return str(result)[:1500]
+        return str(result)
 
     # ── 终止动作执行 ───────────────────────────────────────
     def _execute(self, decision: dict, dry_run: bool) -> None:
@@ -510,10 +571,6 @@ class AutonomousMind:
                 return
             if dry_run:
                 return
-            if self._within_speak_cooldown():
-                logger.info("[mind] speak suppressed by cooldown -> save thought only")
-                self._save_stream(thought=f"想说但冷却中：{content}", mood=mood, dialogue=content)
-                return
             self._write_output(content)
             self._state.mark_proactive_contact()
             self._save_stream(thought=f"跟志远说了：{content}", mood=mood, dialogue=content)
@@ -526,14 +583,23 @@ class AutonomousMind:
         if not dry_run and thought:
             self._save_stream(thought=thought, mood=mood)
 
-    def _finish(self, action: str, decision: dict, loop_ctx: dict) -> dict:
+    def _finish(self, action: str, decision: dict, loop_ctx: dict,
+                llm_skipped: bool = False) -> dict:
+        cycles = loop_ctx["cycle"] + 1
+        tools = len(loop_ctx["tool_results"])
+        logger.info(
+            f"[mind] finish: {action} | {cycles} cycles, {tools} tools"
+            + (f" | llm_skipped={llm_skipped}" if llm_skipped else "")
+            + (f" | {str(decision.get('thought',''))[:80]}" if decision.get("thought") else "")
+        )
         return {
             "action": action,
             "output": str(decision.get("action_detail", "")) if action == "speak" else "",
             "thought": str(decision.get("thought", "")),
-            "cycle_count": loop_ctx["cycle"] + 1,
-            "tool_calls": len(loop_ctx["tool_results"]),
-            "llm_skipped": False,
+            "cycle_count": cycles,
+            "tool_calls": tools,
+            "llm_skipped": llm_skipped,
+            "cycles": list(loop_ctx.get("cycles_data", [])),
         }
 
     # ── 跨 tick 活动 ───────────────────────────────────────
@@ -627,8 +693,11 @@ class AutonomousMind:
     def _drain_message_queue(self) -> str:
         """从消息队列取出一条。没消息返回空串。"""
         if not self._message_queue:
+            self._current_user_msg = ""
             return ""
         msg = self._message_queue.pop(0)
+        self._current_user_msg = msg  # 缓存，供 _write_output 传 user_prompt
+        logger.info(f"[mind] processing user message: {msg[:60]}")
         self._state.mark_user_contact()
         self._state.set_loop_status("chatting", activity="respond", focus=msg[:40])
         # 记录到 stream 让上下文连贯
@@ -669,8 +738,9 @@ class AutonomousMind:
 
     def _write_output(self, content: str) -> None:
         try:
+            user_msg = getattr(self, '_current_user_msg', '')
             from main_brain.memory.workmemory import get_work_memory
-            get_work_memory().output_mem_write(content=content)
+            get_work_memory().output_mem_write(content=content, user_prompt=user_msg)
         except Exception as e:
             logger.warning(f"[mind] write output failed: {e}")
 
@@ -729,6 +799,18 @@ class AutonomousMind:
         if not wm:
             return "（暂无）"
         return "\n".join(f"- {str(item)[:100]}" for item in wm)
+
+    @staticmethod
+    def _dialogue_for_prompt(stream: dict, limit: int = 6) -> str:
+        """从 stream internal_dialogue 读取对话记录，供 prompt 注入。
+
+        record_conversation() 把完整对话写入 internal_dialogue，
+        这里读回来让 AI 感知上下文。
+        """
+        dialogue = stream.get("internal_dialogue") or []
+        if not dialogue:
+            return "（暂无对话记录）"
+        return "\n".join(str(d)[:150] for d in dialogue[-limit:])
 
     @staticmethod
     def _signals_for_prompt(signals: dict) -> str:

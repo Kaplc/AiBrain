@@ -13,10 +13,10 @@ logger = logging.getLogger("main_brain.session")
 
 
 class BrainSession:
-    """消息入队中转站 —— 不调 tick，只把消息放队列等 alive tick 处理。"""
+    """消息入队中转站 —— 入队后等 alive tick 处理，ChatManager 不再单独调 LLM。"""
 
     def run_reactive(self, user_msg: str, **_) -> dict:
-        """用户消息入队，交给 alive tick 处理。不再同步调 tick。"""
+        """用户消息入队，交给 alive tick 处理。"""
         try:
             from .autonomous_mind import get_autonomous_mind
             get_autonomous_mind().handle_user_message(user_msg)
