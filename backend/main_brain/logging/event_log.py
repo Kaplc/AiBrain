@@ -29,6 +29,11 @@ _LOG_PATH = os.path.join(_LOG_DIR, "brain_runs.jsonl")
 # 内存 ring buffer 上限（够 /chat/state 与 runs/recent 用，不占太多内存）
 _RECENT_CAP = 200
 
+# 保留天数：超过此天数的旧记录将被删除
+_RETENTION_DAYS = 5
+# 写入计数器，每 N 次写入触发一次过期清理（避免每次写入都读文件）
+_TRIM_CHECK_INTERVAL = 5
+
 
 class BrainEventLog:
     """brain run 事件日志单例（JSONL 落盘 + 内存 ring buffer）。"""
@@ -39,6 +44,9 @@ class BrainEventLog:
     def __init__(self):
         self._lock = threading.Lock()
         self._recent: deque[dict] = deque(maxlen=_RECENT_CAP)
+        self._write_count = 0
+        # 启动时执行一次过期清理（比只靠写入计数器更可靠）
+        self._maybe_trim()
 
     @classmethod
     def get_instance(cls) -> "BrainEventLog":
@@ -71,6 +79,41 @@ class BrainEventLog:
         line = json.dumps(record, ensure_ascii=False, default=str)
         with open(_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+        self._write_count += 1
+        if self._write_count % _TRIM_CHECK_INTERVAL == 0:
+            self._maybe_trim()
+
+    def _maybe_trim(self) -> None:
+        """删除超过 _RETENTION_DAYS 天的旧记录。"""
+        if not os.path.exists(_LOG_PATH):
+            return
+        try:
+            with open(_LOG_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            if not lines:
+                return
+            from datetime import timedelta
+            old_date = (datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)).strftime("%Y-%m-%d")
+
+            keep_lines = []
+            removed = 0
+            for line in lines:
+                try:
+                    rec = json.loads(line.strip())
+                    ts = rec.get("logged_at") or rec.get("started_at") or ""
+                    if ts and ts[:10] <= old_date:
+                        removed += 1
+                        continue
+                except Exception:
+                    pass
+                keep_lines.append(line)
+
+            if removed > 0:
+                with open(_LOG_PATH, "w", encoding="utf-8") as f:
+                    f.writelines(keep_lines)
+                logger.info("[event_log] purged %d records older than %s", removed, old_date)
+        except Exception as e:
+            logger.warning("[event_log] trim failed: %s", e)
 
     # ── 读取 ─────────────────────────────────────────────────
     def recent_runs(self, limit: int = 20, mode: str | None = None) -> list[dict]:

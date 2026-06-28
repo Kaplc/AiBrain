@@ -47,7 +47,8 @@ DEFAULT_BRAIN = {
     # 输出记忆沉淀（memory_consolidation）
     # 总开关默认关：自动沉淀会调 LLM + 写长时记忆，确认无碍后再打开。manual 接口始终可用。
     "memory_consolidation_enabled": True,
-    "memory_consolidation_daily_tick": True,    # 日 tick 沉淀
+    "memory_consolidation_daily_tick": True,    # 日 tick 沉淀（每日 1 次）
+    "memory_consolidation_idle_tick": True,     # long_tick 沉淀（约每小时 1 次）
     "memory_consolidation_window_size": 20,      # 单次扫描窗口
 
     # 自主学习（self_learn）
@@ -67,6 +68,35 @@ DEFAULT_BRAIN = {
     "arbiter_threshold": 0.55,                   # 规则式 selector 置信度低于此值时触发仲裁
     "arbiter_temperature": 0.4,                  # 仲裁 LLM temperature（略高于 judge）
     "arbiter_timeout_seconds": 15,               # 单次仲裁超时
+
+    # 意识流自主决策循环（autonomous_mind）— 取代旧的四种 tick
+    "consciousness_tick_seconds": 1800,          # 意识流 tick 间隔（30 分钟）
+    "consciousness_max_cycles": 30,              # 单次 tick 内循环上限（防无限循环）
+    "consciousness_rest_streak_max": 3,          # 连续 rest 达到此值后跳过 LLM（省 token）
+    "consciousness_temperature": 0.6,            # 意识流 LLM temperature（略高，鼓励自主性）
+    "consciousness_timeout_seconds": 25,         # 单次决策 LLM 超时
+    "consciousness_speak_cooldown_minutes": 15,  # 主动说话冷却（分钟）
+    "consciousness_dialogue_cap": 8,             # internal_dialogue 保留条数
+    "consciousness_activities_cap": 10,          # 长期活动保留条数
+    # 自动记忆沉淀改为时间触发（旧 long_tick/daily_tick 触发已废弃）
+    "consciousness_consolidate_idle_minutes": 60,   # 约每小时沉淀一次
+    "consciousness_consolidate_daily_minutes": 1440,  # 约每天沉淀一次
+
+    # ── 昼夜节律（Day Tick / Sleep Tick）──────────────────────
+    "day_tick_enabled": True,                    # Day Tick 总开关
+    "day_tick_hour_start": 6,                    # Day Tick 触发起始小时（24h）
+    "day_tick_hour_end": 8,                      # Day Tick 触发结束小时
+    "sleep_tick_enabled": True,                  # Sleep Tick 总开关
+    "sleep_tick_hour_start": 23,                 # Sleep Tick 触发起始小时
+    "sleep_tick_hour_end": 2,                    # Sleep Tick 触发结束小时（跨天）
+    "sleep_tick_consolidate": True,              # Sleep Tick 时是否触发记忆 consolidation
+
+    # ── Working Memory ───────────────────────────────────────
+    "working_memory_capacity": 6,                # Working Memory 容量（4±2 条）
+    "alive_attention_enabled": True,             # 是否启用感知→Attention 门
+
+    # ── Prompt 身份文件路径 ──────────────────────────────────
+    "identity_dir": "prompts/identity",          # AI 可编辑的身份描述文件目录
 }
 
 

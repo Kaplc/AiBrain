@@ -9,7 +9,7 @@ allowed_tools: []
 conditions: {}
 ---
 
-# 等待活动
+# 等待活动（AI 执行指引）
 
-默认 fallback 活动。不做任何 LLM 调用，只更新 idle_seconds 和 energy。
-short_tick 固定返回 wait。
+什么都不做，安静待着。没有值得做的事时直接 `rest` 就好。
+不需要调用任何工具，不需要思考，安静休息即可。

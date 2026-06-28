@@ -94,6 +94,15 @@ def default_life_state() -> dict:
         "goals": [],
         "recent_thoughts": [],
         "pending_expressions": [],
+        # 意识流：跨 tick 的内心状态（autonomous_mind 读写）
+        "stream_of_consciousness": {
+            "last_thought": "",       # 上次在想什么（供延续）
+            "mood": "平静",           # 当前情绪
+            "focus": "",              # 正在关注什么
+            "internal_dialogue": [],  # 最近几轮内心独白
+            "activities": [],         # 自主创建的跨 tick 活动
+            "working_memory": [],     # 当前工作记忆（4±2 条，Day Tick 构建，Sleep Tick 清空）
+        },
         "relationship_context": {},
         "self_narrative_summary": "",
         "last_proactive_contact_at": "",
@@ -499,7 +508,7 @@ class BrainCycleContext:
 
 def _new_event_id() -> str:
     import hashlib
-    from main_brain.state import times
+    from main_brain import clock as times
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     suffix = hashlib.md5(stamp.encode()).hexdigest()[:6]
     return f"evt_{stamp}_{suffix}"
@@ -507,7 +516,7 @@ def _new_event_id() -> str:
 
 def _new_trace_id() -> str:
     import hashlib
-    from main_brain.state import times
+    from main_brain import clock as times
     stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
     suffix = hashlib.md5(stamp.encode()).hexdigest()[:8]
     return f"trace_{stamp}_{suffix}"

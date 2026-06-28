@@ -175,10 +175,11 @@ class PendingExpressionManager:
 
     @staticmethod
     def _topic_recently_expressed(topic: str) -> bool:
-        """检查 topic 是否在 output.json 最新一条 assistant 中出现过。
+        """检查 topic 是否在 output.json 最近 N 条 assistant 中出现过。
 
         用于 proactive_send 发送前判断同一话题是否已被表达过，
         避免因上游异常（mark_expressed 失败等）导致同一内容重复发送。
+        检查最近 10 条而非仅最新 1 条，减少重复表达同一话题的概率。
         """
         if not topic:
             return False
@@ -187,12 +188,15 @@ class PendingExpressionManager:
             entries = get_work_memory().output_mem_read()
             if not entries:
                 return False
-            last = entries[-1]
-            assistant = last.get("assistant", "")
-            if not assistant:
+            # 检查最近 10 条 assistant 回复，任一出现 topic 即视为已表达
+            target = topic.strip()
+            if not target:
                 return False
-            # 如果 topic（实体名/concern 名）出现在最新一条 assistant 中 → 已表达
-            return topic.strip() in assistant
+            for entry in entries[-10:]:
+                assistant = entry.get("assistant", "")
+                if assistant and target in assistant:
+                    return True
+            return False
         except Exception as e:
             logger.debug(f"[pending] topic_recently_expressed check failed: {e}")
             return False

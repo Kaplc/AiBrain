@@ -26,6 +26,9 @@ from main_brain.procedural_memory.trace import (
     get_state_summary,
 )
 
+# auto-skill 同步（懒导入，模块未就绪时静默跳过）
+_AUTO_SKILL_AVAILABLE = None
+
 logger = logging.getLogger("main_brain.procedural.scheduler")
 
 
@@ -94,6 +97,9 @@ def run_mining(
         advance_example_seq(len(examples))
         set_cooldown(minutes=10)
 
+        # 3a. 自动同步技能（挖掘出新模板后部署/更新 SKILL.md）
+        _sync_auto_skills()
+
     logger.info(
         "[procedural.scheduler] mined %d templates from %d examples (dry_run=%s)",
         len(templates), len(examples), dry_run,
@@ -132,6 +138,33 @@ def run_decay(dry_run: bool = False) -> dict:
 def dry_run_mining(window: int = 50, **kwargs) -> dict:
     """预览模式：采集+提炼但不写库。"""
     return run_mining(window=window, dry_run=True, **kwargs)
+
+
+def _sync_auto_skills() -> None:
+    """挖掘后自动同步 auto-skill：部署新模板、撤回降级模板。
+
+    懒导入 + 静默跳过（模块未就绪时不影响主流程）。
+    """
+    global _AUTO_SKILL_AVAILABLE
+    if _AUTO_SKILL_AVAILABLE is False:
+        return
+
+    try:
+        if _AUTO_SKILL_AVAILABLE is None:
+            from main_brain.auto_skill import sync_all
+            _AUTO_SKILL_AVAILABLE = True
+        else:
+            from main_brain.auto_skill import sync_all
+
+        result = sync_all()
+        if result.get("deployed"):
+            logger.info("[procedural.scheduler] auto-skill: %d deployed", len(result["deployed"]))
+        if result.get("removed"):
+            logger.info("[procedural.scheduler] auto-skill: %d removed", len(result["removed"]))
+    except ImportError:
+        _AUTO_SKILL_AVAILABLE = False
+    except Exception as e:
+        logger.warning("[procedural.scheduler] auto-skill sync skipped: %s", e)
 
 
 def get_module_state() -> dict:

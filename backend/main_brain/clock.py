@@ -1,28 +1,69 @@
-"""BrainClock — 持久化大脑时钟（替代 time.monotonic() 的内存计时）
+"""BrainClock — 统一时间模块（持久化时钟 + UTC/本地时间工具）
 
-所有 tick 的最后触发时间以 ISO 时间戳存在 internal_state.json['brain_clock'] 节点，
-重启后恢复，不会全部重新计时（避免 daily_tick 一重启就触发）。
+合并了原 state/times.py 的所有功能，作为整个 main_brain 唯一的时间入口。
 
-设计：
-  - 首次运行（无持久化数据）→ should_fire 返回 True（触一次后标记，下次正常）
-  - 重启后 → 读磁盘恢复，按真实时间差判断是否该触
-  - short_tick 只更新内存不写盘（30s 心跳，不需要持久化）
-  - medium/long/daily 触发时写盘（频率低，不影响性能）
-  - scheduler stop 时全量刷盘（保证退出时 checkpoint 最新）
+职责：
+  - UTC 时间：now() / parse_iso() / hours_since() / days_since() 等纯函数
+  - 本地时间：now_local() / today_str() / time_of_day_label() 等
+  - 持久化 tick 计时：should_fire() / mark_fired() 管理各 tick 的触发间隔
 
 外部访问：
-    from main_brain.clock import get_brain_clock
+    from main_brain.clock import get_brain_clock, now, hours_since
 """
 from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, timezone, timedelta
 
 from .contracts import TICK_SHORT
 
 logger = logging.getLogger("main_brain.clock")
 
 _STATE_NODE = "brain_clock"
+
+
+# ── UTC 纯函数（原 state/times.py，合并至此）───────────────────
+def now() -> datetime:
+    """当前 UTC 时间（持久化 / hours_since 等计算用）。"""
+    return datetime.now(timezone.utc)
+
+
+def now_iso() -> str:
+    return now().isoformat()
+
+
+def parse_iso(ts: str) -> datetime | None:
+    """解析 ISO 时间字符串；无时区视作 UTC；失败返回 None。"""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def days_since(ts: str) -> float:
+    """距 ts 的天数（float）。无/坏时间戳返回大数（视为很久以前）。"""
+    dt = parse_iso(ts)
+    if dt is None:
+        return 9999.0
+    return max(0.0, (now() - dt).total_seconds() / 86400.0)
+
+
+def hours_since(ts: str) -> float:
+    dt = parse_iso(ts)
+    if dt is None:
+        return 9999.0
+    return max(0.0, (now() - dt).total_seconds() / 3600.0)
+
+
+def now_plus_hours_iso(hours: float) -> str:
+    """now + hours 后的 ISO 字符串（用于 expire_at / refractory_until）。"""
+    return (now() + timedelta(hours=hours)).isoformat()
 
 
 class BrainClock:
@@ -96,12 +137,10 @@ class BrainClock:
             return True  # 首次运行（或新 tick 类型），需要触一次
 
         try:
-            from main_brain.state import times
-            from datetime import datetime, timezone
-            last_dt = times.parse_iso(last_iso)
+            last_dt = parse_iso(last_iso)
             if last_dt is None:
                 return True  # 坏时间戳 → 重置
-            elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+            elapsed = (now() - last_dt).total_seconds()
             return elapsed >= interval_seconds
         except Exception as e:
             logger.warning(f"[brain_clock] should_fire error: {e}")
@@ -112,10 +151,8 @@ class BrainClock:
 
         short_tick 只写内存（30s 心跳不写盘）；medium/long/daily 写盘。
         """
-        from main_brain.state import times
-        now = times.now_iso()
         with self._lock:
-            self._last_run_iso[tick_type] = now
+            self._last_run_iso[tick_type] = now_iso()
             self._dirty = True
         # short_tick 不写盘（频率高、不重要）
         if tick_type != TICK_SHORT:
@@ -136,6 +173,44 @@ class BrainClock:
         """返回所有 tick 的最后触发时间（只读快照）。"""
         with self._lock:
             return dict(self._last_run_iso)
+
+    # ── 本地时间（统一入口，方便测试/替换）──────────────────
+    @staticmethod
+    def now_local() -> datetime:
+        """当前本地系统时间（昼夜节律检测、日志用）。"""
+        from datetime import datetime
+        return datetime.now()
+
+    @staticmethod
+    def now_iso_local() -> str:
+        return BrainClock.now_local().isoformat()
+
+    @staticmethod
+    def today_str() -> str:
+        """今天日期 YYYY-MM-DD（本地时间）。"""
+        return BrainClock.now_local().strftime("%Y-%m-%d")
+
+    @staticmethod
+    def local_hour() -> int:
+        """当前小时（本地时间，24h）。"""
+        return BrainClock.now_local().hour
+
+    @staticmethod
+    def time_of_day_label(h: int | None = None) -> str:
+        """时段标签：黎明/上午/中午/下午/晚上/深夜。默认用当前本地小时。"""
+        if h is None:
+            h = BrainClock.local_hour()
+        if 5 <= h < 8:
+            return "黎明"
+        if 8 <= h < 12:
+            return "上午"
+        if 12 <= h < 14:
+            return "中午"
+        if 14 <= h < 18:
+            return "下午"
+        if 18 <= h < 23:
+            return "晚上"
+        return "深夜"
 
 
 def get_brain_clock() -> BrainClock:

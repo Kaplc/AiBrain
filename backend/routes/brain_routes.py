@@ -47,19 +47,27 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/brain/life/tick', methods=['POST'])
     def brain_life_tick():
-        """手动触发一次 tick（调试）。body: {tick_type, dry_run, activity}"""
+        """手动触发一次意识流 tick（调试）。body: {dry_run}"""
         try:
             body = request.get_json(silent=True) or {}
-            tick_type = body.get("tick_type", "medium_tick")
             dry_run = bool(body.get("dry_run", False))
-            activity = body.get("activity")
             from main_brain import get_life_loop_daemon
             d = get_life_loop_daemon()
-            out = d.run_tick(tick_type, dry_run=dry_run, activity_override=activity)
+            out = d.run_consciousness_tick(dry_run=dry_run)
             return jsonify(out)
         except Exception as e:
             logger.warning(f"[brain] life/tick failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route('/brain/consciousness', methods=['GET'])
+    def brain_consciousness():
+        """读取意识流状态（last_thought / mood / internal_dialogue / activities）。"""
+        try:
+            from main_brain.adapters.state import get_state_adapter
+            return jsonify({"stream_of_consciousness": get_state_adapter().read_stream()})
+        except Exception as e:
+            logger.warning(f"[brain] consciousness read failed: {e}")
+            return jsonify({"error": str(e)}), 500
 
     @app.route('/brain/chat/mode', methods=['GET', 'POST'])
     def brain_chat_mode():
@@ -294,10 +302,39 @@ def register(app, ready_state, logger, stats_db):
 
     @app.route('/brain/memory/consolidation/state', methods=['GET'])
     def brain_memory_consolidation_state():
-        """沉淀检查点状态。"""
+        """沉淀检查点状态 + 预计下次整理时间。"""
         try:
             from main_brain.memory.consolidation import get_trace_store
+            from main_brain.contracts import _now_iso
+            from main_brain.clock import get_brain_clock
+            from main_brain.config import get_brain_config
+            from main_brain.adapters.output import get_output_adapter
             state = get_trace_store().get_state()
+            now_iso = _now_iso()
+            from datetime import datetime, timezone, timedelta
+            next_at = ""
+
+            if state.cooldown_until and state.cooldown_until > now_iso:
+                next_at = state.cooldown_until
+            else:
+                try:
+                    clock = get_brain_clock()
+                    last_long = clock.get_last_run("long_tick")
+                    interval = int(get_brain_config().get("long_tick_seconds", 3600))
+                    if last_long:
+                        last_dt = datetime.fromisoformat(last_long.replace("Z", "+00:00"))
+                        next_dt = last_dt + timedelta(seconds=interval)
+                        if next_dt > datetime.now(timezone.utc):
+                            next_at = next_dt.isoformat()
+                except Exception:
+                    pass
+
+            # 计算真正待处理条数：当前最大 seq - 上次处理的 seq 位置
+            try:
+                current_max = get_output_adapter().max_seq()
+                pending_outputs = max(0, current_max - state.last_processed_seq)
+            except Exception:
+                pending_outputs = 0
             return jsonify({
                 "last_processed_seq": state.last_processed_seq,
                 "last_run_id": state.last_run_id,
@@ -305,8 +342,10 @@ def register(app, ready_state, logger, stats_db):
                 "last_saved_memory_id": state.last_saved_memory_id,
                 "policy_version": state.policy_version,
                 "cooldown_until": state.cooldown_until,
-                "pending_backlog": state.pending_backlog,
+                "pending_backlog": pending_outputs,
                 "seen_hash_count": len(state.seen_hashes),
+                "next_consolidation_at": next_at,
+                "now": now_iso,
             })
         except Exception as e:
             logger.warning(f"[brain] memory/consolidation/state failed: {e}")

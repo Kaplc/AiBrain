@@ -13,6 +13,7 @@ import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import type {
   BrainStateResponse, BrainRunSummary, BrainRunDetail, ModeFilter, PendingExpression,
+  ConsolidationState,
 } from './types'
 
 // 自动刷新间隔：plan 非功能要求 >=3000ms，取 4000ms 既够实时又不压后端
@@ -24,6 +25,7 @@ class BrainViewModel {
   runs = ref<BrainRunSummary[]>([])
   selectedRun = ref<BrainRunDetail | null>(null)
   selectedRunId = ref<string>('')
+  consolidationState = ref<ConsolidationState | null>(null)
 
   // ── 前端控制状态 ─────────────────────────────────────────
   modeFilter = ref<ModeFilter>('all')
@@ -34,9 +36,11 @@ class BrainViewModel {
   loadingState = ref(false)
   loadingRuns = ref(false)
   loadingDetail = ref(false)
+  loadingConsolidation = ref(false)
   errorState = ref('')
   errorRuns = ref('')
   errorDetail = ref('')
+  errorConsolidation = ref('')
 
   private api = useApi()
   private timer: number | null = null
@@ -57,6 +61,43 @@ class BrainViewModel {
   get hasStateError() {
     // 后端预热/异常时 /brain/state 会带 error 字段（状态码 500 body）
     return computed(() => !!(this.state.value?.error) || !!this.errorState.value)
+  }
+
+  // ── 拉取：consolidation state ───────────────────────────
+  async loadConsolidation(): Promise<void> {
+    this.loadingConsolidation.value = true
+    this.errorConsolidation.value = ''
+    try {
+      const data = await this.api.fetchJson<ConsolidationState>('/brain/memory/consolidation/state')
+      this.consolidationState.value = data
+    } catch (e: any) {
+      this.errorConsolidation.value = this._errMsg(e)
+    } finally {
+      this.loadingConsolidation.value = false
+    }
+  }
+
+  /** 计算下次记忆整理的倒计时文本。 */
+  nextConsolidationLabel(): string {
+    const cs = this.consolidationState.value
+    if (!cs) return '--'
+    const next = cs.next_consolidation_at
+    const now = cs.now
+    if (!next || !now) return '就绪（待触发）'
+    try {
+      const t = new Date(next).getTime() - new Date(now).getTime()
+      if (t <= 0) return '就绪（待触发）'
+      const sec = Math.floor(t / 1000)
+      if (sec < 60) return `${sec}s 后`
+      const m = Math.floor(sec / 60)
+      const s = sec % 60
+      if (m < 60) return `${m}m ${s}s 后`
+      const h = Math.floor(m / 60)
+      const mm = m % 60
+      return `${h}h ${mm}m 后`
+    } catch {
+      return '--'
+    }
   }
 
   // ── 拉取：state ─────────────────────────────────────────
@@ -128,9 +169,9 @@ class BrainViewModel {
     this.loadRecent()
   }
 
-  /** 手动刷新：只刷 state + recent，保留已选 detail 面板。 */
+  /** 手动刷新：只刷 state + recent + consolidation，保留已选 detail 面板。 */
   async manualRefresh(): Promise<void> {
-    await Promise.all([this.loadState(), this.loadRecent()])
+    await Promise.all([this.loadState(), this.loadRecent(), this.loadConsolidation()])
     this.lastRefreshedAt.value = this._nowClock()
   }
 
@@ -145,8 +186,8 @@ class BrainViewModel {
 
   // ── 生命周期（组件 onMounted/onUnmounted 调用）──────────
   async init(): Promise<void> {
-    // 首屏：并发拉 state + recent
-    await Promise.all([this.loadState(), this.loadRecent()])
+    // 首屏：并发拉 state + recent + consolidation
+    await Promise.all([this.loadState(), this.loadRecent(), this.loadConsolidation()])
     this.lastRefreshedAt.value = this._nowClock()
     this._startTimer()
   }
@@ -159,9 +200,10 @@ class BrainViewModel {
   private _startTimer(): void {
     if (this.timer !== null || this.refreshPaused.value) return
     this.timer = window.setInterval(() => {
-      // 自动刷新只刷 state + recent；detail 不动（plan 流程约定）
+      // 自动刷新只刷 state + recent + consolidation；detail 不动
       void this.loadState()
       void this.loadRecent()
+      void this.loadConsolidation()
       this.lastRefreshedAt.value = this._nowClock()
     }, REFRESH_INTERVAL)
   }

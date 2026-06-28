@@ -98,7 +98,7 @@ class TraceStore:
 
     def next_run_id(self) -> str:
         """生成递增 run_id：mc_<stamp>_<seq>。"""
-        from main_brain.state import times
+        from main_brain import clock as times
         stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")[:15]
         seq_box = [0]
 
@@ -145,7 +145,7 @@ class TraceStore:
 
 
 def _now_iso() -> str:
-    from main_brain.state import times
+    from main_brain import clock as times
     return times.now_iso()
 
 

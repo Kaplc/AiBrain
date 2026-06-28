@@ -135,7 +135,7 @@ def run_self_learn(tick_input, dry_run: bool = False) -> dict:
 def _today_count() -> int:
     """查询今日已执行 self_learn 的次数（扫 expression_history）。"""
     try:
-        from main_brain.state import times
+        from main_brain import clock as times
         from main_brain.state import get_expression_history
         try:
             mgr = get_expression_history()

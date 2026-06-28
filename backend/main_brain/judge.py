@@ -141,9 +141,15 @@ class BrainJudge:
         matches = judge_view.get("procedure_matches") or []
         if matches:
             try:
-                from .procedural_memory.policy import format_procedure_matches_for_prompt
+                from .auto_skill.judge_hook import format_skills_for_prompt
 
-                prompt += "\n" + format_procedure_matches_for_prompt(matches)
+                skill_text = format_skills_for_prompt(matches)
+                if skill_text:
+                    prompt += "\n" + skill_text
+                else:
+                    # fallback 传统统计摘要
+                    from .procedural_memory.policy import format_procedure_matches_for_prompt
+                    prompt += "\n" + format_procedure_matches_for_prompt(matches)
             except Exception as e:
                 logger.warning(f"[judge] format procedure matches failed: {e}")
         prompt += "\n\n请输出本轮决策 JSON。"

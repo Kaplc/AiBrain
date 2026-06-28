@@ -23,6 +23,7 @@ _LIFE_NODE_FIELDS = (
     "last_activity_at", "last_user_contact_at", "idle_seconds", "autonomy_level",
     "energy", "mood", "relationship_context", "self_narrative_summary",
     "last_proactive_contact_at", "next_wake_hint", "last_error",
+    "stream_of_consciousness",
 )
 RECENT_THOUGHTS_CAP = 20
 
@@ -88,7 +89,7 @@ class StateAdapter:
             return
         try:
             from main_brain.state import get_state
-            from main_brain.state import times
+            from main_brain.clock import now_iso
             with get_state().transaction() as data:
                 life = data.setdefault("life", default_life_state())
                 thoughts = life.setdefault("recent_thoughts", [])
@@ -96,35 +97,106 @@ class StateAdapter:
                     "summary": summary[:200],
                     "focus": focus[:80],
                     "source": source,
-                    "at": times.now_iso(),
+                    "at": now_iso(),
                 })
                 if len(thoughts) > RECENT_THOUGHTS_CAP:
                     del thoughts[: len(thoughts) - RECENT_THOUGHTS_CAP]
         except Exception as e:
             logger.warning(f"[state_adapter] append thought failed: {e}")
 
+    # ── 意识流（stream_of_consciousness）──────────────────
+    def read_stream(self) -> dict:
+        """读意识流字段（带默认值，缺键补齐）。供 autonomous_mind 构建上下文。"""
+        stream = self._life_node().get("stream_of_consciousness") or {}
+        if not isinstance(stream, dict):
+            stream = {}
+        return {
+            "last_thought": stream.get("last_thought", ""),
+            "mood": stream.get("mood", "平静"),
+            "focus": stream.get("focus", ""),
+            "internal_dialogue": list(stream.get("internal_dialogue") or []),
+            "activities": list(stream.get("activities") or []),
+            "working_memory": list(stream.get("working_memory") or []),
+        }
+
+    def mutate_stream(self, fn) -> dict:
+        """事务性读改写 life['stream_of_consciousness']。
+
+        fn(stream) 在事务内就地修改 stream（已补齐全部子键），返回修改后的快照。
+        任何异常都不抛穿主流程（意识流只是辅助上下文，不应阻塞 tick）。
+        """
+        try:
+            from main_brain.state import get_state
+            with get_state().transaction() as data:
+                life = data.setdefault("life", default_life_state())
+                stream = life.get("stream_of_consciousness")
+                if not isinstance(stream, dict):
+                    stream = {}
+                stream.setdefault("last_thought", "")
+                stream.setdefault("mood", "平静")
+                stream.setdefault("focus", "")
+                stream.setdefault("internal_dialogue", [])
+                stream.setdefault("activities", [])
+                stream.setdefault("working_memory", [])
+                fn(stream)
+                life["stream_of_consciousness"] = stream
+                return dict(stream)
+        except Exception as e:
+            logger.warning(f"[state_adapter] mutate stream failed: {e}")
+            return {}
+
+    # ── Working Memory 辅助操作 ─────────────────────────────
+    def append_to_wm(self, item: str) -> None:
+        """向工作记忆追加一条（尾部），超出 capacity 时截断头部。"""
+        cap = 6  # 默认 4±2
+        try:
+            from .config import get_brain_config
+            cap = max(2, int(get_brain_config().get("working_memory_capacity", 6)))
+        except Exception:
+            pass
+
+        def _fn(stream):
+            wm = stream.setdefault("working_memory", [])
+            wm.append(item[:200])
+            if len(wm) > cap:
+                del wm[:len(wm) - cap]
+
+        self.mutate_stream(_fn)
+
+    def clear_working_memory(self) -> None:
+        """清空工作记忆（Sleep Tick 时调用）。"""
+        def _fn(stream):
+            stream["working_memory"] = []
+        self.mutate_stream(_fn)
+
+    def replace_working_memory(self, items: list[str]) -> None:
+        """替换整个工作记忆（Day Tick 时调用）。"""
+        def _fn(stream):
+            stream["working_memory"] = list(items)
+        self.mutate_stream(_fn)
+
     # ── 便捷写（scheduler / session 用）────────────────────
     def mark_user_contact(self) -> None:
         """用户输入或主动联系发生时刷新 last_user_contact_at / idle_seconds。"""
-        from main_brain.state import times
+        from main_brain.clock import now_iso
         self.update_life_node({
-            "last_user_contact_at": times.now_iso(),
+            "last_user_contact_at": now_iso(),
             "idle_seconds": 0,
         })
 
     def mark_proactive_contact(self) -> None:
-        from main_brain.state import times
-        self.update_life_node({"last_proactive_contact_at": times.now_iso()})
+        from main_brain.clock import now_iso
+        self.update_life_node({"last_proactive_contact_at": now_iso()})
 
     def set_loop_status(self, status: str, *, activity: str = "",
                         focus: str = "") -> None:
-        from main_brain.state import times
-        delta = {"life_loop_status": status, "last_activity_at": times.now_iso()}
+        from main_brain.clock import now_iso
+        delta = {"life_loop_status": status, "last_activity_at": now_iso()}
         if activity:
             delta["current_activity"] = activity
         if focus:
             delta["current_focus"] = focus
-            delta.setdefault("focus_since", times.now_iso())
+            delta.setdefault("focus_since", now_iso())
         self.update_life_node(delta)
 
     def set_error(self, msg: str) -> None:

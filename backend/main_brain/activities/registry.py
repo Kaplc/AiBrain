@@ -235,14 +235,35 @@ def _parse_inline_dict(text: str) -> dict:
 
 
 def _discover_activity_files() -> list[str]:
-    """扫描 activities/ 目录下的所有 .md 文件（不递归进入 addons 子目录）。"""
+    """递归扫描 activities/ 目录下所有分层子文件夹中的 .md 文件。
+
+    发现规则：
+      - 根目录的 .md 文件（扁平兼容，当前为零星预留）
+      - 分层子目录（conscious/subconscious/expression/executive/ 等）递归扫描
+      - addons/ 子目录（第三方扩展）单独扫描
+      - __init__.md 跳过
+    """
     files = []
+
+    # 1. 根目录（兼容扁平放置）
     for entry in os.listdir(_ACTIVITIES_DIR):
         if entry.endswith(".md") and entry != "__init__.md":
             path = os.path.join(_ACTIVITIES_DIR, entry)
             if os.path.isfile(path):
                 files.append(path)
-    # 检查 addons/ 子目录（第三方扩展）
+
+    # 2. 分层子目录（排除已知特殊目录）
+    skip_dirs = {"addons", "__pycache__"}
+    for entry in os.listdir(_ACTIVITIES_DIR):
+        sub = os.path.join(_ACTIVITIES_DIR, entry)
+        if os.path.isdir(sub) and entry not in skip_dirs:
+            for fname in os.listdir(sub):
+                if fname.endswith(".md"):
+                    fpath = os.path.join(sub, fname)
+                    if os.path.isfile(fpath):
+                        files.append(fpath)
+
+    # 3. addons/ 子目录（第三方扩展）
     addons_dir = os.path.join(_ACTIVITIES_DIR, "addons")
     if os.path.isdir(addons_dir):
         for entry in os.listdir(addons_dir):
@@ -250,6 +271,7 @@ def _discover_activity_files() -> list[str]:
                 path = os.path.join(addons_dir, entry)
                 if os.path.isfile(path):
                     files.append(path)
+
     return sorted(files)
 
 

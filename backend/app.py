@@ -387,7 +387,7 @@ def _preload():
     except Exception as e:
         logger.warning(f"PromptPipeline init failed (non-fatal): {e}")
 
-    # 反思已由 LifeLoopDaemon daily_tick 接管（见 activity_selector._select_daily）
+    # 反思已由 LifeLoopDaemon daily_tick 接管
     # 保留日志说明便于排查
     logger.info("[daily_reflect] delegated to LifeLoopDaemon daily_tick")
 

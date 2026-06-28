@@ -118,3 +118,17 @@ export interface BrainRunDetail {
 }
 
 export type ModeFilter = 'all' | RunMode
+
+// ── /brain/memory/consolidation/state 响应 ─────────────────────────────────
+export interface ConsolidationState {
+  last_processed_seq?: number
+  last_run_id?: string
+  last_saved_at?: string
+  last_saved_memory_id?: string
+  policy_version?: string
+  cooldown_until?: string
+  pending_backlog?: number
+  seen_hash_count?: number
+  next_consolidation_at?: string
+  now?: string
+}

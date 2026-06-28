@@ -14,3 +14,12 @@ from main_brain.procedural_memory.contracts import (
     RISK_LEVELS,
     OUTCOMES,
 )
+
+# re-export auto_skill 公共符号（方便外部只从 procedural_memory 一级入口导入）
+try:
+    from main_brain.auto_skill import sync_all as _sync_all, list_deployed as _list_deployed
+    sync_all = _sync_all
+    list_deployed = _list_deployed
+except ImportError:
+    def sync_all() -> dict: return {"deployed": [], "removed": [], "errors": []}
+    def list_deployed() -> list: return []

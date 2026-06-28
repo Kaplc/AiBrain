@@ -96,6 +96,19 @@ const energyPct = computed(() => {
         <span class="cnt"><b>{{ life.working_set?.length || 0 }}</b> 工作集</span>
       </div>
 
+      <!-- 记忆整理信息 -->
+      <div class="consolidation-row" data-testid="brain-consolidation-info">
+        <span class="cons-label">记忆整理</span>
+        <span class="cons-value">{{ vm.nextConsolidationLabel() }}</span>
+        <span class="cons-sep">·</span>
+        <span class="cons-label">待处理</span>
+        <span class="cons-value">{{ vm.consolidationState.value?.pending_backlog ?? '--' }} 条</span>
+        <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-sep">·</span>
+        <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-label">上次</span>
+        <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-value">{{ vm.formatTime(vm.consolidationState.value?.last_saved_at) }}</span>
+        <span v-if="vm.errorConsolidation.value" class="cons-err">{{ vm.errorConsolidation.value }}</span>
+      </div>
+
       <!-- 错误栏（life.last_error） -->
       <div v-if="life.last_error" class="err-row soft" data-testid="brain-last-error">
         最近错误：{{ life.last_error }}
@@ -139,6 +152,12 @@ const energyPct = computed(() => {
 
 .count-row { display: flex; gap: 16px; font-size: 11px; color: #64748b; }
 .count-row .cnt b { color: #cbd5e1; font-weight: 600; }
+
+.consolidation-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: #94a3b8; padding-top: 6px; border-top: 1px solid #2d3149; }
+.cons-label { color: #64748b; }
+.cons-value { color: #a78bfa; font-weight: 600; }
+.cons-sep { color: #3b3f54; }
+.cons-err { color: #fca5a5; font-size: 10px; }
 
 .err-row { font-size: 12px; color: #fca5a5; background: #ef444414; border: 1px solid #ef444433; border-radius: 6px; padding: 8px 10px; }
 .err-row.soft { color: #fde68a; background: #eab30814; border-color: #eab30833; }

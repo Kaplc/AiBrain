@@ -57,6 +57,13 @@ def record_procedure_feedback(
     # 检查是否需要冷却或退役
     check_feedback_decay(store, template_id)
 
+    # 触发 auto-skill 回滚检查（置信度降级时自动删除 SKILL.md）
+    try:
+        from main_brain.auto_skill.rollback import rollback_by_template_id
+        rollback_by_template_id(template_id)
+    except Exception:
+        pass
+
     # 重新读取最新状态
     updated = store.get_template(template_id)
     final_status = updated.status if updated else template.status
@@ -145,6 +152,14 @@ def retire_template(template_id: str, reason: str = "") -> dict:
     t.confidence = max(0.0, t.confidence * 0.3)
     store.save_template(t)
     logger.info("[procedural.feedback] deprecated %s: %s -> deprecated", template_id, prev)
+
+    # 退役时同时撤回 auto-skill SKILL.md
+    try:
+        from main_brain.auto_skill.rollback import rollback_by_template_id
+        rollback_by_template_id(template_id)
+    except Exception:
+        pass
+
     return {"ok": True, "template_id": template_id, "status": "deprecated", "from": prev}
 
 
