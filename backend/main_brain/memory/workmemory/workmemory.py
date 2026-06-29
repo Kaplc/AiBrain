@@ -304,8 +304,19 @@ class WorkMemoryManager:
             raise
 
         self._refresh_registry("output.json")
-        if removed:
-            logger.info(f"[workmemory] output_mem_write: total={len(entries)} removed={removed} (超过2天)")
+        has_user = bool(user_prompt)
+        logger.info(f"[workmemory] output_mem_write: seq={seq} has_user={has_user} total={len(entries)}"
+                    + (f" removed={removed}" if removed else ""))
+
+        # 实时推送：通知前端 SSE 重新拉取消息（best-effort，不影响写盘）
+        try:
+            from core.event_bus import get_event_bus
+            get_event_bus().emit(
+                "workmemory", "new_message",
+                {"seq": seq, "has_user": has_user},
+            )
+        except Exception as _e:
+            logger.debug(f"[workmemory] emit new_message failed (non-fatal): {_e}")
 
         return {
             "total": len(entries),

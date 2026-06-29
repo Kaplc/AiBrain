@@ -273,6 +273,7 @@ def register(app, ready_state, logger, stats_db):
             from main_brain import get_life_loop_daemon
             life = get_state_adapter().read_life_state()
             elog = get_event_log()
+            # idle_seconds 已由 read_life_state() 实时注入（compute_idle_seconds）
             state["brain"] = {
                 "last_reactive_run_id": elog.last_run_id("reactive"),
                 "last_background_run_id": elog.last_run_id("background"),

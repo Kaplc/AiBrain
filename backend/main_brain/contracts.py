@@ -43,21 +43,7 @@ _ACTIVITIES_FALLBACK = (
 
 
 def get_activities() -> tuple[str, ...]:
-    """从 activities registry 获取所有已注册活动（动态发现优先）。
-
-    文件化活动定义取代硬编码列表：activities/*.md 的 frontmatter 定义全部活动。
-    如果 registry 尚未加载（early boot），返回硬编码 fallback 保证不崩。
-    """
-    try:
-        from .activities.registry import ensure_loaded, get_active_activity_names
-        ensure_loaded()
-        names = get_active_activity_names()
-        if names:
-            return tuple(names)
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    """返回活动硬编码列表（registry 已废弃，直接返回 fallback）。"""
     return _ACTIVITIES_FALLBACK
 
 

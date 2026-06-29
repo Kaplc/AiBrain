@@ -28,6 +28,29 @@ _LIFE_NODE_FIELDS = (
 RECENT_THOUGHTS_CAP = 20
 
 
+def compute_idle_seconds(life_state: dict) -> int:
+    """实时计算空闲秒数 = now − 最近用户互动时间（tick_log 优先，退回 last_user_contact_at）。
+
+    单一真相源：持久化的 life.idle_seconds 只在用户联系时被重置为 0、之后不再更新，
+    不能直接用于展示。read_life_state / daemon tick / chat 与 brain 路由都应使用本函数。
+    """
+    from main_brain import clock as times
+    try:
+        from main_brain.tick_log import last_user_reply_iso
+        ts = last_user_reply_iso()
+        if ts:
+            return int(times.hours_since(ts) * 3600)
+    except Exception:
+        pass
+    last = (life_state or {}).get("last_user_contact_at", "")
+    if last:
+        try:
+            return int(times.hours_since(last) * 3600)
+        except Exception:
+            pass
+    return 0
+
+
 class StateAdapter:
     """LifeState 读写 + judge state_updates 路由。"""
 
@@ -48,6 +71,8 @@ class StateAdapter:
             merged["pending_expressions"] = get_pending().get_unexpressed()
         except Exception as e:
             logger.warning(f"[state_adapter] enrich life_state failed: {e}")
+        # idle_seconds 实时计算（持久化值恒为 0，不可直接展示）
+        merged["idle_seconds"] = compute_idle_seconds(merged)
         return merged
 
     def _life_node(self) -> dict:

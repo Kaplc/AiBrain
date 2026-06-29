@@ -72,6 +72,7 @@ export default defineConfig({
       // 不代理裸 /brain 页面路由，让其走 SPA fallback 渲染 BrainView。
       '/brain/state': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
       '/brain/runs': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
+      '/brain/events/stream': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
       // Wiki API
       '/wiki/search': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
       '/wiki/list': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },

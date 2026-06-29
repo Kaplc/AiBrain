@@ -52,6 +52,7 @@ onMounted(async () => {
 // KeepAlive 切回时刷新状态和滚动到底部
 onActivated(() => {
   chatViewModel.loadState()
+  chatViewModel.startEventStream()
   scrollToBottom()
 })
 

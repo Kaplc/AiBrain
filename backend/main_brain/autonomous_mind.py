@@ -208,6 +208,8 @@ class AutonomousMind:
         self._last_action: str | None = None
         self._last_perceived_state: dict = {}  # 上次感知快照（供 perceive diff）
         self._message_queue: list[str] = []  # 用户消息缓冲（alive tick 自行读取）
+        self._current_user_msg: str = ""     # 给 _build_context 用，第一轮后清空
+        self._output_user_msg: str = ""      # 给 _write_output 用，整个 tick 稳定不变
 
     # ── 入口：一次意识流 tick ──────────────────────────────
     def tick(self, ctx: dict) -> dict:
@@ -217,6 +219,13 @@ class AutonomousMind:
         """
         dry_run = bool(ctx.get("dry_run", False))
         life_state = ctx.get("life_state", {}) or {}
+
+        # 0. 消费一条用户消息（每 tick 只消费一次），供整个 tick 使用
+        if not dry_run:
+            self._current_user_msg = self._drain_message_queue()
+        else:
+            self._current_user_msg = ""
+        self._output_user_msg = self._current_user_msg  # 快照，_write_output 使用
 
         # 1. 感知环境变化（diff 检测）；dry_run 不更新基线，避免污染真实感知
         signals = self._perceive(life_state) if not dry_run else {}
@@ -235,6 +244,9 @@ class AutonomousMind:
                 return self._finish("rest", {"thought": f"cycles exhausted ({max_cycles})"}, loop_ctx)
 
             context = self._build_context(ctx, loop_ctx, signals)
+            # 第一轮后清空 _current_user_msg，后续轮次不再看到用户消息，防重复回复
+            if loop_ctx["cycle"] == 0:
+                self._current_user_msg = ""
             decision = self._llm_decide(context, dry_run=dry_run)
             action = str(decision.get("action", "rest")).strip()
             # 每个周期日志：动作 + 详情 + 当前活动
@@ -380,7 +392,7 @@ class AutonomousMind:
         base = {
             "last_thought": last_thought,
             "mood": stream.get("mood", "平静"),
-            "user_message": self._drain_message_queue() if not ctx.get("dry_run") else "",
+            "user_message": self._current_user_msg,  # tick 开始时已消费，内循环复用同一消息
             "recent_conversation": self._recent_chat(),
             "dialogue_history": self._dialogue_for_prompt(stream),
             "memory_surfaced": self._recall(focus or last_thought),
@@ -613,11 +625,13 @@ class AutonomousMind:
         now_iso = times.now_iso()
         stamp = now_iso.replace(":", "").replace("-", "").replace("+", "")
         context = str(decision.get("activity_context", ""))[:300]
+        guide = str(decision.get("activity_guide", ""))[:500]
         activity = {
             "id": "act_" + stamp + "_" + hashlib.md5(stamp.encode()).hexdigest()[:6],
             "name": name[:100],
             "status": "active",
             "context": context,
+            "guide": guide,
             "findings": [],
             "created_at": now_iso,
             "updated_at": now_iso,
@@ -633,44 +647,39 @@ class AutonomousMind:
         logger.info(f"[mind] created activity: {name[:60]}")
 
         # 同步写 .md 文件，让 AI 自建活动与系统活动走同一通道
-        self._write_activity_md(name, context, now_iso)
+        self._write_activity_md(name, context, guide, now_iso)
 
     @staticmethod
-    def _write_activity_md(name: str, context: str, timestamp: str) -> None:
-        """把 AI 自建活动写入 activities/activity/ai_{name}.md，统一跨 tick 可见。"""
+    def _write_activity_md(name: str, context: str, guide: str, timestamp: str) -> None:
+        """把 AI 自建活动写入 activities/activity/{name}.md，与系统活动同一通道。"""
+        global _ACTIVITY_DESCRIPTIONS_CACHE, _ACTIVITY_GUIDES
         # 过滤 Windows 非法字符 \ / : * ? " < > |
         _safe = re.sub(r'[\\/:*?"<>|]', "_", name.strip().replace(" ", "_"))[:80]
         if not _safe:
             logger.warning(f"[mind] write_activity_md skipped: invalid name={name!r}")
             return
-        # ai_ 前缀避免与系统活动文件名冲突
-        fpath = os.path.join(_ACTIVITIES_DIR, f"ai_{_safe}.md")
-        content = (
+        fpath = os.path.join(_ACTIVITIES_DIR, f"{_safe}.md")
+        guide_body = guide if guide else f"上下文：{context}"
+        md_content = (
             "---\n"
             f"name: {name}\n"
-            f"description: AI 自建活动 — {context[:120]}\n"
+            f"description: {context[:120]}\n"
             "source: ai\n"
             f"created_at: {timestamp}\n"
             "---\n"
             "\n"
             f"# {name}\n"
             "\n"
-            "AI 自建活动。\n"
-            "\n"
-            f"上下文：{context}\n"
+            f"{guide_body}\n"
         )
         try:
             os.makedirs(_ACTIVITIES_DIR, exist_ok=True)
             with open(fpath, "w", encoding="utf-8") as f:
-                f.write(content)
-            # 清空缓存，让后续 tick 能读取新活动
-            global _ACTIVITY_DESCRIPTIONS_CACHE, _ACTIVITY_GUIDES
+                f.write(md_content)
             _ACTIVITY_DESCRIPTIONS_CACHE = None
             _ACTIVITY_GUIDES = None
             logger.info(f"[mind] activity md written: {fpath}")
         except Exception as e:
-            # 文件写失败不阻断主流程，但清空缓存避免 stream 与文件长期不一致
-            global _ACTIVITY_DESCRIPTIONS_CACHE, _ACTIVITY_GUIDES
             _ACTIVITY_DESCRIPTIONS_CACHE = None
             _ACTIVITY_GUIDES = None
             logger.warning(f"[mind] write activity md failed: {e}")
@@ -739,11 +748,15 @@ class AutonomousMind:
     def _drain_message_queue(self) -> str:
         """从消息队列取出一条。没消息返回空串。"""
         if not self._message_queue:
-            self._current_user_msg = ""
             return ""
         msg = self._message_queue.pop(0)
-        self._current_user_msg = msg  # 缓存，供 _write_output 传 user_prompt
         logger.info(f"[mind] processing user message: {msg[:60]}")
+        # 记录用户回复时间到持久化 tick_log（重启恢复 idle_seconds 用）
+        try:
+            from .tick_log import record_user_reply
+            record_user_reply()
+        except Exception:
+            pass
         self._state.mark_user_contact()
         self._state.set_loop_status("chatting", activity="respond", focus=msg[:40])
         # 记录到 stream 让上下文连贯
@@ -784,9 +797,10 @@ class AutonomousMind:
 
     def _write_output(self, content: str) -> None:
         try:
-            user_msg = getattr(self, '_current_user_msg', '')
             from main_brain.memory.workmemory import get_work_memory
-            get_work_memory().output_mem_write(content=content, user_prompt=user_msg)
+            get_work_memory().output_mem_write(content=content, user_prompt=self._output_user_msg)
+            # 首次 speak 后清空，同一次 tick 内后续 speak 不再携带用户消息
+            self._output_user_msg = ""
         except Exception as e:
             logger.warning(f"[mind] write output failed: {e}")
 

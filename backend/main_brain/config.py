@@ -70,12 +70,12 @@ DEFAULT_BRAIN = {
     "arbiter_timeout_seconds": 15,               # 单次仲裁超时
 
     # 意识流自主决策循环（autonomous_mind）— 取代旧的四种 tick
-    "consciousness_tick_seconds": 1800,          # 意识流 tick 间隔（30 分钟）
-    "consciousness_max_cycles": 30,              # 单次 tick 内循环上限（防无限循环）
-    "consciousness_rest_streak_max": 3,          # 连续 rest 达到此值后跳过 LLM（省 token）
-    "consciousness_temperature": 0.6,            # 意识流 LLM temperature（略高，鼓励自主性）
-    "consciousness_timeout_seconds": 25,         # 单次决策 LLM 超时
-    "consciousness_speak_cooldown_minutes": 15,  # 主动说话冷却（分钟）
+    "consciousness_tick_seconds": 1800,          # tick interval (30 min)
+    "consciousness_max_cycles": 30,
+    "consciousness_rest_streak_max": 3,
+    "consciousness_temperature": 0.6,            # LLM temperature
+    "consciousness_timeout_seconds": 25,
+    "consciousness_speak_cooldown_minutes": 0,   # speak cooldown (0 = no limit)
     "consciousness_dialogue_cap": 8,             # internal_dialogue 保留条数
     "consciousness_activities_cap": 10,          # 长期活动保留条数
     # 自动记忆沉淀改为时间触发（旧 long_tick/daily_tick 触发已废弃）

@@ -510,7 +510,13 @@ def _preload():
     logger.info("=== AiBrain 系统初始化完成 ===")
 
 
-threading.Thread(target=_preload, daemon=True).start()
+# webview-only 是纯 UI 壳（仅开窗口指向 flask），不应跑后端初始化 / LifeLoopDaemon。
+# 否则它和 flask-only 各起一个主脑 daemon，双写 internal_state.json 互相覆盖
+# （memory_consolidation 检查点会被不跑沉淀的那一方用陈旧值盖回去）。
+if '--webview-only' not in sys.argv:
+    threading.Thread(target=_preload, daemon=True).start()
+else:
+    logger.info("[bootstrap] webview-only mode: skip backend preload (no LifeLoopDaemon)")
 
 
 # ── 启动 ───────────────────────────────────────────────────

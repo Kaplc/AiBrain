@@ -73,6 +73,7 @@ export class ChatViewModel {
   private _msgCountOnLastLoad = 0
   private _toast = useToast()
   private _scrollFn: (() => void) | null = null
+  private _evtSource: EventSource | null = null
 
   /* setScrollFn：由 Vue 组件注入 scrollToBottom 方法 */
   setScrollFn(fn: () => void) {
@@ -125,12 +126,8 @@ export class ChatViewModel {
     this._pollTimer = setInterval(() => this.loadState(), 10000)
     // 后台主动消息轮询——只在非 streaming 时刷新，避免冲掉流式回复
     this._msgCountOnLastLoad = this.messages.length
-    this._pollMsgTimer = setInterval(() => {
-      if (this.messages.length > 0 && this.messages[this.messages.length - 1].isStreaming) {
-        return  // 正在流式回复中，不刷新
-      }
-      this._loadMessagesSilent()
-    }, 30000)
+    this._pollMsgTimer = setInterval(() => this._reloadIfIdle(), 30000)
+    this.startEventStream()
   }
 
   private async _loadMessagesSilent(): Promise<void> {
@@ -169,6 +166,44 @@ export class ChatViewModel {
       clearInterval(this._pollMsgTimer)
       this._pollMsgTimer = null
     }
+    this.stopEventStream()
+  }
+
+  /* startEventStream：订阅 /brain/events/stream，收到 workmemory/new_message 立即刷新 */
+  startEventStream(): void {
+    if (this._evtSource) return
+    if (typeof EventSource === 'undefined') return  // 环境不支持则静默退化到轮询
+    const es = new EventSource(`${API_BASE}/brain/events/stream`)
+    es.addEventListener('brain_event', (ev) => {
+      try {
+        const payload = JSON.parse((ev as MessageEvent).data)
+        if (payload.source === 'workmemory' && payload.type === 'new_message') {
+          this._reloadIfIdle()
+        }
+      } catch {
+        // 静默
+      }
+    })
+    es.onerror = () => {
+      // EventSource 会自动重连，这里不手动 close
+    }
+    this._evtSource = es
+  }
+
+  /* stopEventStream：关闭 SSE 连接 */
+  stopEventStream(): void {
+    if (this._evtSource) {
+      this._evtSource.close()
+      this._evtSource = null
+    }
+  }
+
+  /* _reloadIfIdle：末条正在流式则跳过（避免冲掉流式占位），否则静默刷新 */
+  private async _reloadIfIdle(): Promise<void> {
+    if (this.messages.length > 0 && this.messages[this.messages.length - 1].isStreaming) {
+      return
+    }
+    await this._loadMessagesSilent()
   }
 
   /* triggerProactive：触发猫猫主动消息 */
@@ -187,10 +222,12 @@ export class ChatViewModel {
     if (!text.trim() || this.sending.value) return
 
     // 追加用户消息
-    this.messages.push({ role: 'user', content: text })
+    const _ts = new Date()
+    const _tsStr = `${_ts.getFullYear()}-${String(_ts.getMonth()+1).padStart(2,'0')}-${String(_ts.getDate()).padStart(2,'0')} ${String(_ts.getHours()).padStart(2,'0')}:${String(_ts.getMinutes()).padStart(2,'0')}:${String(_ts.getSeconds()).padStart(2,'0')}`
+    this.messages.push({ role: 'user', content: text, created_at: _tsStr })
     this._scrollToBottom()
 
-    // 占位 assistant 消息（立即开始计时）
+    // 占位 assistant 消息（不加 created_at，done 时才设）
     const streamMsg: ChatMessage = { role: 'assistant', content: '', isStreaming: true, duration: 0 }
     this.messages.push(streamMsg)
     const idx = this.messages.length - 1
@@ -272,18 +309,28 @@ export class ChatViewModel {
             } else if (payload.type === 'done') {
               this.messages[idx].isStreaming = false
               this.messages[idx].duration = parseFloat(((performance.now() - startTime) / 1000).toFixed(1))
+              // 回复完成才记录时间，与后端 output.json 行为一致
+              const now = new Date()
+              this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
             }
           } catch {
             // JSON parse error → skip
           }
         }
       }
-      // 兜底标记完成
+      // 兜底标记完成（含时间戳）
       this.messages[idx].isStreaming = false
+      if (!this.messages[idx].created_at) {
+        const now = new Date()
+        this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
+      }
     } catch (e: any) {
       if (e.name === 'AbortError') {
         this.messages[idx].content += ' [已取消]'
         this.messages[idx].isStreaming = false
+        // AbortError 也设时间
+        const now = new Date()
+        this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
       } else {
         this._toast.show(String(e), 'error')
         this.messages.splice(idx, 1)

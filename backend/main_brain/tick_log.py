@@ -61,6 +61,32 @@ def all_ticks() -> dict:
         return dict(_load())
 
 
+def record_user_reply(timestamp: str = "") -> None:
+    """记录用户最近一次回复时间（持久化到 tick_log 的 user_reply 字段）。"""
+    from .clock import now_iso
+    ts = timestamp or now_iso()
+    with _lock:
+        try:
+            records = _load()
+            records["user_reply"] = {"timestamp": ts}
+            _save(records)
+        except Exception as e:
+            logger.warning(f"[tick_log] record_user_reply failed: {e}")
+
+
+def last_user_reply_iso() -> str:
+    """返回用户最近一次回复的时间戳 ISO 字符串，无记录返回空串。"""
+    with _lock:
+        try:
+            records = _load()
+            entry = records.get("user_reply")
+            if entry and isinstance(entry, dict):
+                return entry.get("timestamp", "")
+        except Exception:
+            pass
+    return ""
+
+
 def _load() -> dict:
     """从磁盘加载 tick_log.json，损坏/缺失返回空 dict。"""
     if not os.path.isfile(_TICK_LOG_PATH):

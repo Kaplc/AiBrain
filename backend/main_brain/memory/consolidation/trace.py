@@ -28,7 +28,7 @@ _RECENT_RUN_CAP = 100         # 内存 ring buffer 上限
 # 日志根目录：backend/logs/main_brain/（与 brain_runs.jsonl 同目录）
 _LOG_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))),
+        os.path.dirname(os.path.abspath(__file__))))),
     "logs", "main_brain",
 )
 _LOG_PATH = os.path.join(_LOG_DIR, "consolidation_runs.jsonl")

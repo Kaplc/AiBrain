@@ -14,15 +14,6 @@ import json
 from flask import request, jsonify, Response, stream_with_context
 
 
-def _get_activity_count() -> int:
-    """获取已注册活动数量（惰性加载，失败返回 0）。"""
-    try:
-        from main_brain.activities.registry import list_activities
-        return len(list_activities())
-    except Exception:
-        return 0
-
-
 def register(app, ready_state, logger, stats_db):
     @app.route('/brain/life/start', methods=['POST'])
     def brain_life_start():
@@ -110,7 +101,7 @@ def register(app, ready_state, logger, stats_db):
                 "last_reactive_run_id": elog.last_run_id("reactive"),
                 "last_background_run_id": elog.last_run_id("background"),
                 "log_path": elog.log_path(),
-                "activities_count": _get_activity_count(),
+                "activities_count": 11,  # _ACTIVITIES_FALLBACK 硬编码
             })
         except Exception as e:
             logger.warning(f"[brain] state failed: {e}")
@@ -127,36 +118,6 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[brain] runs/recent failed: {e}")
             return jsonify({"runs": [], "error": str(e)}), 500
-
-    @app.route('/brain/activities', methods=['GET'])
-    def brain_activities():
-        """列出所有已注册的活动定义（自省调试用）。
-
-        从 activities/*.md frontmatter 发现的全部活动，含 metadata、
-        allowed_tools、conditions。handler 状态：registered / fallback。
-        """
-        try:
-            from main_brain.activities.registry import list_activities
-            acts = list_activities()
-            result = {}
-            for name, act in sorted(acts.items()):
-                result[name] = {
-                    "description": act.description[:200],
-                    "handler": act.handler_name,
-                    "handler_ready": act.handler is not None,
-                    "tick_types": act.tick_types,
-                    "autonomy_min": act.autonomy_min,
-                    "max_cycles": act.max_cycles,
-                    "allowed_tools": list(act.allowed_tools),
-                    "conditions": dict(act.conditions) if isinstance(act.conditions, dict) else {},
-                }
-            return jsonify({
-                "count": len(result),
-                "activities": result,
-            })
-        except Exception as e:
-            logger.warning(f"[brain] activities failed: {e}")
-            return jsonify({"error": str(e)}), 500
 
     @app.route('/brain/runs/<run_id>', methods=['GET'])
     def brain_run_detail(run_id):
