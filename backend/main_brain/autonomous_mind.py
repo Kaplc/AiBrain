@@ -606,18 +606,21 @@ class AutonomousMind:
     def _create_activity(self, decision: dict) -> None:
         name = str(decision.get("action_detail", "")).strip()
         if not name:
+            logger.warning("[mind] create_activity skipped: empty name")
             return
         import hashlib
         from main_brain import clock as times
-        stamp = times.now_iso().replace(":", "").replace("-", "").replace("+", "")
+        now_iso = times.now_iso()
+        stamp = now_iso.replace(":", "").replace("-", "").replace("+", "")
+        context = str(decision.get("activity_context", ""))[:300]
         activity = {
             "id": "act_" + stamp + "_" + hashlib.md5(stamp.encode()).hexdigest()[:6],
             "name": name[:100],
             "status": "active",
-            "context": str(decision.get("activity_context", ""))[:300],
+            "context": context,
             "findings": [],
-            "created_at": times.now_iso(),
-            "updated_at": times.now_iso(),
+            "created_at": now_iso,
+            "updated_at": now_iso,
         }
         def _fn(stream):
             acts = stream.get("activities") or []
@@ -628,6 +631,49 @@ class AutonomousMind:
 
         self._state.mutate_stream(_fn)
         logger.info(f"[mind] created activity: {name[:60]}")
+
+        # 同步写 .md 文件，让 AI 自建活动与系统活动走同一通道
+        self._write_activity_md(name, context, now_iso)
+
+    @staticmethod
+    def _write_activity_md(name: str, context: str, timestamp: str) -> None:
+        """把 AI 自建活动写入 activities/activity/ai_{name}.md，统一跨 tick 可见。"""
+        # 过滤 Windows 非法字符 \ / : * ? " < > |
+        _safe = re.sub(r'[\\/:*?"<>|]', "_", name.strip().replace(" ", "_"))[:80]
+        if not _safe:
+            logger.warning(f"[mind] write_activity_md skipped: invalid name={name!r}")
+            return
+        # ai_ 前缀避免与系统活动文件名冲突
+        fpath = os.path.join(_ACTIVITIES_DIR, f"ai_{_safe}.md")
+        content = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: AI 自建活动 — {context[:120]}\n"
+            "source: ai\n"
+            f"created_at: {timestamp}\n"
+            "---\n"
+            "\n"
+            f"# {name}\n"
+            "\n"
+            "AI 自建活动。\n"
+            "\n"
+            f"上下文：{context}\n"
+        )
+        try:
+            os.makedirs(_ACTIVITIES_DIR, exist_ok=True)
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(content)
+            # 清空缓存，让后续 tick 能读取新活动
+            global _ACTIVITY_DESCRIPTIONS_CACHE, _ACTIVITY_GUIDES
+            _ACTIVITY_DESCRIPTIONS_CACHE = None
+            _ACTIVITY_GUIDES = None
+            logger.info(f"[mind] activity md written: {fpath}")
+        except Exception as e:
+            # 文件写失败不阻断主流程，但清空缓存避免 stream 与文件长期不一致
+            global _ACTIVITY_DESCRIPTIONS_CACHE, _ACTIVITY_GUIDES
+            _ACTIVITY_DESCRIPTIONS_CACHE = None
+            _ACTIVITY_GUIDES = None
+            logger.warning(f"[mind] write activity md failed: {e}")
 
     def _set_active_activity(self, decision: dict) -> str:
         """切换到已有活动（只切换，不创建）。返回提示消息，空串表示无操作。"""
