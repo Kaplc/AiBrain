@@ -209,7 +209,6 @@ class AutonomousMind:
         self._last_perceived_state: dict = {}  # 上次感知快照（供 perceive diff）
         self._message_queue: list[str] = []  # 用户消息缓冲（alive tick 自行读取）
         self._current_user_msg: str = ""     # 给 _build_context 用，第一轮后清空
-        self._output_user_msg: str = ""      # 给 _write_output 用，整个 tick 稳定不变
 
     # ── 入口：一次意识流 tick ──────────────────────────────
     def tick(self, ctx: dict) -> dict:
@@ -221,12 +220,11 @@ class AutonomousMind:
         life_state = ctx.get("life_state", {}) or {}
 
         # 0. 消费一条用户消息（每 tick 只消费一次），供整个 tick 使用
+        # 用户消息由 chat_send 发送时即写入 output.json，这里只取出供上下文使用
         if not dry_run:
             self._current_user_msg = self._drain_message_queue()
         else:
             self._current_user_msg = ""
-        self._output_user_msg = self._current_user_msg  # 快照，_write_output 使用
-
         # 1. 感知环境变化（diff 检测）；dry_run 不更新基线，避免污染真实感知
         signals = self._perceive(life_state) if not dry_run else {}
 
@@ -237,6 +235,15 @@ class AutonomousMind:
 
         # 内部循环：连续 use_tool 多轮，直到终止动作或卡住
         while True:
+            # 优先响应用户新消息：自主 tick 中途收到用户消息 → 尽快收尾，下次 tick 立即处理
+            if (not self._current_user_msg and not dry_run and self._message_queue
+                    and get_brain_config().get("consciousness_preempt_on_user_message", True)):
+                _acc = " | ".join(str(x)[:60] for x in loop_ctx.get("accumulated", [])[-3:])
+                logger.info(f"[mind] user message arrived mid-tick, wrapping up to respond promptly "
+                            f"(cycle={loop_ctx['cycle']} last_action={self._last_action} "
+                            f"accumulated=[{_acc}])")
+                self._last_action = "rest"
+                return self._finish("rest", {"thought": "interrupted by user message"}, loop_ctx)
             # 最大循环兜底（防止 AI 无限 think/speak 不 rest）
             if loop_ctx["cycle"] >= max_cycles:
                 logger.info(f"[mind] max cycles ({max_cycles}) reached, force rest")
@@ -251,10 +258,10 @@ class AutonomousMind:
             action = str(decision.get("action", "rest")).strip()
             # 每个周期日志：动作 + 详情 + 当前活动
             detail = decision.get("action_detail", "") or decision.get("tool_name", "") or ""
-            cur_activity = context.get("activities", "")[:60].replace("\n", " ")
+            cur_activity = context.get("activities", "").replace("\n", " ")
             logger.info(
                 f"[mind] cycle {loop_ctx['cycle']}: {action}"
-                + (f" ({detail[:40]})" if detail else "")
+                + (f" ({detail})" if detail else "")
                 + (f" | activity: {cur_activity}" if "当前：" in cur_activity else "")
             )
             # 记录 cycle 轨迹（供前端回放）
@@ -287,7 +294,7 @@ class AutonomousMind:
                 self._last_action = "use_tool"
                 logger.info(
                     f"[mind] cycle {loop_ctx['cycle']} use_tool="
-                    f"{decision.get('tool_name','')} -> {result[:80]}"
+                    f"{decision.get('tool_name','')} -> {result}"
                 )
                 if loop_ctx["stuck"] >= 2:
                     logger.info("[mind] stuck on repeated tool call -> rest")
@@ -421,7 +428,7 @@ class AutonomousMind:
             decision = _parse_decision(raw)
             logger.info(
                 f"[mind] decide action={decision.get('action','rest')} "
-                f"thought={str(decision.get('thought',''))[:60]}"
+                f"thought={str(decision.get('thought',''))}"
             )
             return decision
         except Exception as e:
@@ -587,7 +594,7 @@ class AutonomousMind:
             self._state.mark_proactive_contact()
             self._save_stream(thought=f"跟志远说了：{content}", mood=mood, dialogue=content)
             self._rest_streak = 0
-            logger.info(f"[mind] speak -> {content[:60]}")
+            logger.info(f"[mind] speak -> {content}")
             return
 
         # rest（含未知动作兜底）
@@ -602,7 +609,7 @@ class AutonomousMind:
         logger.info(
             f"[mind] finish: {action} | {cycles} cycles, {tools} tools"
             + (f" | llm_skipped={llm_skipped}" if llm_skipped else "")
-            + (f" | {str(decision.get('thought',''))[:80]}" if decision.get("thought") else "")
+            + (f" | {str(decision.get('thought',''))}" if decision.get("thought") else "")
         )
         return {
             "action": action,
@@ -644,7 +651,7 @@ class AutonomousMind:
             stream["activities"] = acts
 
         self._state.mutate_stream(_fn)
-        logger.info(f"[mind] created activity: {name[:60]}")
+        logger.info(f"[mind] created activity: {name}")
 
         # 同步写 .md 文件，让 AI 自建活动与系统活动走同一通道
         self._write_activity_md(name, context, guide, now_iso)
@@ -702,9 +709,9 @@ class AutonomousMind:
 
         self._state.mutate_stream(_fn)
         if found[0]:
-            logger.info(f"[mind] switched to activity: {target[:60]}")
+            logger.info(f"[mind] switched to activity: {target}")
             return f"已切换到活动：{target}"
-        logger.info(f"[mind] switch ignored: {target[:60]} not found")
+        logger.info(f"[mind] switch ignored: {target} not found")
         return ""
 
     def _activities_for_prompt(self, stream: dict) -> str:
@@ -726,20 +733,6 @@ class AutonomousMind:
             lines.append("其他：" + ", ".join(a.get("name", "") for a in others))
         return "\n".join(lines)
 
-    # ── reactive 集成：记录对话到意识流 ───────────────────
-    def record_conversation(self, user_msg: str, reply: str) -> None:
-        """用户消息回复后，把对话摘要写入内心独白，让下次 tick 记得刚才聊过。"""
-        entry = f"志远说：{(user_msg or '')[:80]} │ 我说：{(reply or '')[:80]}"
-        cap = int(get_brain_config().get("consciousness_dialogue_cap", 8))
-
-        def _fn(stream):
-            stream["internal_dialogue"].append(entry[:300])
-            if len(stream["internal_dialogue"]) > cap:
-                del stream["internal_dialogue"][:len(stream["internal_dialogue"]) - cap]
-
-        self._state.mutate_stream(_fn)
-        self._rest_streak = 0  # 用户来了 → AI 应该清醒
-
     def handle_user_message(self, user_msg: str) -> None:
         """收到用户消息，放入缓冲队列。alive tick 会在下一轮自行读取处理。"""
         self._message_queue.append(user_msg)
@@ -750,7 +743,7 @@ class AutonomousMind:
         if not self._message_queue:
             return ""
         msg = self._message_queue.pop(0)
-        logger.info(f"[mind] processing user message: {msg[:60]}")
+        logger.info(f"[mind] processing user message: {msg}")
         # 记录用户回复时间到持久化 tick_log（重启恢复 idle_seconds 用）
         try:
             from .tick_log import record_user_reply
@@ -796,11 +789,10 @@ class AutonomousMind:
         return mins < cooldown
 
     def _write_output(self, content: str) -> None:
+        """speak 内容作为独立 assistant 条目写入 output.json（emit 推前端实时刷新）。"""
         try:
             from main_brain.memory.workmemory import get_work_memory
-            get_work_memory().output_mem_write(content=content, user_prompt=self._output_user_msg)
-            # 首次 speak 后清空，同一次 tick 内后续 speak 不再携带用户消息
-            self._output_user_msg = ""
+            get_work_memory().output_mem_write(content=content)
         except Exception as e:
             logger.warning(f"[mind] write output failed: {e}")
 
@@ -836,7 +828,26 @@ class AutonomousMind:
             hits = search_memory(query)[:3]
             if not hits:
                 return "（暂无相关记忆）"
-            return " | ".join((h.get("text", "") or h.get("memory", ""))[:80] for h in hits)
+            lines = []
+            for i, h in enumerate(hits, 1):
+                text = (h.get("text", "") or h.get("memory", ""))[:80]
+                score = h.get("score", 0)
+                payload = h.get("payload") or {}
+                entry = f"• {text} ({score:.2f})"
+                # 情景核心
+                ep = payload.get("episodic")
+                if ep and isinstance(ep, dict):
+                    what = str(ep.get("what", ""))[:150]
+                    if what:
+                        entry += f"\n  └ {what}"
+                # 情感
+                aff = payload.get("affect")
+                if aff and isinstance(aff, dict):
+                    parts = [f"{k}:{v}" for k, v in aff.items() if isinstance(v, (int, float)) and v > 0]
+                    if parts:
+                        entry += f" [{', '.join(parts[:3])}]"
+                lines.append(entry)
+            return "\n".join(lines)
         except Exception:
             return "（记忆检索失败）"
 
@@ -864,7 +875,7 @@ class AutonomousMind:
     def _dialogue_for_prompt(stream: dict, limit: int = 6) -> str:
         """从 stream internal_dialogue 读取对话记录，供 prompt 注入。
 
-        record_conversation() 把完整对话写入 internal_dialogue，
+        drain（用户说）和 speak（猫猫说）分别写入 internal_dialogue，
         这里读回来让 AI 感知上下文。
         """
         dialogue = stream.get("internal_dialogue") or []

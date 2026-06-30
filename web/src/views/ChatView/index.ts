@@ -16,11 +16,6 @@ export interface ChatMessage {
   is_thought?: number
   isStreaming?: boolean
   created_at?: string
-  duration?: number  // LLM 响应耗时（秒）
-  toolCalls?: Array<{name: string; arguments: Record<string,any>; result: string}>
-  toolName?: string
-  toolArgs?: Record<string, any>
-  memorySteps?: Array<{step: string; status: string}>
 }
 
 const API_BASE = window.location.origin
@@ -67,13 +62,12 @@ export class ChatViewModel {
     } | null,
   })
 
-  private _abortCtl: AbortController | null = null
   private _pollTimer: ReturnType<typeof setInterval> | null = null
   private _pollMsgTimer: ReturnType<typeof setInterval> | null = null
-  private _msgCountOnLastLoad = 0
   private _toast = useToast()
   private _scrollFn: (() => void) | null = null
   private _evtSource: EventSource | null = null
+  private _typewriterTimer: ReturnType<typeof setInterval> | null = null
 
   /* setScrollFn：由 Vue 组件注入 scrollToBottom 方法 */
   setScrollFn(fn: () => void) {
@@ -125,7 +119,6 @@ export class ChatViewModel {
     this.loadState()
     this._pollTimer = setInterval(() => this.loadState(), 10000)
     // 后台主动消息轮询——只在非 streaming 时刷新，避免冲掉流式回复
-    this._msgCountOnLastLoad = this.messages.length
     this._pollMsgTimer = setInterval(() => this._reloadIfIdle(), 30000)
     this.startEventStream()
   }
@@ -138,19 +131,26 @@ export class ChatViewModel {
       // 只在消息条数或最后一条内容有变化时才更新
       const last = data.messages[data.messages.length - 1]
       const myLast = this.messages[this.messages.length - 1]
-      if (data.messages.length !== this.messages.length ||
-          last?.content !== myLast?.content) {
-        this.messages.splice(0, this.messages.length)
-        for (const m of data.messages) {
-          this.messages.push({
-            role: m.role,
-            content: m.content,
-            created_at: m.created_at,
-            isStreaming: false,
-          })
-        }
-        this._scrollToBottom()
+      if (data.messages.length === this.messages.length &&
+          last?.content === myLast?.content) return
+      // 记录刷新前最后一条 assistant 内容，用于判断哪条是"新增"需打字机
+      const prevLastAssistant = [...this.messages].reverse().find(m => m.role === 'assistant')?.content
+      this.messages.splice(0, this.messages.length)
+      for (const m of data.messages) {
+        this.messages.push({
+          role: m.role,
+          content: m.content,
+          created_at: m.created_at,
+          isStreaming: false,
+        })
       }
+      // 新增的最后一条 assistant → 本地打字机动画（收到后才逐字出现）
+      const newLastAssistant = [...this.messages].reverse().find(m => m.role === 'assistant')
+      if (newLastAssistant && newLastAssistant.content &&
+          newLastAssistant.content !== prevLastAssistant) {
+        this._typewriter(newLastAssistant)
+      }
+      this._scrollToBottom()
     } catch {
       // 静默失败
     }
@@ -165,6 +165,10 @@ export class ChatViewModel {
     if (this._pollMsgTimer) {
       clearInterval(this._pollMsgTimer)
       this._pollMsgTimer = null
+    }
+    if (this._typewriterTimer) {
+      clearInterval(this._typewriterTimer)
+      this._typewriterTimer = null
     }
     this.stopEventStream()
   }
@@ -217,134 +221,62 @@ export class ChatViewModel {
     }
   }
 
-  /* sendMessage：发送消息 + SSE 流式接收 */
+  /* sendMessage：发送消息（后端写盘 + 入队，回复经 EventSource 刷新 + 本地打字机显示） */
   async sendMessage(text: string): Promise<void> {
     if (!text.trim() || this.sending.value) return
 
-    // 追加用户消息
+    // 追加用户消息（乐观显示，后端写盘后 EventSource 刷新确认）
     const _ts = new Date()
     const _tsStr = `${_ts.getFullYear()}-${String(_ts.getMonth()+1).padStart(2,'0')}-${String(_ts.getDate()).padStart(2,'0')} ${String(_ts.getHours()).padStart(2,'0')}:${String(_ts.getMinutes()).padStart(2,'0')}:${String(_ts.getSeconds()).padStart(2,'0')}`
     this.messages.push({ role: 'user', content: text, created_at: _tsStr })
     this._scrollToBottom()
-
-    // 占位 assistant 消息（不加 created_at，done 时才设）
-    const streamMsg: ChatMessage = { role: 'assistant', content: '', isStreaming: true, duration: 0 }
-    this.messages.push(streamMsg)
-    const idx = this.messages.length - 1
     this.sending.value = true
-    this._abortCtl = new AbortController()
 
     try {
       const resp = await fetch(`${API_BASE}/chat/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
-        signal: this._abortCtl.signal,
       })
-
       if (resp.status === 503) {
         const data = await resp.json()
-        this.messages.splice(idx, 1) // 删占位
         this._toast.show(data.message || '请先配置 Chat', 'error')
         return
       }
-      if (resp.status === 409) {
-        const data = await resp.json()
-        this.messages.splice(idx, 1)
-        this._toast.show(data.message || 'AI 正在思考', 'info')
-        return
-      }
       if (!resp.ok) {
-        this.messages.splice(idx, 1)
         this._toast.show(`请求失败 ${resp.status}`, 'error')
         return
       }
-
-      // SSE 读取
-      const reader = resp.body!.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      const startTime = performance.now()
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const parts = buf.split('\n\n')
-        buf = parts.pop() ?? ''
-        for (const part of parts) {
-          if (part.startsWith(':')) continue // 心跳
-          if (!part.startsWith('data:')) continue
-          try {
-            const payload = JSON.parse(part.slice(5).trim())
-            if (payload.type === 'token') {
-              this.messages[idx].content += payload.content || ''
-              this._scrollToBottom()
-            } else if (payload.type === 'error') {
-              this._toast.show(`AI 响应出错: ${payload.message}`, 'error')
-            } else if (payload.type === 'memory_step') {
-              // 记忆搜索步骤（语义搜索、图扩散等）
-              if (!this.messages[idx].memorySteps) {
-                this.messages[idx].memorySteps = []
-              }
-              // 如果已存在同名步骤，更新其状态；否则追加
-              const exist = this.messages[idx].memorySteps.find(s => s.step === payload.step)
-              if (exist) {
-                exist.status = payload.status
-              } else {
-                this.messages[idx].memorySteps.push({ step: payload.step, status: payload.status })
-              }
-              this._scrollToBottom()
-            } else if (payload.type === 'tool_call') {
-              // 工具调用追加到 assistant 气泡内
-              if (!this.messages[idx].toolCalls) {
-                this.messages[idx].toolCalls = []
-              }
-              this.messages[idx].toolCalls.push({
-                name: payload.name,
-                arguments: payload.arguments || {},
-              })
-              this._scrollToBottom()
-            } else if (payload.type === 'token_estimate') {
-              this.loopState.prompt_tokens = payload.prompt_tokens || 0
-            } else if (payload.type === 'done') {
-              this.messages[idx].isStreaming = false
-              this.messages[idx].duration = parseFloat(((performance.now() - startTime) / 1000).toFixed(1))
-              // 回复完成才记录时间，与后端 output.json 行为一致
-              const now = new Date()
-              this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
-            }
-          } catch {
-            // JSON parse error → skip
-          }
-        }
-      }
-      // 兜底标记完成（含时间戳）
-      this.messages[idx].isStreaming = false
-      if (!this.messages[idx].created_at) {
-        const now = new Date()
-        this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
-      }
+      // 发送成功：用户消息已由后端写盘 + emit，猫猫回复经 EventSource 实时刷新 + 打字机显示
     } catch (e: any) {
-      if (e.name === 'AbortError') {
-        this.messages[idx].content += ' [已取消]'
-        this.messages[idx].isStreaming = false
-        // AbortError 也设时间
-        const now = new Date()
-        this.messages[idx].created_at = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
-      } else {
-        this._toast.show(String(e), 'error')
-        this.messages.splice(idx, 1)
-      }
+      this._toast.show(String(e), 'error')
     } finally {
       this.sending.value = false
-      this._abortCtl = null
     }
   }
 
-  /* abortStream：取消当前流式响应 */
-  abortStream(): void {
-    this._abortCtl?.abort()
+  /* _typewriter：对一条已收到的完整消息做本地逐字打字机效果（收到后才动画，假表象） */
+  private _typewriter(msg: ChatMessage): void {
+    if (!msg.content || msg.isStreaming) return
+    if (this._typewriterTimer) { clearInterval(this._typewriterTimer); this._typewriterTimer = null }
+    const full = msg.content
+    msg.content = ''
+    msg.isStreaming = true
+    const step = Math.max(1, Math.ceil(full.length / 50))  // 约 1.5 秒打完
+    let i = 0
+    this._typewriterTimer = setInterval(() => {
+      i += step
+      if (i >= full.length) {
+        msg.content = full
+        msg.isStreaming = false
+        if (this._typewriterTimer) { clearInterval(this._typewriterTimer); this._typewriterTimer = null }
+      } else {
+        msg.content = full.slice(0, i)
+      }
+      this._scrollToBottom()
+    }, 30)
   }
+
 
   /* clearChat：清空对话 */
   async clearChat(): Promise<void> {

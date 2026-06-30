@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _memory_search_fn(query: str) -> str:
-    """搜索长期记忆库，返回 top 5 结果摘要"""
+    """搜索长期记忆库，返回 top 5 结果的完整详情（含情景描述、情感、正文）"""
     from main_brain.memory.core import search_memory
     results = search_memory(query)
     if not results:
@@ -21,8 +21,54 @@ def _memory_search_fn(query: str) -> str:
     for i, r in enumerate(results[:5], 1):
         text = r.get("text", "")
         score = r.get("score", 0)
-        lines.append(f"{i}. {text} (相似度: {score:.2f})")
-    return "\n".join(lines)
+        payload = r.get("payload") or {}
+
+        # 标题 + 相似度
+        entry = f"{i}. {text} (相似度: {score:.2f})"
+
+        # 情景详情（核心内容）
+        episodic = payload.get("episodic")
+        if episodic and isinstance(episodic, dict):
+            what = episodic.get("what", "")
+            why = episodic.get("why", "")
+            result = episodic.get("result", "")
+            lesson = episodic.get("lesson", [])
+            details = []
+            if what:
+                details.append(f"  情景: {what[:200]}")
+            if why:
+                details.append(f"  起因: {why[:200]}")
+            if result:
+                details.append(f"  结果: {result[:200]}")
+            if lesson:
+                details.append(f"  教训: {'; '.join(str(l)[:100] for l in lesson[:3])}")
+            if details:
+                entry += "\n" + "\n".join(details)
+
+        # 情感分布
+        affect = payload.get("affect")
+        if affect and isinstance(affect, dict):
+            affect_str = ", ".join(
+                f"{k}:{v}" for k, v in affect.items()
+                if isinstance(v, (int, float)) and v > 0
+            )
+            if affect_str:
+                entry += f"\n  情感: {affect_str[:120]}"
+
+        # 完整正文（embedding 源文本，包含最完整的信息）
+        embed_text = payload.get("embedding_text", "")
+        if embed_text and len(embed_text) > len(text):
+            entry += f"\n  详情: {embed_text[:300]}"
+            if len(embed_text) > 300:
+                entry += "…"
+
+        # 时间
+        created_at = payload.get("created_at", "")
+        if created_at:
+            entry += f"\n  时间: {created_at[:19]}"
+
+        lines.append(entry)
+    return "\n\n".join(lines)
 
 
 def _memory_store_fn(text: str) -> str:

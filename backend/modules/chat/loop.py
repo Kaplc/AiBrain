@@ -231,7 +231,8 @@ def send_message(
         # 写入工作记忆 output.md
         try:
             from main_brain.memory.workmemory import get_work_memory
-            get_work_memory().output_mem_write(assistant_text, user_prompt=prompt)
+            get_work_memory().output_mem_write(content="", user_prompt=prompt)
+            get_work_memory().output_mem_write(content=assistant_text)
             logger.info("[loop] assistant reply written to workmemory output.md")
         except Exception as e:
             logger.warning(f"[loop] output_mem_write failed: {e}")
@@ -410,7 +411,8 @@ def _tool_loop(
     # 3. 写入工作记忆（只写 user/assistant 纯文本，不写工具消息）
     try:
         from main_brain.memory.workmemory import get_work_memory
-        get_work_memory().output_mem_write(final_text, user_prompt=prompt)
+        get_work_memory().output_mem_write(content="", user_prompt=prompt)
+        get_work_memory().output_mem_write(content=final_text)
         logger.info("[loop] tool loop output written to workmemory")
     except Exception as e:
         logger.warning(f"[loop] output_mem_write failed: {e}")

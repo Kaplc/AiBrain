@@ -242,6 +242,38 @@ class WorkMemoryManager:
 
     # ── output.json 专用方法 ──────────────────────────────
 
+    def _prune_entries(self, entries: list[dict]) -> tuple[list[dict], int]:
+        """删除超过 2 天的条目 + 1000 条硬上限，返回 (清理后列表, 删除数)。"""
+        now = datetime.now()
+        cutoff = now - timedelta(days=2)
+        before = len(entries)
+        kept = []
+        for e in entries:
+            t = _parse_time(e.get("time", ""))
+            if t is not None and t >= cutoff:
+                kept.append(e)
+        if len(kept) > 1000:
+            kept = kept[-1000:]
+        return kept, before - len(kept)
+
+    def _atomic_write_output(self, entries: list[dict], seq: int, has_user: bool) -> None:
+        """原子写盘 output.json + 刷新注册表 + SSE 推送（best-effort，不阻断写盘）。"""
+        fpath = _BASE_DIR / "output.json"
+        fd, tmp = tempfile.mkstemp(dir=str(_BASE_DIR), suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, fpath)
+        except Exception:
+            os.unlink(tmp)
+            raise
+        self._refresh_registry("output.json")
+        try:
+            from core.event_bus import get_event_bus
+            get_event_bus().emit("workmemory", "new_message", {"seq": seq, "has_user": has_user})
+        except Exception as _e:
+            logger.debug(f"[workmemory] emit new_message failed (non-fatal): {_e}")
+
     def output_mem_write(self, content: str, user_prompt: str = "") -> dict:
         """向 output.json 滚动追加对话记录，超过 2 天的条目自动删除
         使用临时文件 + 原子替换，防止崩溃损坏。
@@ -270,56 +302,24 @@ class WorkMemoryManager:
         seq = max_seq + 1
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
-        entries.append({
-            "seq": seq,
-            "user": user_prompt,
-            "assistant": content,
-            "time": ts,
-        })
+        # 单字段条目：user 消息只写 user，assistant 消息只写 assistant（独立 seq，不配对）
+        entry = {"seq": seq, "time": ts}
+        if user_prompt:
+            entry["user"] = user_prompt
+        if content:
+            entry["assistant"] = content
+        entries.append(entry)
 
-        # 删除超过 2 天的条目
-        cutoff = now - timedelta(days=2)
-        removed = 0
-        before = len(entries)
-        kept = []
-        for e in entries:
-            t = _parse_time(e.get("time", ""))
-            if t is not None and t >= cutoff:
-                kept.append(e)
-        entries = kept
-        removed = before - len(entries)
-
-        # 安全硬上限：防止时间解析异常导致无限增长
-        if len(entries) > 1000:
-            entries = entries[-1000:]
-
-        # 原子写入：临时文件 + os.replace
-        fd, tmp = tempfile.mkstemp(dir=str(_BASE_DIR), suffix=".json")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(entries, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, fpath)
-        except Exception:
-            os.unlink(tmp)
-            raise
-
-        self._refresh_registry("output.json")
+        # 清理过期条目 + 原子写盘 + SSE 推送（共用方法）
+        entries, removed = self._prune_entries(entries)
         has_user = bool(user_prompt)
+        self._atomic_write_output(entries, seq, has_user)
         logger.info(f"[workmemory] output_mem_write: seq={seq} has_user={has_user} total={len(entries)}"
                     + (f" removed={removed}" if removed else ""))
 
-        # 实时推送：通知前端 SSE 重新拉取消息（best-effort，不影响写盘）
-        try:
-            from core.event_bus import get_event_bus
-            get_event_bus().emit(
-                "workmemory", "new_message",
-                {"seq": seq, "has_user": has_user},
-            )
-        except Exception as _e:
-            logger.debug(f"[workmemory] emit new_message failed (non-fatal): {_e}")
-
         return {
             "total": len(entries),
+            "seq": seq,
             "appended": content[:60],
             "removed": removed,
         }

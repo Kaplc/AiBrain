@@ -1,48 +1,8 @@
 """Chat 路由 - /chat/*（SSE 流式 + 消息管理）"""
 import json
 
-from flask import request, jsonify, Response, stream_with_context
+from flask import request, jsonify
 
-
-# ── 事件日志辅助 ──────────────────────────────────────────────
-def _log_reply_event(text: str, source_event_id: str, trace_id: str = "") -> None:
-    """将最终回复记录为一条 BrainEvent（补充事件链，挂到同一 trace 上）。"""
-    try:
-        from main_brain.contracts import BrainEvent, _new_event_id, _now_iso
-        from main_brain.orchestrator import Orchestrator
-        evt = BrainEvent(
-            id=_new_event_id(),
-            parent_id=source_event_id,
-            trace_id=trace_id or source_event_id,
-            source="chat",
-            type="final_reply",
-            modality="text",
-            content=text[:500],
-            timestamp=_now_iso(),
-            salience=0.8,
-        )
-        Orchestrator.get_instance().process_event(evt, max_depth=1)
-    except Exception:
-        pass
-
-
-def _write_chat_history(user_msg: str, reply_text: str) -> None:
-    """把本轮对话追加到 _conversation_history + 通知意识流（不写 output.json，由 loop.py 负责）。"""
-    if not reply_text:
-        return
-    try:
-        from modules.chat.loop import _conversation_history
-        _conversation_history.append({"role": "user", "content": user_msg})
-        _conversation_history.append({"role": "assistant", "content": reply_text})
-    except Exception:
-        pass
-
-    # 通知意识流：记录对话摘要 + 重置 _rest_streak（替代旧的 handle_user_message 入队路径）
-    try:
-        from main_brain.autonomous_mind import get_autonomous_mind
-        get_autonomous_mind().record_conversation(user_msg, reply_text)
-    except Exception:
-        pass
 
 
 
@@ -174,81 +134,30 @@ def register(app, ready_state, logger, stats_db):
         except Exception as e:
             logger.warning(f"[chat] event creation skipped (non-fatal): {e}")
 
-        # ── 意识流路径：消息入队 → alive_tick 处理 → output_mem 变化检测 ──
-        # ChatManager 不再单独调 LLM，所有消息经由 handle_user_message 入队，
-        # 由后台 scheduler 在下一次 alive_tick 中处理，AI 自主决定 speak/think/rest。
-        # SSE 通过轮询 output_mem 检测 AI 的回应。
+        # ── 写 user 条目（立即落盘 + emit 推前端实时刷新），再入队意识流处理 ──
+        # 回复由意识流 speak 写独立 assistant 条目，前端经 EventSource 自动刷新拿到
+        try:
+            from main_brain.memory.workmemory import get_work_memory
+            get_work_memory().output_mem_write(content="", user_prompt=user_msg)
+            logger.info(f"[chat] user msg stored: {user_msg[:40]}")
+        except Exception as e:
+            logger.warning(f"[chat] store user msg failed: {e}")
 
-        from modules.chat import ChatManager
-        mgr = ChatManager.get_instance()
+        try:
+            from main_brain import get_brain_session
+            get_brain_session().run_reactive(user_msg)
+            logger.info(f"[chat] queued for consciousness: msg={user_msg[:40]}")
+        except Exception as e:
+            logger.warning(f"[chat] queue failed: {e}")
 
-        # 标记用户活跃时间（不阻塞）
+        # 标记用户活跃时间
         try:
             from main_brain.adapters.state import get_state_adapter
             get_state_adapter().mark_user_contact()
         except Exception:
             pass
 
-        def generate():
-            yield f"data: {json.dumps({'type': 'start'})}\n\n"
-
-            # ── 1. 消息入队，等 consciousness tick 处理 ──
-            try:
-                from main_brain import get_brain_session
-                get_brain_session().run_reactive(user_msg)
-                logger.info(f"[chat] queued for consciousness: msg={user_msg[:40]}")
-            except Exception as e:
-                logger.warning(f"[chat] queue failed: {e}")
-
-            # ── 2. output_mem 变化检测：等 AI 回应 ──
-            _reply_text = ""
-            try:
-                from main_brain.memory.workmemory import get_work_memory
-                wm = get_work_memory()
-                before = len(wm.output_mem_read())
-            except Exception:
-                before = 0
-
-            import time as _t
-            _deadline = _t.time() + 120  # 最长等 2 分钟
-            while _t.time() < _deadline:
-                try:
-                    entries = get_work_memory().output_mem_read()
-                    if len(entries) > before:
-                        _new = entries[-1]
-                        _reply_text = str(_new.get("assistant") or _new.get("content") or "")
-                        if _reply_text:
-                            logger.info(f"[chat] consciousness response: {_reply_text[:60]}")
-                            break
-                except Exception:
-                    pass
-                _t.sleep(0.5)
-
-            # ── 3. SSE 输出 ──
-            if _reply_text:
-                yield f"data: {json.dumps({'type': 'token', 'content': _reply_text})}\n\n"
-                _log_reply_event(_reply_text, _event_id or "", _event_trace_id or "")
-                _write_chat_history(user_msg, _reply_text)
-            else:
-                logger.warning(f"[chat] no response from consciousness within 120s")
-                yield f"data: {json.dumps({'type': 'error', 'message': 'no response'})}\n\n"
-
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-            # 清除 busy 状态
-            try:
-                mgr.set_status("")
-            except Exception:
-                pass
-
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-            },
-        )
+        return jsonify({'ok': True, 'queued': True})
 
     @app.route('/chat/clear', methods=['POST'])
     def chat_clear():

@@ -46,17 +46,16 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', 'default-key')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', '')
 HTTP_TIMEOUT = int(os.environ.get('HTTP_TIMEOUT', '600'))
 
-_http_session = None
-_http_session_lock = threading.Lock()
+_http_session_local = threading.local()
+
 
 def _get_http_session():
-    global _http_session
-    if _http_session is None:
-        with _http_session_lock:
-            if _http_session is None:
-                _http_session = requests.Session()
-                _http_session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    return _http_session
+    """每个线程独立的 Session（线程安全，避免连接池状态污染）"""
+    if not hasattr(_http_session_local, "session") or _http_session_local.session is None:
+        sess = requests.Session()
+        sess.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        _http_session_local.session = sess
+    return _http_session_local.session
 
 DIRECT_FORWARD_MODELS = ['minimax', 'qwen']
 _selected_model = None
@@ -884,11 +883,15 @@ def stream_openai_to_anthropic(handler, http_response, openai_request, req_id):
     except Exception as e:
         logger.error(f"[#{req_id}] Stream error: {e}")
 
-    # Emit pending message_delta (with accumulated usage)
-    if pending_message_delta:
-        send_sse('message_delta', pending_message_delta)
-
-    send_sse('message_stop', {'type': 'message_stop'})
+    # 安全发送尾部事件（可能在 try 块外，需独立防护 CLIENT_DISCONNECT_ERRORS）
+    try:
+        if pending_message_delta:
+            send_sse('message_delta', pending_message_delta)
+        send_sse('message_stop', {'type': 'message_stop'})
+    except CLIENT_DISCONNECT_ERRORS:
+        pass
+    except Exception:
+        pass
 
     try:
         handler.wfile.flush()

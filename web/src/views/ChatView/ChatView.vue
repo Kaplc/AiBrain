@@ -13,8 +13,6 @@ const savedTip = ref(false)
 const quotePreview = ref('')
 const quoteIndex = ref(-1)
 const showScrollBtn = ref(false)
-const ticker = ref(0)
-let tickerTimer: ReturnType<typeof setInterval> | null = null
 
 const weworkConnected = ref(false)
 
@@ -37,16 +35,6 @@ onMounted(async () => {
   await chatViewModel.loadMessages()
   chatViewModel.startStatePolling()
   await loadWeworkStatus()
-  // 启动计时器，实时更新 streaming 消息的耗时
-  tickerTimer = setInterval(() => {
-    ticker.value++
-    const msgs = chatViewModel.messages
-    for (let i = 0; i < msgs.length; i++) {
-      if (msgs[i].isStreaming && msgs[i].duration !== undefined) {
-        msgs[i].duration = parseFloat((msgs[i].duration! + 0.1).toFixed(1))
-      }
-    }
-  }, 100)
 })
 
 // KeepAlive 切回时刷新状态和滚动到底部
@@ -63,7 +51,6 @@ onDeactivated(() => {
 
 onUnmounted(() => {
   chatViewModel.stopStatePolling()
-  if (tickerTimer) clearInterval(tickerTimer)
 })
 
 function scrollToBottom() {
@@ -116,10 +103,6 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     handleSend()
   }
-}
-
-function handleStop() {
-  chatViewModel.abortStream()
 }
 
 function handleClear() {
@@ -281,46 +264,6 @@ function getDateSeparator(currentTime: string, prevTime: string | null): string 
   return ''
 }
 
-/* 工具标签 */
-const TOOL_ICONS: Record<string, string> = {
-  memory_search: '🔍', memory_store: '💾',
-  file_search: '📁', read_file: '📖',
-  list_directory: '📂', web_fetch: '🌐',
-  plan: '📋', bash: '⌨️',
-  write_file: '✏️', patch: '🩹', execute_code: '▶️',
-  web_search: '🔎', wework_send: '💬',
-}
-
-const TOOL_LABELS: Record<string, string> = {
-  memory_search: '搜索记忆', memory_store: '保存记忆',
-  file_search: '搜索文件', read_file: '读取文件',
-  list_directory: '浏览目录', web_fetch: '获取网页',
-  plan: '计划管理', bash: '执行命令',
-  write_file: '写入文件', patch: '修改文件', execute_code: '执行代码',
-  web_search: '搜索网络', wework_send: '发送企微',
-}
-
-function toolIcon(name: string): string {
-  return TOOL_ICONS[name] || '🔧'
-}
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] || name
-}
-
-function toolArgsText(args: Record<string, any>): string {
-  const parts: string[] = []
-  if (args.pattern) parts.push(`"${args.pattern}"`)
-  if (args.query) parts.push(`"${args.query}"`)
-  if (args.path) parts.push(args.path)
-  if (args.file_pattern) parts.push(args.file_pattern)
-  if (args.url) parts.push(args.url)
-  if (args.command) parts.push(String(args.command).slice(0, 120))
-  if (args.code) parts.push(String(args.code).slice(0, 80))
-  if (args.shell) parts.push(String(args.shell).slice(0, 120))
-  return parts.join('  ') || ''
-}
-
 /* 格式化消息时间：显示 HH:mm:ss */
 function formatMsgTime(time: string): string {
   if (!time) return ''
@@ -419,21 +362,6 @@ function formatMsgTime(time: string): string {
         >
           <!-- 思绪标记 -->
           <span v-if="msg.is_thought === 1" class="thought-badge">💭 思绪</span>
-          <!-- 记忆搜索步骤展示 -->
-          <div v-if="msg.memorySteps?.length" class="memory-steps">
-            <div v-for="(ms, mi) in msg.memorySteps" :key="mi" class="memory-step">
-              <span class="memory-step-icon">{{ ms.status === 'done' ? '✅' : '⏳' }}</span>
-              <span class="memory-step-name">{{ ms.step === 'vector_search' ? '语义搜索' : ms.step === 'graph_recall' ? '图扩散召回' : ms.step }}</span>
-            </div>
-          </div>
-          <!-- 工具调用展示 -->
-          <div v-if="msg.toolCalls?.length" class="tool-calls">
-            <div v-for="(tc, ti) in msg.toolCalls" :key="ti" class="tool-call">
-              <span class="tool-call-icon">{{ toolIcon(tc.name) }}</span>
-              <span class="tool-call-name">{{ toolLabel(tc.name) }}</span>
-              <span class="tool-call-args">{{ toolArgsText(tc.arguments || {}) }}</span>
-            </div>
-          </div>
           <!-- 消息内容 -->
           <div class="msg-content" v-html="renderContent(msg)"></div>
           <!-- 流式状态 + 光标（仅流式期间显示） -->
@@ -444,7 +372,6 @@ function formatMsgTime(time: string): string {
           <!-- 时间戳 + 耗时 -->
           <div v-if="msg.created_at" class="msg-footer" :class="msg.role">
             <span class="msg-time">{{ formatMsgTime(msg.created_at) }}</span>
-            <span v-if="msg.role==='assistant' && msg.duration!==undefined" class="msg-duration">{{ msg.duration.toFixed(1) }}s</span>
           </div>
         </div>
         <!-- 气泡操作栏 -->
@@ -474,16 +401,9 @@ function formatMsgTime(time: string): string {
         :disabled="chatViewModel.sending.value"
       ></textarea>
       <button
-        v-if="chatViewModel.sending.value"
-        class="send-btn stop-btn"
-        @click="handleStop"
-        title="停止"
-      >⏹</button>
-      <button
-        v-else
         class="send-btn"
         @click="handleSend"
-        :disabled="!inputText.trim()"
+        :disabled="chatViewModel.sending.value || !inputText.trim()"
         title="发送"
       >➤</button>
       <button
@@ -618,64 +538,6 @@ function formatMsgTime(time: string): string {
   max-width: 70%;
 }
 
-/* ── 工具调用（气泡内） ── */
-.tool-calls {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-bottom: 6px;
-}
-.tool-call {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(124, 58, 237, 0.1);
-  border: 1px solid rgba(124, 58, 237, 0.2);
-  border-radius: 5px;
-  padding: 3px 10px;
-  font-size: 11px;
-}
-.tool-call-icon {
-  font-size: 12px;
-}
-.tool-call-name {
-  color: #a78bfa;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/* ── 记忆搜索步骤（气泡内） ── */
-.memory-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-.memory-step {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  border-radius: 5px;
-  padding: 2px 8px;
-  font-size: 11px;
-}
-.memory-step-icon {
-  font-size: 10px;
-}
-.memory-step-name {
-  color: #34d399;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.tool-call-args {
-  color: #94a3b8;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .thought-badge {
   display: inline-block;
   font-size: 10px;
@@ -683,12 +545,6 @@ function formatMsgTime(time: string): string {
   color: #a78bfa;
   margin-bottom: 4px;
   opacity: 0.7;
-}
-
-.msg-duration {
-  font-size: 10px;
-  color: #64748b;
-  opacity: 0.6;
 }
 
 /* 时间戳底部栏 */
@@ -901,11 +757,6 @@ function formatMsgTime(time: string): string {
 .send-btn:hover:not(:disabled) { background: #6d28d9; }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .send-btn:active:not(:disabled) { transform: scale(0.95); }
-
-.stop-btn {
-  background: #dc2626;
-}
-.stop-btn:hover { background: #b91c1c; }
 
 .proactive-btn {
   width: 36px;
