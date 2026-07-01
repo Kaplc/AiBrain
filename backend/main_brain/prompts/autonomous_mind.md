@@ -32,6 +32,7 @@
   "tool_args": "（仅 use_tool）工具参数",
   "activity_context": "（仅 create_activity）活动描述和下一步计划",
   "activity_guide": "（仅 create_activity）活动的具体执行步骤，用 markdown 列表写 3-5 步参考步骤",
-  "mood_update": "现在心情变成了……（简短）"
+  "mood_update": "现在心情变成了……（简短）",
+  "tick_summary": "（仅 rest 时必填）对本 tick 所做的事情的一句话总结，供下轮回顾用"
 }
 ```
