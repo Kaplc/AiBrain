@@ -81,48 +81,6 @@ def _get_action_descriptions() -> list[str]:
     return descriptions
 
 
-# ── 活动建议缓存（模块级单次加载）────────────────────────────
-_ACTIVITY_DESCRIPTIONS_CACHE: list[str] | None = None
-
-
-def _get_activity_suggestions() -> list[str]:
-    """从 activities/activity/*.md 读取高层活动描述，供 AI 参考。
-
-    返回格式化的建议列表，如 ["- reflect: 自我反思——回顾近期想法……", …]。
-    若目录不存在或读取出错，返回空列表。只在首次调用时读盘，后续缓存。
-    """
-    global _ACTIVITY_DESCRIPTIONS_CACHE
-    if _ACTIVITY_DESCRIPTIONS_CACHE is not None:
-        return _ACTIVITY_DESCRIPTIONS_CACHE
-
-    dirpath = Path(_ACTIVITIES_DIR)
-    if not dirpath.is_dir():
-        _ACTIVITY_DESCRIPTIONS_CACHE = []
-        return _ACTIVITY_DESCRIPTIONS_CACHE
-
-    suggestions: list[str] = []
-    try:
-        for fpath in sorted(dirpath.glob("*.md")):
-            text = fpath.read_text(encoding="utf-8")
-            name, desc = "", ""
-            for line in text.splitlines():
-                if line.startswith("name:"):
-                    name = line.split(":", 1)[1].strip()
-                elif line.startswith("description:"):
-                    desc = line.split(":", 1)[1].strip()
-                # 只取 frontmatter（--- 结束处）
-                if line.strip() == "---" and name:
-                    break
-            if name and desc:
-                suggestions.append(f"- {name}: {desc}")
-    except Exception as e:
-        logger.warning(f"[mind] load activity suggestions failed: {e}")
-        _ACTIVITY_DESCRIPTIONS_CACHE = []
-
-    _ACTIVITY_DESCRIPTIONS_CACHE = suggestions
-    return suggestions
-
-
 # ── 活动正文指引缓存（name → body）──────────────────────────
 _ACTIVITY_GUIDES: dict[str, str] | None = None
 
@@ -230,7 +188,8 @@ class AutonomousMind:
 
         # 2. 感知信号注入上下文
         loop_ctx = {"cycle": 0, "tool_results": {}, "last_result": "",
-                    "accumulated": [], "stuck": 0, "cycles_data": []}
+                    "accumulated": [], "stuck": 0, "cycles_data": [],
+                    "tool_chain": [], "last_thought": ""}  # tick 内每步工具调用：assistant 决策 + tool 结果
         max_cycles = int(get_brain_config().get("consciousness_max_cycles", 30))
 
         # 内部循环：连续 use_tool 多轮，直到终止动作或卡住
@@ -256,6 +215,8 @@ class AutonomousMind:
                 self._current_user_msg = ""
             decision = self._llm_decide(context, dry_run=dry_run)
             action = str(decision.get("action", "rest")).strip()
+            # 保存本轮 thought，供下轮 _build_context 作为【刚才在想什么】
+            loop_ctx["last_thought"] = str(decision.get("thought", ""))
             # 每个周期日志：动作 + 详情 + 当前活动
             detail = decision.get("action_detail", "") or decision.get("tool_name", "") or ""
             cur_activity = context.get("activities", "").replace("\n", " ")
@@ -283,6 +244,17 @@ class AutonomousMind:
             # use_tool：执行并把结果注入下一轮（继续循环）
             if action == "use_tool":
                 result = self._execute_tool(decision, loop_ctx)
+                # 保存工具调用轨迹：assistant（决策）+ tool（结果）
+                loop_ctx["tool_chain"].append({
+                    "role": "assistant",
+                    "content": f"【我决定】想法：{decision.get('thought', '')}\n"
+                               f"调用工具：{decision.get('tool_name', '')}\n"
+                               f"参数：{str(decision.get('tool_args', ''))}"
+                })
+                loop_ctx["tool_chain"].append({
+                    "role": "tool",
+                    "content": str(result)
+                })
                 # 连续重复请求同一工具 → 提前结束，避免空转烧 token
                 if str(result).startswith("[缓存]"):
                     loop_ctx["stuck"] += 1
@@ -370,6 +342,9 @@ class AutonomousMind:
         except Exception:
             pass
 
+        except Exception as e:
+            logger.warning(f"[mind] _perceive output_mem_read failed: {e}")
+
         # 3. 时间变化（跨时段 / 跨天，本地时间）
         from .clock import get_brain_clock
         clock = get_brain_clock()
@@ -394,17 +369,18 @@ class AutonomousMind:
     def _build_context(self, ctx: dict, loop_ctx: dict, signals: dict | None = None) -> dict:
         life_state = ctx.get("life_state", {}) or {}
         stream = self._state.read_stream()
-        last_thought = stream.get("last_thought", "")
+        # 内循环中用上一轮 decision 的 thought，更准确
+        last_thought = (loop_ctx.get("last_thought") or stream.get("last_thought", ""))
         focus = stream.get("focus") or life_state.get("current_focus", "")
         base = {
             "last_thought": last_thought,
+            "last_tick_summary": stream.get("last_tick_summary", ""),
             "mood": stream.get("mood", "平静"),
             "user_message": self._current_user_msg,  # tick 开始时已消费，内循环复用同一消息
             "recent_conversation": self._recent_chat(),
-            "dialogue_history": self._dialogue_for_prompt(stream),
+            "dialogue_history": self._dialogue_for_prompt(),
             "memory_surfaced": self._recall(focus or last_thought),
             "concerns": self._concerns_snapshot(),
-            "already_said": self._recent_outputs(),
             "idle_seconds": life_state.get("idle_seconds", 0),
             "time_of_day": self._time_of_day(),
             "activities": self._activities_for_prompt(stream),
@@ -413,19 +389,51 @@ class AutonomousMind:
         }
         if loop_ctx["cycle"] == 0:
             return base
-        # 内循环后续轮：注入上一步结果与已有发现
+        # 内循环后续轮：注入上一步工具调用轨迹
         base["step"] = loop_ctx["cycle"] + 1
-        base["last_step_result"] = (loop_ctx["last_result"] or "")[:500]
-        base["findings_so_far"] = list(loop_ctx["accumulated"][-6:])
+        base["tool_chain"] = list(loop_ctx.get("tool_chain", []))
         return base
 
     # ── LLM 决策 ───────────────────────────────────────────
     def _llm_decide(self, context: dict, dry_run: bool) -> dict:
         if dry_run:
-            return {"action": "rest", "thought": "dry_run"}
+            return {"action": "rest", "thought": "dry_run", "tick_summary": ""}
         try:
-            raw = self._call_llm(self._system_prompt(), self._user_prompt(context))
+            messages = [
+                {"role": "system", "content": self._system_prompt()},
+                {"role": "system", "content": (
+                    f"【可以做的行为】\n"
+                    f"{chr(10).join(_get_action_descriptions()) or '（暂无可用动作）'}"
+                )},
+                {"role": "system", "content": f"【可以做的活动】\n{context.get('activities')}"},
+                {"role": "system", "content": f"【工作记忆】\n{context.get('working_memory')}"},
+            ]
+            guide = _load_activity_guide(context)
+            if guide:
+                messages.append({"role": "system", "content": f"【当前活动执行指引】\n{guide}"})
+            messages.extend(self._user_prompt(context))
+            raw = self._call_llm(messages)
             decision = _parse_decision(raw)
+            action = decision.get("action", "rest")
+
+            # rest 必须带 tick_summary，否则追加提醒重新生成（最多 3 次）
+            retry = 0
+            while action == "rest" and not str(decision.get("tick_summary", "")).strip() and retry < 3:
+                retry += 1
+                logger.info(f"[mind] rest without tick_summary, remind (retry={retry})")
+                reminder = (
+                    "【tick_summary 缺失】你选择了 rest 结束本轮，但必须同时提供 "
+                    "`tick_summary` 字段——对本 tick 所做的事情的一句话总结，供下轮自己回顾。"
+                    "请重新输出完整决策 JSON，包含 tick_summary。"
+                )
+                messages.append({"role": "user", "content": reminder})
+                raw = self._call_llm(messages)
+                decision = _parse_decision(raw)
+                action = decision.get("action", "rest")
+
+            if not str(decision.get("tick_summary", "")).strip() and action == "rest":
+                decision["tick_summary"] = f"进行了 {context.get('step', 1)} 轮思考后选择 rest"
+
             logger.info(
                 f"[mind] decide action={decision.get('action','rest')} "
                 f"thought={str(decision.get('thought',''))}"
@@ -433,7 +441,7 @@ class AutonomousMind:
             return decision
         except Exception as e:
             logger.warning(f"[mind] llm decide failed: {e}")
-            return {"action": "rest", "thought": f"llm_error: {e}"}
+            return {"action": "rest", "thought": f"llm_error: {e}", "tick_summary": "LLM 异常结束"}
 
     def _build_llm_config(self):
         from modules.LLM import LLMConfig
@@ -452,13 +460,13 @@ class AutonomousMind:
         base["thinking_mode"] = False
         return LLMConfig.from_dict(base)
 
-    def _call_llm(self, system: str, user: str) -> str:
+    def _call_llm(self, messages: list[dict]) -> str:
         from modules.LLM import get_llm_manager
         cfg = self._build_llm_config()
         ok, err = cfg.validate()
         if not ok:
             raise RuntimeError(f"invalid llm config: {err}")
-        return get_llm_manager().complete(system, user, cfg)
+        return get_llm_manager().complete_messages(messages, cfg)
 
     def _system_prompt(self) -> str:
         persona = self._persona()
@@ -466,38 +474,44 @@ class AutonomousMind:
         return (tpl.replace("{name}", persona["name"])
                    .replace("{traits}", persona["traits"]))
 
-    def _user_prompt(self, context: dict) -> str:
+    def _user_prompt(self, context: dict) -> list[dict]:
+        """构建多 role 消息数组，按 assistant / tool / user 区分，
+
+        让 provider prefix caching 命中 system + assistant 固定前缀，
+        只需重新计算变动的 user 部分。
+        """
         idle_desc = self._idle_desc(int(context.get("idle_seconds", 0) or 0))
-        parts = []
+        messages = []
+
+        # ── assistant role：AI 自己的历史想法 / 输出 / 对话 ──
+        tick_summary = context.get('last_tick_summary')
+        if tick_summary:
+            messages.append({"role": "assistant", "content": f"【上次 ticks 总结】\n{tick_summary}"})
+        thought = context.get('last_thought')
+        if thought:
+            messages.append({"role": "assistant", "content": f"【刚才在想什么】\n{thought}"})
+        msgs_history = context.get('dialogue_history')
+        if msgs_history and msgs_history != "（暂无对话记录）":
+            messages.append({"role": "tool", "content": f"【对话记录】\n{msgs_history}"})
+        # ── tool role：内循环中上一步工具调用 + 结果（成对保存） ──
+        for entry in (context.get("tool_chain") or []):
+            messages.append(entry)
+
+        # ── user role：当前 tick 的感知 + 上下文 + 指令 ──
+        user_parts = []
+        user_parts.append(
+            f"【感知】\n- 时间：{context.get('time_of_day')}，{idle_desc}\n"
+            f"- 心情：{context.get('mood')}\n"
+            f"- 你在意的事：{context.get('concerns')}\n"
+            f"- 环境变化：{context.get('perceive_signals')}"
+        )
+        user_parts.append(f"【刚才浮现的记忆】\n{context.get('memory_surfaced')}")
         if context.get("user_message"):
-            parts.append(f"【用户消息】\n{context['user_message']}")
-        parts += [
-            f"【刚才在想什么】\n{context.get('last_thought') or '（一片空白）'}",
-            (f"【感知】\n- 时间：{context.get('time_of_day')}，{idle_desc}\n"
-             f"- 心情：{context.get('mood')}\n"
-             f"- 刚才浮现的记忆：{context.get('memory_surfaced')}\n"
-             f"- 你在意的事：{context.get('concerns')}\n"
-             f"- 环境变化：{context.get('perceive_signals')}"),
-            f"【最近聊天】\n{context.get('recent_conversation')}",
-            f"【对话记录】\n{context.get('dialogue_history')}",
-            f"【最近说过的话（最好别重复）】\n{context.get('already_said')}",
-            f"【工作记忆（当前在意的几件事）】\n{context.get('working_memory')}",
-            f"【你可以做的事】\n{chr(10).join(_get_action_descriptions()) or '（暂无可用动作）'}",
-            f"【长期活动】\n{context.get('activities')}",
-            f"【你可以参考的高层活动】\n{chr(10).join(_get_activity_suggestions()) or '（暂无参考活动）'}",
-        ]
-        # 如果 AI 当前有正在执行的活动，注入对应 .md 正文指引
-        guide = _load_activity_guide(context)
-        if guide:
-            parts.append(f"【当前活动执行指引】\n{guide}")
-        if context.get("step"):
-            parts.append(
-                f"【当前任务进度】第 {context['step']} 步\n"
-                f"上一步结果：{context.get('last_step_result', '')}\n"
-                f"已有发现：{context.get('findings_so_far', [])}"
-            )
-        parts.append("此刻你想做什么？请输出决策 JSON。")
-        return "\n\n".join(parts)
+            user_parts.append(f"【用户消息】\n{context['user_message']}")
+        user_parts.append("此刻你想做什么？请输出决策 JSON。")
+        messages.append({"role": "user", "content": "\n\n".join(user_parts)})
+
+        return messages
 
     # ── 工具层（复用 ToolAdapter + 记忆 core）──────────────
     def _execute_tool(self, decision: dict, loop_ctx: dict) -> str:
@@ -587,6 +601,7 @@ class AutonomousMind:
             content = (str(decision.get("action_detail", "")) or thought).strip()
             if not content:
                 self._rest_streak += 1
+                logger.info(f"[mind] speak with empty content, treat as rest (thought={thought[:60]})")
                 return
             if dry_run:
                 return
@@ -611,6 +626,10 @@ class AutonomousMind:
             + (f" | llm_skipped={llm_skipped}" if llm_skipped else "")
             + (f" | {str(decision.get('thought',''))}" if decision.get("thought") else "")
         )
+        # 跨 tick 保存本次 tick_summary
+        tick_summary = str(decision.get("tick_summary", "")).strip()
+        if tick_summary:
+            self._state.mutate_stream(lambda s: s.update({"last_tick_summary": tick_summary}))
         return {
             "action": action,
             "output": str(decision.get("action_detail", "")) if action == "speak" else "",
@@ -695,6 +714,7 @@ class AutonomousMind:
         """切换到已有活动（只切换，不创建）。返回提示消息，空串表示无操作。"""
         target = str(decision.get("action_detail", "")).strip()
         if not target:
+            logger.warning(f"[mind] set_activity with empty target (thought={str(decision.get('thought',''))[:60]})")
             return ""
         found = [False]
 
@@ -748,10 +768,10 @@ class AutonomousMind:
         try:
             from .tick_log import record_user_reply
             record_user_reply()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[mind] record_user_reply failed: {e}")
         self._state.mark_user_contact()
-        self._state.set_loop_status("chatting", activity="respond", focus=msg[:40])
+        self._state.set_loop_status("chatting", activity="respond", focus=msg)
         # 记录到 stream 让上下文连贯
         def _fn(stream):
             stream.setdefault("internal_dialogue", []).append(
@@ -804,19 +824,10 @@ class AutonomousMind:
             lines = []
             for e in entries[-limit:]:
                 if e.get("user"):
-                    lines.append("用户：" + str(e["user"])[:80])
+                    lines.append("用户：" + str(e["user"]))
                 if e.get("assistant"):
-                    lines.append("猫猫：" + str(e["assistant"])[:80])
+                    lines.append("猫猫：" + str(e["assistant"]))
             return "\n".join(lines) if lines else "（最近没有聊天）"
-        except Exception:
-            return "（无法读取）"
-
-    def _recent_outputs(self, limit: int = 4) -> str:
-        try:
-            from main_brain.memory.workmemory import get_work_memory
-            entries = get_work_memory().output_mem_read()
-            out = [str(e["assistant"])[:80] for e in entries[-limit:] if e.get("assistant")]
-            return " | ".join(out) if out else "（最近没说话）"
         except Exception:
             return "（无法读取）"
 
@@ -829,25 +840,21 @@ class AutonomousMind:
             if not hits:
                 return "（暂无相关记忆）"
             lines = []
-            for i, h in enumerate(hits, 1):
-                text = (h.get("text", "") or h.get("memory", ""))[:80]
-                score = h.get("score", 0)
-                payload = h.get("payload") or {}
-                entry = f"• {text} ({score:.2f})"
-                # 情景核心
-                ep = payload.get("episodic")
-                if ep and isinstance(ep, dict):
-                    what = str(ep.get("what", ""))[:150]
-                    if what:
-                        entry += f"\n  └ {what}"
-                # 情感
-                aff = payload.get("affect")
-                if aff and isinstance(aff, dict):
-                    parts = [f"{k}:{v}" for k, v in aff.items() if isinstance(v, (int, float)) and v > 0]
-                    if parts:
-                        entry += f" [{', '.join(parts[:3])}]"
-                lines.append(entry)
-            return "\n".join(lines)
+            for h in hits:
+                ep = (h.get("payload") or {}).get("episodic")
+                if not ep or not isinstance(ep, dict):
+                    continue
+                parts = []
+                if ep.get("what"):
+                    parts.append(str(ep["what"]))
+                if ep.get("where"):
+                    parts.append(f"地点：{ep['where']}")
+                if ep.get("when"):
+                    parts.append(f"时间：{ep['when']}")
+                if not parts:
+                    continue
+                lines.append("• " + "，".join(parts))
+            return "\n".join(lines) if lines else "（暂无相关记忆）"
         except Exception:
             return "（记忆检索失败）"
 
@@ -871,17 +878,26 @@ class AutonomousMind:
             return "（暂无）"
         return "\n".join(f"- {str(item)[:100]}" for item in wm)
 
-    @staticmethod
-    def _dialogue_for_prompt(stream: dict, limit: int = 6) -> str:
-        """从 stream internal_dialogue 读取对话记录，供 prompt 注入。
+    def _dialogue_for_prompt(self, limit: int = 20) -> str:
+        """从 output.json 读取最近对话记录，供 prompt 注入。
 
-        drain（用户说）和 speak（猫猫说）分别写入 internal_dialogue，
-        这里读回来让 AI 感知上下文。
+        Returns:
+            格式如 "用户说：xxx\n猫猫说：yyy" 的文本，按 seq 倒序取最近 limit 条。
         """
-        dialogue = stream.get("internal_dialogue") or []
-        if not dialogue:
+        try:
+            from main_brain.memory.workmemory import get_work_memory
+            entries = get_work_memory().output_mem_read()
+            if not entries:
+                return "（暂无对话记录）"
+            lines = []
+            for e in entries[-limit:]:
+                if e.get("user"):
+                    lines.append(f"用户说：{str(e['user'])}")
+                if e.get("assistant"):
+                    lines.append(f"猫猫说：{str(e['assistant'])}")
+            return "\n".join(lines) if lines else "（暂无对话记录）"
+        except Exception:
             return "（暂无对话记录）"
-        return "\n".join(str(d)[:150] for d in dialogue[-limit:])
 
     @staticmethod
     def _signals_for_prompt(signals: dict) -> str:
