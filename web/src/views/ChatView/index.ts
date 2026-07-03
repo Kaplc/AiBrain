@@ -63,11 +63,13 @@ export class ChatViewModel {
   })
 
   private _pollTimer: ReturnType<typeof setInterval> | null = null
-  private _pollMsgTimer: ReturnType<typeof setInterval> | null = null
+  private _seqPollTimer: ReturnType<typeof setInterval> | null = null
+  private _lastSeq = 0
   private _toast = useToast()
   private _scrollFn: (() => void) | null = null
   private _evtSource: EventSource | null = null
   private _typewriterTimer: ReturnType<typeof setInterval> | null = null
+  private _pendingReload = false  // 打字机期间错过的刷新，结束后补
 
   /* setScrollFn：由 Vue 组件注入 scrollToBottom 方法 */
   setScrollFn(fn: () => void) {
@@ -95,6 +97,12 @@ export class ChatViewModel {
         }
         this._scrollToBottom()
       }
+      // 初始加载后记住当前 seq，后续轻量轮询只比较 seq 变化
+      try {
+        const seqResp = await fetch(`${API_BASE}/chat/seq`)
+        const seqData = await seqResp.json()
+        this._lastSeq = seqData.seq || 0
+      } catch {}
     } catch (e) {
       console.error('[chat] load messages failed:', e)
     }
@@ -114,13 +122,27 @@ export class ChatViewModel {
     }
   }
 
-  /* startStatePolling：开启状态轮询（每 10s） + 消息轮询（每 30s） */
+  /* startStatePolling：开启状态轮询（每 10s） + seq 轻量轮询（每 3s） */
   startStatePolling(): void {
     this.loadState()
     this._pollTimer = setInterval(() => this.loadState(), 10000)
-    // 后台主动消息轮询——只在非 streaming 时刷新，避免冲掉流式回复
-    this._pollMsgTimer = setInterval(() => this._reloadIfIdle(), 30000)
+    this._seqPollTimer = setInterval(() => this._checkSeq(), 3000)
+    this._checkSeq()  // 立即查一次
     this.startEventStream()
+  }
+
+  /* _checkSeq：轻量轮询 seq，有变化才拉全量历史 */
+  private async _checkSeq(): Promise<void> {
+    try {
+      const resp = await fetch(`${API_BASE}/chat/seq`)
+      const data = await resp.json()
+      if (data.seq > this._lastSeq) {
+        this._lastSeq = data.seq
+        this._reloadIfIdle()
+      }
+    } catch {
+      // 静默
+    }
   }
 
   private async _loadMessagesSilent(): Promise<void> {
@@ -162,9 +184,9 @@ export class ChatViewModel {
       clearInterval(this._pollTimer)
       this._pollTimer = null
     }
-    if (this._pollMsgTimer) {
-      clearInterval(this._pollMsgTimer)
-      this._pollMsgTimer = null
+    if (this._seqPollTimer) {
+      clearInterval(this._seqPollTimer)
+      this._seqPollTimer = null
     }
     if (this._typewriterTimer) {
       clearInterval(this._typewriterTimer)
@@ -202,9 +224,10 @@ export class ChatViewModel {
     }
   }
 
-  /* _reloadIfIdle：末条正在流式则跳过（避免冲掉流式占位），否则静默刷新 */
+  /* _reloadIfIdle：末条正在打字机则跳过（避免冲掉），否则静默刷新 */
   private async _reloadIfIdle(): Promise<void> {
     if (this.messages.length > 0 && this.messages[this.messages.length - 1].isStreaming) {
+      this._pendingReload = true  // 打字机期间错过，标记待补
       return
     }
     await this._loadMessagesSilent()
@@ -270,6 +293,11 @@ export class ChatViewModel {
         msg.content = full
         msg.isStreaming = false
         if (this._typewriterTimer) { clearInterval(this._typewriterTimer); this._typewriterTimer = null }
+        // 打字机期间若有新消息被跳过 → 补刷新
+        if (this._pendingReload) {
+          this._pendingReload = false
+          this._loadMessagesSilent()
+        }
       } else {
         msg.content = full.slice(0, i)
       }

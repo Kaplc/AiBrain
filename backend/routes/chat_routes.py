@@ -96,6 +96,18 @@ def register(app, ready_state, logger, stats_db):
             logger.error(f"[chat] list messages failed: {e}")
             return jsonify({"messages": [], "error": str(e)}), 500
 
+    @app.route('/chat/seq', methods=['GET'])
+    def chat_seq():
+        """返回 output.json 最新 seq（轻量轮询用，避免每次拉全量历史）"""
+        try:
+            from main_brain.memory.workmemory import get_work_memory
+            entries = get_work_memory().output_mem_read()
+            last_seq = entries[-1]["seq"] if entries else 0
+            return jsonify({"seq": last_seq, "total": len(entries)})
+        except Exception as e:
+            logger.error(f"[chat] seq failed: {e}")
+            return jsonify({"seq": 0, "total": 0}), 500
+
     @app.route('/chat/send', methods=['POST'])
     def chat_send():
         """SSE 流式发送消息（直接调 LLM，不经过后台线程）"""

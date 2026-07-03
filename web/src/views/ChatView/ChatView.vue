@@ -40,6 +40,7 @@ onMounted(async () => {
 // KeepAlive 切回时刷新状态和滚动到底部
 onActivated(() => {
   chatViewModel.loadState()
+  chatViewModel._checkSeq()  // 切回时立即检查 seq
   chatViewModel.startEventStream()
   scrollToBottom()
 })

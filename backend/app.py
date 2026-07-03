@@ -130,8 +130,10 @@ def health():
 
 @app.route('/')
 def index():
-    """返回 Vue SPA 入口 index.html"""
-    return app.send_static_file('index.html')
+    """返回 Vue SPA 入口 index.html（no-cache 确保加载最新 build）"""
+    resp = app.make_response(app.send_static_file('index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
 # 前端路由快捷方式（必须在 spa_fallback 之前注册，避免被通配符捕获）
@@ -170,7 +172,10 @@ def spa_fallback(path):
     index_path = os.path.join(app.static_folder or '', 'index.html')
     logger.info(f'[spa_fallback] serving index.html, exists={os.path.isfile(index_path)}')
     with open(index_path, 'rb') as f:
-        return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+        return f.read(), 200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+        }
 
 
 @app.route('/log', methods=['POST'])

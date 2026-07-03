@@ -68,13 +68,15 @@ def call_llm_stream(
 
 
 def call_llm_sync(
-    system_prompt: str,
-    user_prompt: str,
-    config: LLMConfig,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    config: LLMConfig = None,
+    messages: list[dict] = None,
+    source: str = 'chat',
 ) -> str:
-    """非流式调用：把流拼起来。给不需要流的地方用（单元测试、批处理）。"""
+    """非流式调用：把流拼起来。支持 (system, user, config) 或 (config, messages) 两种调用方式。"""
     parts = []
-    for chunk in call_llm_stream(system_prompt, user_prompt, config):
+    for chunk in call_llm_stream(system_prompt, user_prompt, config, messages=messages, source=source):
         if chunk.get("content"):
             parts.append(chunk["content"])
     return "".join(parts)

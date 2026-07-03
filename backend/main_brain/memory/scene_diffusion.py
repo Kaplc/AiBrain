@@ -114,6 +114,7 @@ class SceneDiffusion:
             item = {
                 "id": sid,
                 "text": pay.get("display_text") or pay.get("text", ""),
+                "embedding_text": pay.get("embedding_text") or "",
                 "score": score,
                 "source": "scene_diffusion",
                 "importance": importance,
