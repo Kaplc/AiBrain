@@ -118,6 +118,17 @@ class TestFallback:
 
         assert "关于" in result
 
+    def test_web_search_returns_search_failed_prefix(self):
+        """web_search 返 '搜索失败' 开头 → 降级摘要（新格式）"""
+        mock_tools = MagicMock()
+        mock_tools.call.return_value = "搜索失败: 网络错误"
+
+        with patch("main_brain.adapters.tools.get_tool_adapter", return_value=mock_tools):
+            from main_brain.self_learn.digest import search_and_digest
+            result = search_and_digest("测试话题")
+
+        assert "关于" in result
+
     def test_web_search_returns_not_found(self):
         """web_search 含 '未找到结果' → 降级摘要"""
         mock_tools = MagicMock()

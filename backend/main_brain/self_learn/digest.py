@@ -30,7 +30,7 @@ def search_and_digest(topic: str, max_chars: int = 3000) -> str:
         logger.warning(f"[digest] web_search failed: {e}")
         return _fallback_summary(topic)
 
-    if not search_result or search_result.startswith("错误") or "未找到结果" in search_result:
+    if not search_result or search_result.startswith(("错误", "搜索失败")) or "未找到结果" in search_result:
         logger.info(f"[digest] web_search no result for '{topic}': {search_result[:60]}")
         return _fallback_summary(topic)
 

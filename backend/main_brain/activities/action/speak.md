@@ -1,6 +1,6 @@
 ---
 name: speak
-description: 主动跟用户说一句话。结果：消息发送给用户，显示在聊天窗口
+description: 主动跟用户说一句话。结果：消息发送给用户，显示在聊天窗口。必须填 stop_after_speak 决定是否结束本轮
 terminates: false
 ---
 

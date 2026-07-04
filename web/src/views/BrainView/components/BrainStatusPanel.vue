@@ -103,6 +103,9 @@ const energyPct = computed(() => {
         <span class="cons-sep">·</span>
         <span class="cons-label">待处理</span>
         <span class="cons-value">{{ vm.consolidationState.value?.pending_backlog ?? '--' }} 条</span>
+        <span class="cons-sep">·</span>
+        <span class="cons-label">检查点</span>
+        <span class="cons-value cons-seq">seq {{ vm.consolidationState.value?.last_processed_seq ?? '--' }}</span>
         <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-sep">·</span>
         <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-label">上次</span>
         <span v-if="vm.consolidationState.value?.last_saved_at" class="cons-value">{{ vm.formatTime(vm.consolidationState.value?.last_saved_at) }}</span>

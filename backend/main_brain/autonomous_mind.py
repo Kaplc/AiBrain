@@ -233,16 +233,16 @@ class AutonomousMind:
             cycle_rec = {
                 "cycle": loop_ctx["cycle"],
                 "action": action,
-                "thought": str(decision.get("thought", ""))[:200],
+                "thought": str(decision.get("thought", "")),
             }
             if action == "use_tool":
                 cycle_rec["tool_name"] = str(decision.get("tool_name", ""))
-                cycle_rec["tool_args"] = str(decision.get("tool_args", ""))[:100]
+                cycle_rec["tool_args"] = str(decision.get("tool_args", ""))
             elif action in ("create_activity", "set_activity"):
                 cycle_rec["activity"] = str(decision.get("action_detail", ""))
-                cycle_rec["activity_context"] = str(decision.get("activity_context", ""))[:200]
+                cycle_rec["activity_context"] = str(decision.get("activity_context", ""))
             elif action == "speak":
-                cycle_rec["content"] = str(decision.get("action_detail", ""))[:200]
+                cycle_rec["content"] = str(decision.get("action_detail", ""))
             loop_ctx["cycles_data"].append(cycle_rec)
 
             # use_tool：执行并把结果注入下一轮（继续循环）
@@ -300,6 +300,19 @@ class AutonomousMind:
 
             # think / speak：执行后继续循环（不终止本轮）
             if action in ("think", "speak"):
+                if action == "speak":
+                    stop_flag = decision.get("stop_after_speak")
+                    if stop_flag is None:
+                        logger.info(f"[mind] speak without stop_after_speak, remind")
+                        stop_flag = self._remind_stop_after_speak(context, decision, dry_run)
+                        if stop_flag is None:
+                            continue  # 重试后解析仍失败，继续循环不中断
+                    if stop_flag:
+                        self._execute(decision, dry_run=dry_run)
+                        self._last_action = "rest"
+                        return self._finish("rest", {"thought": decision.get("thought", ""),
+                                                      "tick_summary": "已回应"}, loop_ctx)
+                    # stop_after_speak=false：说完继续做别的事
                 self._execute(decision, dry_run=dry_run)
                 self._last_action = action
                 loop_ctx["cycle"] += 1
@@ -382,7 +395,8 @@ class AutonomousMind:
             "concerns": self._concerns_snapshot(),
             "idle_seconds": life_state.get("idle_seconds", 0),
             "time_of_day": self._time_of_day(),
-            "activities": self._activities_for_prompt(stream),
+            "current_activity": self._current_activity(stream),
+            "available_activities": self._available_activities(stream),
             "working_memory": self._wm_for_prompt(stream),
             "environment_context": self._env_context(stream),
             "perceive_signals": self._signals_for_prompt(signals or {}),
@@ -405,7 +419,8 @@ class AutonomousMind:
                     f"【可以做的行为】\n"
                     f"{chr(10).join(_get_action_descriptions()) or '（暂无可用动作）'}"
                 )},
-                {"role": "system", "content": f"【可以做的活动】\n{context.get('activities')}"},
+                {"role": "system", "content": f"【当前活动】\n{context.get('current_activity')}"},
+                {"role": "system", "content": f"【可以做的活动】\n{context.get('available_activities') or '（暂无其他活动）'}"},
                 {"role": "system", "content": f"【工作记忆】\n{context.get('working_memory')}"},
             ]
             guide = _load_activity_guide(context)
@@ -415,6 +430,7 @@ class AutonomousMind:
             step = context.get("step", 1)
             self._log_full_prompt(messages, step)
             raw = self._call_llm(messages)
+            logger.info(f"[mind] 原始输出:\n{raw}")
             decision = _parse_decision(raw)
             action = decision.get("action", "rest")
 
@@ -608,6 +624,57 @@ class AutonomousMind:
         loop_ctx["tool_results"][cache_key] = result
         return str(result)
 
+    # ── speak 时 stop_after_speak 缺失强制补齐 ─────────────────
+    def _remind_stop_after_speak(self, context: dict, decision: dict, dry_run: bool) -> bool | None:
+        """speak 必须填 stop_after_speak，缺失则反复提醒直到 LLM 填入。"""
+        if dry_run:
+            return None
+        try:
+            base_msgs = [
+                {"role": "system", "content": self._system_prompt()},
+                {"role": "system", "content": f"【可以做的行为】\n{chr(10).join(_get_action_descriptions()) or '（暂无可用动作）'}"},
+                {"role": "system", "content": f"【当前活动】\n{context.get('current_activity')}"},
+                {"role": "system", "content": f"【可以做的活动】\n{context.get('available_activities') or '（暂无其他活动）'}"},
+                {"role": "system", "content": f"【工作记忆】\n{context.get('working_memory')}"},
+            ]
+            guide = _load_activity_guide(context)
+            if guide:
+                base_msgs.append({"role": "system", "content": f"【当前活动执行指引】\n{guide}"})
+            base_msgs.extend(self._user_prompt(context))
+
+            history: list[dict] = []
+            for attempt in range(10):
+                messages = list(base_msgs) + history
+                reminder = (
+                    "【stop_after_speak 缺失】你选择了 `speak` 动作，但必须同时提供 "
+                    "`stop_after_speak` 字段（true=说完结束本轮，false=说完继续做别的事）。"
+                    "请重新输出完整决策 JSON，必须包含 stop_after_speak。"
+                )
+                messages.append({"role": "user", "content": reminder})
+                raw = self._call_llm(messages)
+                logger.info(f"[mind] stop_after_speak 原始输出:\n{raw}")
+                new_dec = _parse_decision(raw)
+                new_action = new_dec.get("action", "rest")
+                if new_action == "speak":
+                    stop_val = new_dec.get("stop_after_speak")
+                    if isinstance(stop_val, bool):
+                        decision.update(new_dec)
+                        return stop_val
+                    if isinstance(stop_val, str):
+                        b = stop_val.lower() in ("true", "yes", "1")
+                        decision.update(new_dec)
+                        return b
+                logger.info(f"[mind] stop_after_speak retry {attempt+1}: action={new_action}, value={new_dec.get('stop_after_speak')!r}")
+                history.append({"role": "assistant", "content": raw[:500]})
+                history.append({"role": "user", "content": f"stop_after_speak 还是缺失，请重新输出完整 JSON。"})
+            logger.warning(f"[mind] stop_after_speak exhausted 10 retries, forcing rest")
+            decision["action"] = "rest"
+            return True
+        except Exception as e:
+            logger.warning(f"[mind] stop_after_speak failed: {e}")
+            decision["action"] = "rest"
+            return True
+
     # ── 终止动作执行 ───────────────────────────────────────
     def _execute(self, decision: dict, dry_run: bool) -> None:
         action = str(decision.get("action", "rest")).strip()
@@ -676,11 +743,11 @@ class AutonomousMind:
         from main_brain import clock as times
         now_iso = times.now_iso()
         stamp = now_iso.replace(":", "").replace("-", "").replace("+", "")
-        context = str(decision.get("activity_context", ""))[:300]
-        guide = str(decision.get("activity_guide", ""))[:500]
+        context = str(decision.get("activity_context", ""))
+        guide = str(decision.get("activity_guide", ""))
         activity = {
             "id": "act_" + stamp + "_" + hashlib.md5(stamp.encode()).hexdigest()[:6],
-            "name": name[:100],
+            "name": name,
             "status": "active",
             "context": context,
             "guide": guide,
@@ -715,7 +782,7 @@ class AutonomousMind:
         md_content = (
             "---\n"
             f"name: {name}\n"
-            f"description: {context[:120]}\n"
+            f"description: {context}\n"
             "source: ai\n"
             f"created_at: {timestamp}\n"
             "---\n"
@@ -760,23 +827,34 @@ class AutonomousMind:
         logger.info(f"[mind] switch ignored: {target} not found")
         return ""
 
-    def _activities_for_prompt(self, stream: dict) -> str:
+    def _current_activity(self, stream: dict) -> str:
+        """返回当前活动描述，单独成段。"""
         all_acts = stream.get("activities") or []
-        current = [a for a in all_acts
-                   if isinstance(a, dict) and a.get("status") == "active"]
-        others = [a for a in all_acts
-                  if isinstance(a, dict) and a.get("status") != "active"]
+        current = [a for a in all_acts if isinstance(a, dict) and a.get("status") == "active"]
         if not current:
-            if not others:
-                return "（当前没有活动）"
-            return "可用活动：\n" + "\n".join(
-                f"- {a.get('name','')}" for a in others)
-        lines = []
+            return "（当前没有活动）"
         c = current[0]
-        ctx = str(c.get("context", ""))[:80]
-        lines.append("当前：- " + str(c.get("name", "")) + (f"（{ctx}）" if ctx else ""))
-        if others:
-            lines.append("其他：" + ", ".join(a.get("name", "") for a in others))
+        ctx = str(c.get("context", ""))
+        return str(c.get("name", "")) + (f"（{ctx}）" if ctx else "")
+
+    def _available_activities(self, stream: dict) -> str:
+        """返回可切换的活动列表，带序号（按 name 去重，保留第一次出现的顺序）。"""
+        all_acts = stream.get("activities") or []
+        seen: set[str] = set()
+        others: list[dict] = []
+        for a in all_acts:
+            if not isinstance(a, dict) or a.get("status") == "active":
+                continue
+            name = (a.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            others.append(a)
+        if not others:
+            return ""
+        lines = []
+        for i, a in enumerate(others, 1):
+            lines.append(f"{i}. {a.get('name', '')}")
         return "\n".join(lines)
 
     def handle_user_message(self, user_msg: str) -> None:
@@ -801,7 +879,7 @@ class AutonomousMind:
         # 记录到 stream 让上下文连贯
         def _fn(stream):
             stream.setdefault("internal_dialogue", []).append(
-                f"用户说：{(msg or '')[:300]}")
+                f"用户说：{(msg or '')}")
         self._state.mutate_stream(_fn)
         return msg
 
@@ -815,11 +893,11 @@ class AutonomousMind:
 
         def _fn(stream):
             if thought:
-                stream["last_thought"] = thought[:300]
+                stream["last_thought"] = thought
             if mood:
-                stream["mood"] = mood[:40]
+                stream["mood"] = mood
             if dialogue:
-                stream["internal_dialogue"].append(dialogue[:200])
+                stream["internal_dialogue"].append(dialogue)
                 if len(stream["internal_dialogue"]) > cap:
                     del stream["internal_dialogue"][:len(stream["internal_dialogue"]) - cap]
 
@@ -899,20 +977,22 @@ class AutonomousMind:
             return "（无）"
 
     def _wm_for_prompt(self, stream: dict) -> str:
-        """格式化工记忆列表供 prompt 注入。
-
-        working_memory 是 Day Tick 构建的"当前在意的几件事"列表，
-        Sleep Tick 清空。每条上限 100 字符。
-        """
+        """格式化工记忆列表供 prompt 注入（只含身份/目标/待办，不含环境行）。"""
         wm = (stream.get("working_memory") or [])
-        if not wm:
+        keep = [item for item in wm if item and (item.strip().startswith("#") or item.strip().startswith("- #"))]
+        if not keep:
             return "（暂无）"
-        return "\n".join(f"- {str(item)[:100]}" for item in wm)
+        return "\n".join(f"- {item}" for item in keep)
 
     @staticmethod
     def _env_context(stream: dict) -> str:
         env_wm = (stream.get("working_memory") or [])
-        env_lines = [item for item in env_wm if item and not item.strip().startswith("#")]
+        env_lines = [
+            item for item in env_wm
+            if item and not item.strip().startswith("#")
+            and not item.startswith("志远已经")
+            and not item.startswith("最后聊到")
+        ]
         return "\n".join(f"- {line}" for line in env_lines)
 
     def _dialogue_for_prompt(self, limit: int = 20) -> str:
@@ -1001,7 +1081,7 @@ def _parse_decision(raw: str) -> dict:
     low = raw.lower()
     for action in ("think", "speak", "rest"):
         if action in low:
-            return {"action": action, "thought": raw[:200], "mood_update": "平静"}
+            return {"action": action, "thought": raw, "mood_update": "平静"}
     return {"action": "rest", "thought": "parse_fallback_rest", "mood_update": "平静"}
 
 

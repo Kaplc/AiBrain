@@ -215,7 +215,8 @@
       "Bash(reg delete *)",
       "Bash(reg.exe delete *)",
       "Bash(./venv312/Scripts/python _test_tools.py)",
-      "Bash(./venv312/Scripts/python _test_bash_full.py)"
+      "Bash(./venv312/Scripts/python _test_bash_full.py)",
+      "Bash(git rm *)"
     ]
   },
   "enableAllProjectMcpServers": true,
