@@ -109,7 +109,7 @@ def register(app, ready_state, logger, stats_db):
         import uuid
         from concurrent.futures import ThreadPoolExecutor
 
-        web_dir = os.path.join(project_root, 'web')
+        web_dir = os.path.join(project_root, 'web-react')
         build_id = str(uuid.uuid4())[:8]
 
         def _do_build():

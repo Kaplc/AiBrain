@@ -1,0 +1,35 @@
+.settings-page { padding: 24px; display: flex; flex-direction: column; gap: 16px; flex: 1; box-sizing: border-box; overflow-y: auto; }
+.page-header { display: flex; align-items: center; justify-content: space-between; }
+.page-title { font-size: 18px; font-weight: 700; }
+.settings-tabs { display: flex; gap: 4px; background: #1a1d27; border-radius: 10px; padding: 4px; width: fit-content; }
+.settings-tab {
+  padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; color: #94a3b8; background: transparent; transition: all .2s; font-family: inherit;
+}
+.settings-tab:hover { color: #e2e8f0; }
+.settings-tab.active { background: #7c3aed; color: #fff; }
+.settings-panel { display: flex; flex-direction: column; gap: 16px; background: #1a1d27; border: 1px solid #2d3149; border-radius: 12px; padding: 20px 24px; }
+.setting-group { display: flex; flex-direction: column; gap: 6px; }
+.setting-label { font-size: 12px; color: #94a3b8; font-weight: 600; }
+.setting-desc { font-size: 13px; color: #cbd5e1; }
+.setting-input, .setting-select {
+  background: #14161f; border: 1px solid #2d3149; border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; color: #e2e8f0; outline: none; transition: border-color .2s;
+}
+.setting-input:focus, .setting-select:focus { border-color: #7c3aed88; }
+.device-options { display: flex; gap: 16px; }
+.device-option { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cbd5e1; cursor: pointer; }
+.device-option input { accent-color: #7c3aed; }
+.gpu-info { font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: 8px; background: #14161f; border: 1px solid #2d3149; }
+.gpu-info.ok { color: #86efac; }
+.gpu-info.warn { color: #fde047; }
+.gpu-info.err { color: #fca5a5; }
+.gpu-info code { background: #0f1117; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+.setting-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.btn-secondary { background: #1e293b; border: 1px solid #2d3149; color: #94a3b8; padding: 8px 18px; border-radius: 8px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.btn-secondary:hover { color: #e2e8f0; }
+.btn-accent { background: #7c3aed; border: none; color: #fff; padding: 8px 18px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.btn-accent:hover:not(:disabled) { background: #6d28d9; }
+.btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+.empty-state { text-align: center; color: #64748b; padding: 40px 20px; font-size: 13px; }
+.stats-pre { background: #0f1117; border: 1px solid #2d3149; border-radius: 8px; padding: 12px; font-size: 11px; color: #94a3b8; overflow-x: auto; font-family: 'Consolas', monospace; }

@@ -1,0 +1,31 @@
+.wiki-page { padding: 24px; display: flex; flex-direction: column; gap: 16px; flex: 1; box-sizing: border-box; overflow: hidden; }
+.wiki-header .page-title { font-size: 18px; font-weight: 700; }
+.wiki-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
+.wiki-main { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.wiki-search-bar { display: flex; gap: 8px; }
+.btn-search { background: #7c3aed; border: none; border-radius: 8px; padding: 8px 18px; color: #fff; cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit; }
+.btn-search:hover { background: #6d28d9; }
+.wiki-search-results { background: #1a1d27; border: 1px solid #3b82f6; border-radius: 8px; padding: 10px; max-height: 200px; overflow-y: auto; }
+.wsr-header { display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-bottom: 6px; }
+.wsr-header button { background: none; border: none; color: #64748b; cursor: pointer; }
+.wsr-item { font-size: 12px; color: #cbd5e1; padding: 6px 0; border-bottom: 1px solid #2d3149; }
+.wiki-files { flex: 1; overflow-y: auto; background: #1a1d27; border: 1px solid #2d3149; border-radius: 12px; }
+.wiki-table { width: 100%; border-collapse: collapse; }
+.wiki-table th {
+  text-align: left; padding: 10px 16px; font-size: 11px; color: #64748b;
+  border-bottom: 1px solid #2d3149; cursor: pointer; user-select: none; position: sticky; top: 0; background: #1a1d27;
+}
+.wiki-table th:hover { color: #cbd5e1; }
+.wiki-table td { padding: 8px 16px; font-size: 12px; color: #cbd5e1; border-bottom: 1px solid #1a1d27; }
+.wiki-side { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
+.wiki-side-tabs { display: flex; gap: 4px; }
+.ws-tab {
+  flex: 1; padding: 6px; border: 1px solid #2d3149; border-radius: 8px; background: transparent;
+  color: #94a3b8; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.ws-tab.active { background: #1e293b; color: #a78bfa; border-color: #7c3aed55; }
+.ws-panel { background: #1a1d27; border: 1px solid #2d3149; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.setting-group { display: flex; flex-direction: column; gap: 4px; }
+.setting-label { font-size: 11px; color: #64748b; font-weight: 600; }
+.setting-desc { font-size: 13px; color: #cbd5e1; }
+.empty-state { text-align: center; color: #64748b; padding: 40px 20px; font-size: 12px; }

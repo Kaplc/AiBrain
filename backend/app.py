@@ -69,10 +69,16 @@ mimetypes.add_type('application/javascript', '.ts')
 mimetypes.add_type('application/javascript', '.mts')
 mimetypes.add_type('application/wasm', '.wasm')
 
-_dist = os.path.join(_PROJECT_ROOT, 'web', 'dist')
+_dist_react = os.path.join(_PROJECT_ROOT, 'web-react', 'dist')
+_dist_vue = os.path.join(_PROJECT_ROOT, 'web', 'dist')
 _web = os.path.join(_PROJECT_ROOT, 'web')
-# 优先使用构建产物（dist/），不存在时回退到源码目录（开发模式）
-_static = _dist if os.path.isdir(_dist) else _web
+# 优先使用 React 构建产物，其次 Vue 构建产物，最后回退到源码目录（开发模式）
+if os.path.isdir(_dist_react):
+    _static = _dist_react
+elif os.path.isdir(_dist_vue):
+    _static = _dist_vue
+else:
+    _static = _web
 app = Flask(__name__, static_folder=_static, static_url_path='')
 CORS(app)
 app.config['_PROJECT_ROOT'] = _PROJECT_ROOT

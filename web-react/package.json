@@ -1,0 +1,29 @@
+{
+  "name": "aibrain-web-react",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "electron": "electron electron/main.js"
+  },
+  "dependencies": {
+    "echarts": "^6.0.0",
+    "force-graph": "^1.51.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "playwright": "^1.59.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

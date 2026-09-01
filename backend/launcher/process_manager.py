@@ -16,6 +16,7 @@ AiBrain 统一进程管理器
 import os
 import sys
 import signal
+import shutil
 import socket
 import subprocess
 import time
@@ -249,7 +250,7 @@ class ProcessManager:
             return False
 
     def start_webview(self):
-        """启动 PyWebView 窗口"""
+        """启动桌面 UI 壳：优先 Electron（前端已迁移 React），回退 PyWebView"""
         if self.no_ui:
             print("  [webview] Skipped (--no-ui)")
             return True
@@ -261,7 +262,40 @@ class ProcessManager:
             'QDRANT_HTTP_PORT': str(self.ports['qdrant_http']),
             'QDRANT_GRPC_PORT': str(self.ports['qdrant_grpc']),
         }
-        print(f"  [webview] Starting...")
+
+        electron_js = os.path.join(_PROJECT_ROOT, 'electron', 'main.js')
+        npx_cmd = os.path.join(_PROJECT_ROOT, 'web-react', 'node_modules', '.bin', 'electron.cmd')
+        use_electron = os.path.isfile(electron_js) and (
+            os.path.isfile(npx_cmd) or shutil.which('electron') or shutil.which('npx')
+        )
+
+        if use_electron:
+            print(f"  [webview] Starting Electron shell...")
+            # 注意：必须显式传 main.js 文件路径。若只传目录，Electron 会 require(目录)
+            # 并默认查找 index.js（本项目中是 main.js），导致 "Cannot find module" 报错。
+            main_arg = electron_js
+            if os.path.isfile(npx_cmd):
+                cmd = npx_cmd
+                args = [main_arg]
+            elif shutil.which('electron'):
+                cmd = 'electron'
+                args = [main_arg]
+            else:
+                cmd = 'npx'
+                args = ['electron', main_arg]
+            try:
+                proc = subprocess.Popen(
+                    [cmd, *args],
+                    cwd=_PROJECT_ROOT,
+                    env=env,
+                )
+                self.procs['webview'] = proc
+                print(f"  [webview] Electron started (PID {proc.pid})")
+                return True
+            except Exception as e:
+                print(f"  [webview] Electron start failed: {e}, falling back to PyWebView")
+
+        print(f"  [webview] Starting PyWebView (legacy)...")
         proc = subprocess.Popen(
             [_PYTHON, os.path.join(_BACKEND, 'app.py'), '--webview-only'],
             cwd=_PROJECT_ROOT,
